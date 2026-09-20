@@ -1,0 +1,242 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Welcome</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.1/css/all.min.css" integrity="sha512-MV7K8+y+gLIBoVD59lQIYicR65iaqukzvf/nwasF0nqhPay5w/9lJmVM2hMDcnK1OnMGCdVK+iQrJ7lzPJQd1w==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css">
+    <link href='https://fonts.googleapis.com/css?family=Roboto' rel='stylesheet' type='text/css'>
+    <style id="critical-nav-style">
+        #site-menu > i { background:#dceff2; border:1px solid #d7b85a; border-radius:.4rem; display:block; min-height:64px; position:relative; width:100%; }
+        #ham-surround { background:transparent; border:0; box-shadow:none; min-height:64px; position:relative; }
+        #ham-icon { cursor: pointer; height: 45px; margin: 0; padding: 0; position: relative; width: 60px; }
+        #ham-icon span { background: #0b1730; display: block; height: 9px; opacity: 1; position: absolute; width: 50%; }
+        #ham-icon span:nth-child(even) { border-radius: 0 9px 9px 0; left: 50%; }
+        #ham-icon span:nth-child(odd) { border-radius: 9px 0 0 9px; left: 0; }
+        #ham-icon span:nth-child(1), #ham-icon span:nth-child(2) { top: 0; }
+        #ham-icon span:nth-child(3), #ham-icon span:nth-child(4) { top: 18px; }
+        #ham-icon span:nth-child(5), #ham-icon span:nth-child(6) { top: 36px; }
+    </style>
+    <script>try{document.documentElement.dataset.theme=localStorage.getItem('pogicraft-theme')==='light'?'light':'dark';}catch(e){document.documentElement.dataset.theme='dark';}</script>
+    <link rel="stylesheet/less" href="/css/personal-touch-cleaned.less">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/less.js/4.1.3/less.min.js" integrity="sha512-6gUGqd/zBCrEKbJqPI7iINc61jlOfH5A+SluY15IkNO1o4qP1DEYjQBewTB4l0U4ihXZdupg8Mb77VxqE+37dg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    </head>
+<body style="display: flex; align-items: stretch;">
+<div id="body-whole" class="container d-flex">
+    <div class="d-flex container">
+        <nav id="navbar" class="navbar">
+            <div id="nav-area" class="col container">
+                <div id="nav-back"></div>
+                <label id="site-menu" class="accordion-header give-space btn text-start" style="margin-left: 20px;"><input id="s2" class="hide" type="checkbox">
+                    <i>
+                        <div id="ham-surround" style="margin: 10%;">
+                            <div id="ham-icon" class="navbar-toggle" role="button" tabindex="0" aria-controls="site-menu" aria-expanded="false" aria-label="Toggle navigation menu"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+                            <span><h3 style="position: absolute; left: 45%; bottom: 00%;">Menu</h3></span></div>
+                    </i>
+                    <button id="menu-up" type="button" class="accordion-child dir-arrow" aria-label="Scroll menu up" style="padding: 4px; margin-left: auto; margin-right: auto;"><i class="fas">&#xf077;</i></button>
+                    <button id="theme-toggle" type="button" class="accordion-child theme-menu-item" aria-label="Switch to light theme" title="Switch theme"><span class="theme-sun"><i class="fas fa-sun"></i></span><span class="theme-moon"><i class="fas fa-moon"></i></span><span class="theme-label">Light mode</span></button>
+                    <button class="accordion-child menu-item" onclick="location.href='#top';">Welcome</button>
+                    <button class="accordion-child menu-item" onclick="location.href='#div-developer';">Software Development</button>
+                    <button class="accordion-child menu-item" onclick="location.href='#div-finance';">Finance</button>
+                    <button class="accordion-child menu-item" onclick="location.href='#div-customer-service';">Customer Service</button>
+                    <button class="accordion-child menu-item" onclick="location.href='#div-material-handler';">Material Handler II</button>
+                    <button class="accordion-child menu-item" onclick="location.href='#div-resume';">Resume</button>
+                    <button id="menu-down" type="button" class="accordion-child dir-arrow" aria-label="Scroll menu down" style="padding: 4px; margin-left: auto; margin-right: auto;"><i class="fas">&#xf078;</i></button>
+                </label>
+            </div>
+        </nav>
+        <div id="main-content" style="min-height: 100vh;">
+            <section id="s-head" class="row">
+                <h2 class="text-center">Welcome</h2>
+                <hr>
+                <div id="profile-pic" style="position: absolute;"><img src="files/profile.png" alt="Portrait of Alexander Wayland-James"></div>
+                <h4 class="text-center">My name is</h4>
+                <h1 class="text-center" style="">Alexander Wayland-James</h1>
+                <div id="traits-list"></div>
+            </section>
+            <section id="byline-tag"><h6>Full Time Deli Lead with 10 years of Customer Service experience; excellent listening, problem-solving and relationship-building skills. Known for positive attitude and unwavering reliability.
+                Fast-paced environments are a natural fit where I meet production targets under constant pressure and deadlines traversing between various climates.</h6></section>
+            <div id="div-developer" class="row justify-content-between">
+                <button aria-controls="expand-python" aria-expanded="true" data-bs-toggle="collapse" data-bs-target="#expand-python" id="button-python" class="col btn btn-primary">Python</button>
+                <button aria-controls="expand-web-dev" aria-expanded="true" data-bs-toggle="collapse" data-bs-target="#expand-web-dev" id="button-web-dev" class="col btn btn-primary">HTML/JavaScript</button>
+                <button aria-controls="expand-backend" aria-expanded="true" data-bs-toggle="collapse" data-bs-target="#expand-backend" id="button-backend" class="col btn btn-primary">SQL/ MongoDB</button>
+                <div id="expand-python" data-bs-parent="#div-developer" class="collapse">
+                    <ol class="rectangle-list project-list">
+                        <li><div class="project-row"><span>Flash Card Project with <em>Tkinter</em></span><span class="project-actions"><button type="button" class="project-link" disabled title="GitHub source link coming soon"><i class="fab fa-github"></i></button><button type="button" class="project-link" disabled title="Run preview link coming soon"><i class="fas fa-play"></i></button></span></div></li>
+                        <li><div class="project-row"><span>Journal Project using <em>PySimplyGUI</em></span><span class="project-actions"><button type="button" class="project-link" disabled title="GitHub source link coming soon"><i class="fab fa-github"></i></button><button type="button" class="project-link" disabled title="Run preview link coming soon"><i class="fas fa-play"></i></button></span></div></li>
+                        <li><div class="project-row"><span>Compound Project using <em>PySide6</em></span><span class="project-actions"><button type="button" class="project-link" disabled title="GitHub source link coming soon"><i class="fab fa-github"></i></button><button type="button" class="project-link" disabled title="Run preview link coming soon"><i class="fas fa-play"></i></button></span></div></li>
+                        <li><div class="project-row"><span>Data Aggregate and Filter Project with <em>Pandas</em></span><span class="project-actions"><button type="button" class="project-link" disabled title="GitHub source link coming soon"><i class="fab fa-github"></i></button><button type="button" class="project-link" disabled title="Run preview link coming soon"><i class="fas fa-play"></i></button></span></div></li>
+                    </ol>
+                </div>
+                <div id="expand-web-dev" data-bs-parent="#div-developer" class="collapse">
+                    <ol class="rectangle-list">
+<!--                        <li><a>Project 1</a></li>-->
+<!--                        <li><a>Project 2</a></li>-->
+<!--                        <li><a>Project 3</a></li>-->
+<!--                        <li><a>Project 4</a></li>-->
+                        <div>
+                            <section style="background-color: black;">
+                                <p>By the way, this page uses HTML, CSS, JavaScript</p>
+                                <p>It also implements Bootstrap, JQuery, and Less CSS</p>
+                            </section>
+                            <br>
+                            <p class="text-justify" style="color: black; background-color: #DBB701">Everything has been personally hand-coded by me, using the above libraries</p>
+                            <p style="background-color: cadetblue; color: black;">And is an accurate reflection of my ability, style and syntax as a programmer</p>
+                        </div>
+                    </ol>
+                </div>
+                <div id="expand-backend" data-bs-parent="#div-developer" class="collapse">
+                    <div class="backend-summary text-center">
+                        <i class="fas fa-server backend-hero-icon" aria-hidden="true"></i>
+                        <table class="backend-table" aria-label="Home network services">
+                            <thead><tr><th>Service</th><th>Use</th></tr></thead>
+                            <tbody>
+                                <tr><td><i class="fas fa-memory"></i><span>Redis</span></td><td>AI working memory</td></tr>
+                                <tr><td><i class="fas fa-note-sticky"></i><span>MongoDB</span></td><td>Notes</td></tr>
+                                <tr><td><i class="fas fa-database"></i><span>PostgreSQL</span></td><td>Self-hosted OHLC API for screening and quant work</td></tr>
+                            </tbody>
+                        </table>
+                        <p class="backend-network-note"><i class="fas fa-network-wired"></i> Home network services accessed securely over Tailscale.</p>
+                    </div>
+                </div>
+            </div>
+            <div id="div-finance">
+                <ul id="finance-button-box" class="button-menu d-flex align-items-stretch">
+                    <div id="highlight-box" style="height: 5%; background-color: #28d898; min-width: 10px; bottom: -10%; z-index: 10;"></div>
+                    <li><a class="finance-button-item nav-pills btn btn-outline-light">Market Analysis</a></li>
+                    <li><a class="finance-button-item nav-pills btn btn-outline-light">Technical Analysis</a></li>
+                    <li><a class="finance-button-item nav-pills btn btn-outline-light">Risk Mitigation</a></li>
+                    <li><a class="finance-button-item nav-pills btn btn-outline-light">Charting</a></li>
+                    <li><a class="finance-button-item nav-pills btn btn-outline-light">Behavioral Finance</a></li>
+                    <li><a class="finance-button-item nav-pills btn btn-outline-light">Options Derivatives Trading</a></li>
+                </ul>
+
+            </div>
+            <div id="div-customer-service">
+                <div id="carouselExampleIndicators" class="carousel slide" data-bs-ride="carousel">
+                    <div class="carousel-indicators">
+                        <button type="button" data-bs-target="#carouselExampleIndicators" data-bs-slide-to="0" class="active" aria-current="true" aria-label="Slide 1"
+                                style="background: url('/files/tn-giant-chicken-platter.jpg') no-repeat;"></button>
+                        <button type="button" data-bs-target="#carouselExampleIndicators" data-bs-slide-to="1" aria-label="Slide 2" style="background: url('/files/tn-giant-full-case.jpg') no-repeat;"></button>
+                        <button type="button" data-bs-target="#carouselExampleIndicators" data-bs-slide-to="2" aria-label="Slide 3" style="background: url('/files/tn-giant-clean-counters.jpg') no-repeat;"></button>
+                        <button type="button" data-bs-target="#carouselExampleIndicators" data-bs-slide-to="3" aria-label="Slide 4" style="background: url('/files/tn-giant-clean-fryers.jpg') no-repeat;"></button>
+                    </div>
+                    <div class="carousel-inner">
+                        <div class="carousel-item active">
+                            <img src="files/giant-chicken-platter.jpg" class="d-block w-100" alt="Freshly made chicken platter">
+                        </div>
+                        <div class="carousel-item">
+                            <img src="files/giant-full-case.jpg" class="d-block w-100" alt="Beautiful Stuffed Full Case">
+                        </div>
+                        <div class="carousel-item">
+                            <img src="files/giant-clean-counters-1.jpg" class="d-block w-100" alt="Clean counters -- cropped">
+                        </div>
+                        <div class="carousel-item">
+                            <img src="files/giant-clean-fryers.jpg" class="d-block w-100" alt="Clean Fryers">
+                        </div>
+                    </div>
+                    <button class="carousel-control-prev" type="button" data-bs-target="#carouselExampleIndicators" data-bs-slide="prev">
+                        <span class="carousel-control-prev-icon" aria-hidden="true"></span>
+                        <span class="visually-hidden">Previous</span>
+                    </button>
+                    <button class="carousel-control-next" type="button" data-bs-target="#carouselExampleIndicators" data-bs-slide="next">
+                        <span class="carousel-control-next-icon" aria-hidden="true"></span>
+                        <span class="visually-hidden">Next</span>
+                    </button>
+                </div>
+            </div>
+            <div id="div-material-handler">
+                <ul class="material-handler-list">
+                    <li>Supplied production with raw materials</li>
+                    <li>Maintained machine uptime above 93%</li>
+                    <li>Picked and prepared items for shipment</li>
+                    <li>Generated barcodes and matched order IDs</li>
+                </ul>
+            </div>
+            <div id="div-resume">
+
+            </div>
+            <section id="s-foot">
+                <h3 class="offset-2">For inquiries</h3>
+                <p><a href="mailto:alexanderjames875@gmail.com">alexanderjames875@gmail.com</a></p>
+                <p>Started: 11/23/2022, Updated: 11/30/2022</p>
+            </section>
+        </div>
+    </div>
+</div>
+<script src="https://code.jquery.com/jquery-3.6.1.min.js" integrity="sha256-o88AwQnZB+VDvE9tvIXrMQaPlFFSUTR+nldQm1LuPXQ=" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-kenU1KFdBIe4zVF0s0G1M5b4hcpxyD9F7jL+jjXkk+Q2h455rYXK/7HAuoJl+0I4" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.1/js/all.min.js" integrity="sha512-rpLlll167T5LJHwp0waJCh3ZRf7pO6IT1+LZOhAyP6phAirwchClbTZV3iqL3BMrVxIYRbzGTpli4rfxsCK6Vw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+$(document).ready(function () {
+    const marker = $('#highlight-box');
+    const menuToggle = $('#s2');
+    const hamburger = $('#ham-icon');
+    const compactLayout = window.matchMedia('(max-width: 1199px)');
+    const themeButton = $('#theme-toggle');
+    const themeRoot = document.documentElement;
+
+    function syncThemeToggle() {
+        const light = themeRoot.dataset.theme === 'light';
+        themeButton.attr('aria-label', light ? 'Switch to dark theme' : 'Switch to light theme');
+        themeButton.attr('title', light ? 'Switch to dark theme' : 'Switch to light theme');
+        themeButton.find('.theme-label').text(light ? 'Dark mode' : 'Light mode');
+    }
+
+    themeButton.on('click', function () {
+        themeRoot.dataset.theme = themeRoot.dataset.theme === 'light' ? 'dark' : 'light';
+        try { localStorage.setItem('pogicraft-theme', themeRoot.dataset.theme); } catch (e) {}
+        syncThemeToggle();
+    });
+    syncThemeToggle();
+
+    $('#s-head').addClass('on-load');
+
+    function syncMenuState() {
+        const isOpen = menuToggle.is(':checked');
+        hamburger.toggleClass('open', isOpen).attr('aria-expanded', String(isOpen));
+        $('#nav-area').toggleClass('hazy-black', isOpen);
+    }
+
+    menuToggle.on('change', syncMenuState);
+    hamburger.on('keydown', function (event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            menuToggle.prop('checked', !menuToggle.is(':checked')).trigger('change');
+        }
+    });
+
+    $('#menu-up, #menu-down').on('click', function (event) {
+        event.preventDefault();
+        const menu = document.getElementById('site-menu');
+        const amount = Math.max(180, Math.round(menu.clientHeight * 0.55));
+        menu.scrollBy({ top: this.id === 'menu-up' ? -amount : amount, behavior: 'smooth' });
+    });
+
+    $('.menu-item').on('click', function () {
+        if (compactLayout.matches) {
+            menuToggle.prop('checked', false).trigger('change');
+        }
+    });
+
+    function indicator(element) {
+        marker.css('left', element.offsetLeft);
+        marker.css('width', element.offsetWidth);
+    }
+
+    document.querySelectorAll('.finance-button-item').forEach(link => {
+        link.addEventListener('mouseover', event => indicator(event.currentTarget));
+        link.addEventListener('focus', event => indicator(event.currentTarget));
+    });
+
+    if (window.matchMedia('(min-width: 1501px)').matches) {
+        menuToggle.prop('checked', true);
+    }
+    syncMenuState();
+});
+
+$('#div-resume').load('/files/resume.html');
+</script>
+</body>
+</html>

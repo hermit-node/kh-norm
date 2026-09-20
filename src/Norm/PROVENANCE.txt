@@ -1,0 +1,33 @@
+Historical Norm 0.51.0 source reconstruction
+
+Reconstruction base:
+D:\LOCAL_Share\Norm GraveYard\Norm-Backups\Norm-current-post-append-condensation-20260920-1506.zip
+
+Base SHA-256:
+7B8655259F226495C7B851E75A95F641A0E503A266432A1DD49238790FA01AFE
+
+Method:
+The recovered Sep-20 15:06 source snapshot was copied into an isolated directory.
+Only deterministic source-edit scripts preserved from the original Sep-20 staging
+tree were replayed in timestamp order. Each replay script was rewritten to point
+at this isolated directory. Live database migration, queue operations, tests,
+promotion commands, and executable replacement were NOT run.
+
+Included source patches cover:
+- maintenance continuation/checkpoint fixes present before the release work
+- maintained-document pointer source changes
+- 0.51.0 project/version metadata and deferred append planning
+- bounded oversize-child recovery
+- UUID task/node/dependency identity and compatibility fixes
+- GUI lifecycle / Ctrl+C / native control handling
+
+Known promoted 0.51.0 executable SHA-256 from release records:
+A72D7FC8E0268CB42A1F062BB63EFCAA4904B159330972D878779738A2DDAEC6
+
+The exact promoted 0.51.0 executable and the documented pre-0.51.1 migration
+rollback snapshot were not recovered, so this source reconstruction cannot be
+bytecode-validated against the final promoted binary. It must remain explicitly
+identified as reconstructed, not an original source package.
+
+Runtime state, logs, database data, recovery/task artifacts and credential-bearing
+runtime configuration are excluded.
