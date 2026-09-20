@@ -1,0 +1,413 @@
+from __future__ import annotations
+
+import base64
+import json
+import time
+from pathlib import Path
+from threading import Event, Lock
+from typing import Callable
+from urllib import request
+
+
+class ModelGenerationCancelled(RuntimeError):
+    pass
+
+
+class ModelOutputTruncated(RuntimeError):
+    def __init__(self, partial: str, eval_count: int = 0) -> None:
+        super().__init__("model output stopped because output length limit was reached")
+        self.partial = str(partial or "")
+        self.eval_count = int(eval_count or 0)
+
+
+class OllamaClient:
+    _active_lock = Lock()
+    _active: dict[int, tuple[Event, object | None]] = {}
+
+    def __init__(
+        self,
+        base_url: str,
+        model: str = "norm",
+        timeout_seconds: float | None = 86400,
+        activity_sink: Callable[[dict], None] | None = None,
+        activity_source: str = "unknown",
+        crash_sink: Callable[[str, str, list[dict[str, str]]], None] | None = None,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.timeout_seconds = timeout_seconds
+        self.activity_sink = activity_sink
+        self.activity_source = activity_source
+        self.crash_sink = crash_sink
+        self._crash_task_id = ""
+        self._crash_step_id = ""
+        self._crash_pending: list[dict[str, str]] = []
+        self._crash_pending_chars = 0
+        self._crash_last_flush = time.monotonic()
+
+    def _emit(self, event_type: str, **values) -> None:
+        if self.activity_sink is None:
+            return
+        try:
+            self.activity_sink(
+                {
+                    "channel": "ollama",
+                    "type": event_type,
+                    "source": self.activity_source,
+                    "model": self.model,
+                    **values,
+                }
+            )
+        except Exception:
+            pass
+
+    def set_crash_context(self, task_id: str, step_id: str) -> None:
+        self._flush_crash()
+        self._crash_task_id = str(task_id)
+        self._crash_step_id = str(step_id)
+
+    def clear_crash_context(self) -> None:
+        self._flush_crash()
+        self._crash_task_id = ""
+        self._crash_step_id = ""
+
+    def _buffer_crash(self, kind: str, text: str) -> None:
+        if not text or self.crash_sink is None or not self._crash_task_id or not self._crash_step_id:
+            return
+        self._crash_pending.append({"kind": str(kind), "text": str(text)})
+        self._crash_pending_chars += len(text)
+        now = time.monotonic()
+        if self._crash_pending_chars >= 4096 or now - self._crash_last_flush >= 0.5:
+            self._flush_crash(now)
+
+    def _flush_crash(self, now: float | None = None) -> None:
+        if not self._crash_pending:
+            self._crash_last_flush = time.monotonic() if now is None else now
+            return
+        chunks = self._crash_pending
+        self._crash_pending = []
+        self._crash_pending_chars = 0
+        self._crash_last_flush = time.monotonic() if now is None else now
+        if self.crash_sink is None or not self._crash_task_id or not self._crash_step_id:
+            return
+        try:
+            self.crash_sink(self._crash_task_id, self._crash_step_id, chunks)
+        except Exception:
+            pass
+
+    @classmethod
+    def active_count(cls) -> int:
+        with cls._active_lock:
+            return len(cls._active)
+
+    @classmethod
+    def cancel_active(cls) -> int:
+        with cls._active_lock:
+            active = tuple(cls._active.values())
+        for cancel_event, response in active:
+            cancel_event.set()
+            if response is not None:
+                try:
+                    response.close()
+                except Exception:
+                    pass
+        return len(active)
+
+    def generate(
+        self,
+        prompt: str,
+        *,
+        think: bool = False,
+        num_predict: int | None = None,
+        temperature: float = 0.2,
+        response_format: str | dict | None = None,
+    ) -> str:
+        options: dict[str, object] = {"temperature": temperature}
+        if num_predict is not None:
+            options["num_predict"] = num_predict
+        body = {
+            "model": self.model,
+            "prompt": str(prompt),
+            "stream": True,
+            "think": think,
+            "keep_alive": -1,
+            "options": options,
+        }
+        if response_format is not None:
+            body["format"] = response_format
+        req = request.Request(
+            f"{self.base_url}/api/generate",
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        response_parts: list[str] = []
+        done_reason = ""
+        eval_count = 0
+        cancel_event = Event()
+        call_id = id(cancel_event)
+        with self._active_lock:
+            self._active[call_id] = (cancel_event, None)
+        self._emit("model_start", thinking=think)
+        try:
+            with request.urlopen(req, timeout=self.timeout_seconds) as response:
+                with self._active_lock:
+                    self._active[call_id] = (cancel_event, response)
+                if cancel_event.is_set():
+                    raise ModelGenerationCancelled("generation cancelled")
+                for raw_line in response:
+                    if cancel_event.is_set():
+                        raise ModelGenerationCancelled("generation cancelled")
+                    line = raw_line.decode("utf-8").strip()
+                    if not line:
+                        continue
+                    data = json.loads(line)
+                    if data.get("error"):
+                        raise RuntimeError(data["error"])
+                    if data.get("done"):
+                        done_reason = str(data.get("done_reason") or "")
+                        eval_count = int(data.get("eval_count") or 0)
+                    thinking = str(data.get("thinking", ""))
+                    answer = str(data.get("response", ""))
+                    if thinking:
+                        self._emit("thinking", text=thinking)
+                        self._buffer_crash("thinking", thinking)
+                    if answer:
+                        response_parts.append(answer)
+                        self._emit("answer", text=answer)
+                        self._buffer_crash("answer", answer)
+                if cancel_event.is_set():
+                    raise ModelGenerationCancelled("generation cancelled")
+        except Exception as exc:
+            if cancel_event.is_set() and not isinstance(exc, ModelGenerationCancelled):
+                exc = ModelGenerationCancelled("generation cancelled")
+            self._emit(
+                "model_error",
+                text=str(exc),
+                cancelled=isinstance(exc, ModelGenerationCancelled),
+            )
+            raise exc
+        finally:
+            self._flush_crash()
+            with self._active_lock:
+                self._active.pop(call_id, None)
+        self._emit("model_end")
+        text = "".join(response_parts).strip()
+        if done_reason == "length":
+            raise ModelOutputTruncated(text, eval_count)
+        return text
+
+    def generate_complete_text(
+        self, prompt: str, *, think: bool = False, num_predict: int = 16000,
+        temperature: float = 0.2, max_segments: int = 4, response_so_far: str = "",
+        on_partial=None,
+    ) -> str:
+        original = str(prompt)
+        pieces: list[str] = [str(response_so_far)] if response_so_far else []
+        current = original
+        if pieces:
+            current = (
+                "Continue an incomplete response. Do not restart, summarize, or repeat already-completed material. "
+                "Continue exactly from the cutoff and finish every remaining requirement. Return only the continuation.\n\n"
+                f"ORIGINAL REQUEST/INSTRUCTIONS:\n{original}\n\nRESPONSE SO FAR:\n{''.join(pieces)}"
+            )
+        for segment in range(1, max(1, int(max_segments)) + 1):
+            try:
+                text = self.generate(current, think=think, num_predict=num_predict, temperature=temperature)
+                pieces.append(text)
+                joined = "".join(pieces).strip()
+                if on_partial is not None:
+                    on_partial(joined, True, segment)
+                return joined
+            except ModelOutputTruncated as exc:
+                pieces.append(exc.partial)
+                joined = "".join(pieces)
+                if on_partial is not None:
+                    on_partial(joined, False, segment)
+                if segment >= max(1, int(max_segments)):
+                    raise ModelOutputTruncated(joined, exc.eval_count)
+                current = (
+                    "Continue an incomplete response. Do not restart, summarize, or repeat already-completed material. "
+                    "Continue exactly from the cutoff and finish every remaining requirement. Return only the continuation.\n\n"
+                    f"ORIGINAL REQUEST/INSTRUCTIONS:\n{original}\n\nRESPONSE SO FAR:\n{joined}"
+                )
+        raise RuntimeError("unreachable complete-text loop")
+
+    def chat_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        think: bool = True,
+        temperature: float = 0.2,
+        num_predict: int | None = None,
+    ) -> dict:
+        options: dict[str, object] = {"temperature": temperature}
+        if num_predict is not None:
+            options["num_predict"] = int(num_predict)
+        body = {
+            "model": self.model,
+            "messages": messages,
+            "tools": tools,
+            "stream": True,
+            "think": think,
+            "keep_alive": -1,
+            "options": options,
+        }
+        req = request.Request(
+            f"{self.base_url}/api/chat",
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        content_parts: list[str] = []
+        thinking_parts: list[str] = []
+        tool_calls: list[dict] = []
+        seen_calls: set[str] = set()
+        done_reason = ""
+        eval_count = 0
+        cancel_event = Event()
+        call_id = id(cancel_event)
+        with self._active_lock:
+            self._active[call_id] = (cancel_event, None)
+        self._emit("model_start", thinking=think, tool_mode=True)
+        try:
+            with request.urlopen(req, timeout=self.timeout_seconds) as response:
+                with self._active_lock:
+                    self._active[call_id] = (cancel_event, response)
+                for raw_line in response:
+                    if cancel_event.is_set():
+                        raise ModelGenerationCancelled("generation cancelled")
+                    line = raw_line.decode("utf-8").strip()
+                    if not line:
+                        continue
+                    data = json.loads(line)
+                    if data.get("error"):
+                        raise RuntimeError(data["error"])
+                    if data.get("done"):
+                        done_reason = str(data.get("done_reason") or "")
+                        eval_count = int(data.get("eval_count") or 0)
+                    message = data.get("message") or {}
+                    thinking = str(message.get("thinking", ""))
+                    content = str(message.get("content", ""))
+                    if thinking:
+                        thinking_parts.append(thinking)
+                        self._emit("thinking", text=thinking)
+                        self._buffer_crash("thinking", thinking)
+                    if content:
+                        content_parts.append(content)
+                        self._emit("answer", text=content)
+                        self._buffer_crash("answer", content)
+                    for call in message.get("tool_calls") or []:
+                        marker = json.dumps(call, sort_keys=True, ensure_ascii=False)
+                        if marker not in seen_calls:
+                            seen_calls.add(marker)
+                            tool_calls.append(call)
+                            self._emit("tool_call", text=marker)
+                            self._buffer_crash("tool_call", marker)
+                if cancel_event.is_set():
+                    raise ModelGenerationCancelled("generation cancelled")
+        except Exception as exc:
+            if cancel_event.is_set() and not isinstance(exc, ModelGenerationCancelled):
+                exc = ModelGenerationCancelled("generation cancelled")
+            self._emit(
+                "model_error",
+                text=str(exc),
+                cancelled=isinstance(exc, ModelGenerationCancelled),
+            )
+            raise exc
+        finally:
+            self._flush_crash()
+            with self._active_lock:
+                self._active.pop(call_id, None)
+        self._emit("model_end")
+        return {
+            "content": "".join(content_parts).strip(),
+            "thinking": "".join(thinking_parts),
+            "tool_calls": tool_calls,
+            "done_reason": done_reason,
+            "eval_count": eval_count,
+        }
+
+    def vision(
+        self,
+        prompt: str,
+        image_paths: list[str],
+        *,
+        think: bool = True,
+        temperature: float = 0.1,
+    ) -> str:
+        images: list[str] = []
+        for raw in image_paths:
+            path = Path(raw).resolve()
+            if not path.is_file():
+                raise FileNotFoundError(path)
+            images.append(base64.b64encode(path.read_bytes()).decode("ascii"))
+        body = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": str(prompt), "images": images}],
+            "stream": True,
+            "think": think,
+            "keep_alive": -1,
+            "options": {"temperature": temperature},
+        }
+        req = request.Request(
+            f"{self.base_url}/api/chat",
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        parts: list[str] = []
+        cancel_event = Event()
+        call_id = id(cancel_event)
+        with self._active_lock:
+            self._active[call_id] = (cancel_event, None)
+        self._emit("model_start", thinking=think, vision=True, images=len(images))
+        try:
+            with request.urlopen(req, timeout=self.timeout_seconds) as response:
+                with self._active_lock:
+                    self._active[call_id] = (cancel_event, response)
+                for raw_line in response:
+                    if cancel_event.is_set():
+                        raise ModelGenerationCancelled("generation cancelled")
+                    line = raw_line.decode("utf-8").strip()
+                    if not line:
+                        continue
+                    data = json.loads(line)
+                    if data.get("error"):
+                        raise RuntimeError(data["error"])
+                    message = data.get("message") or {}
+                    thinking_text = str(message.get("thinking", ""))
+                    content = str(message.get("content", ""))
+                    if thinking_text:
+                        self._emit("thinking", text=thinking_text)
+                        self._buffer_crash("thinking", thinking_text)
+                    if content:
+                        parts.append(content)
+                        self._emit("answer", text=content)
+                        self._buffer_crash("answer", content)
+        finally:
+            self._flush_crash()
+            with self._active_lock:
+                self._active.pop(call_id, None)
+        self._emit("model_end")
+        return "".join(parts).strip()
+
+    @staticmethod
+    def parse_json(text: str) -> dict:
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[-1]
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3]
+        try:
+            value = json.loads(cleaned)
+        except json.JSONDecodeError:
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+            if start < 0 or end <= start:
+                raise ValueError(f"Model did not return JSON: {text[:300]}")
+            value = json.loads(cleaned[start:end + 1])
+        if not isinstance(value, dict):
+            raise ValueError("Expected a JSON object from model")
+        return value
