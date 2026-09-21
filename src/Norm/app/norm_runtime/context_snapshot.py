@@ -166,7 +166,26 @@ def _redis_snapshot(config: dict, prompt_queue) -> dict:
         db=int(cfg.get("db", 0)), decode_responses=True,
     )
     keys = list(client.scan_iter(match="norm:*", count=200))
-    return {"live_db_size": int(client.dbsize()), "live_norm_keys": len(keys), "queue": queue}
+    maint = config.get("maintenance", {})
+    active_key = str(maint.get("weekly_cleanup_active_key", "norm:maintenance:weekly_cleanup:active"))
+    last_key = str(maint.get("weekly_cleanup_last_key", "norm:maintenance:weekly_cleanup:last"))
+
+    def _decode_marker(raw):
+        if not raw:
+            return None
+        try:
+            value = json.loads(raw)
+            return value if isinstance(value, dict) else {"raw": str(raw)}
+        except Exception:
+            return {"raw": str(raw)}
+
+    return {
+        "live_db_size": int(client.dbsize()),
+        "live_norm_keys": len(keys),
+        "queue": queue,
+        "weekly_cleanup_active": _decode_marker(client.get(active_key)),
+        "weekly_cleanup_last": _decode_marker(client.get(last_key)),
+    }
 
 def _tail_text(path: Path, lines: int = 80, limit: int = 9000) -> str:
     if not path.is_file():
@@ -199,6 +218,13 @@ def _build_markdown(snapshot: dict) -> str:
     lines = ["# Norm live handoff", "", f"Generated: {snapshot['generated_at']}"]
     lines += ["", "## Live state", f"- Busy: **{busy.get('busy')}**; phase: `{busy.get('phase')}`; confidence: {busy.get('confidence')}"]
     lines.append(f"- Redis: work={rd['queue'].get('stream_length', 0)}, pending={rd['queue'].get('pending_count', 0)}, retry={rd['queue'].get('retry_count', 0)}, escalation={rd['queue'].get('escalation_count', 0)}")
+    cleanup_active = rd.get("weekly_cleanup_active")
+    cleanup_last = rd.get("weekly_cleanup_last")
+    if cleanup_active:
+        lines.append(f"- Weekly cleanup: **INCOMPLETE/ACTIVE** status={cleanup_active.get('status')} run={cleanup_active.get('run_id')} started={cleanup_active.get('started_at')} error={cleanup_active.get('error', '')}")
+    if cleanup_last:
+        purge = cleanup_last.get("image_analysis_purge") or {}
+        lines.append(f"- Last weekly cleanup: completed={cleanup_last.get('completed_at')} files={purge.get('files_removed')} bytes={purge.get('bytes_removed')}")
     lines.append(f"- PostgreSQL running tasks: {len(pg['running_tasks'])}; source files newer than deployed EXE: {len(unfinished['source_newer_than_exe'])}")
     runtime = snapshot.get("runtime") or {}
     lines.append(f"- Deployed EXE: `{runtime.get('exe')}`; modified {runtime.get('exe_modified_at')}; SHA-256 `{runtime.get('exe_sha256')}`")
