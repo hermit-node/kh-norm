@@ -426,6 +426,7 @@ def main() -> int:
             int(ports['norm_http']),
             resolve_bind_host(str(activity_cfg.get("host", "127.0.0.1"))),
             int(ports['activity']),
+            queue_config=config.get("rich_console_queue", {}),
         )
     setup_logging(root)
     logging.info("Norm startup begin")
