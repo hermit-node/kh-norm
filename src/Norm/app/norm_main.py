@@ -157,8 +157,19 @@ def clear_runtime_redis(root: Path) -> dict[str, int]:
         cfg = config.get(name, {})
         client = redis.Redis(host=cfg.get("host", "127.0.0.1"), port=int(cfg.get("port", 6379)), db=int(cfg.get("db", 0)), decode_responses=True)
         before = int(client.dbsize())
+        preserved = {}
+        if name == "redis":
+            maintenance = config.get("maintenance", {})
+            for key_name in ("weekly_cleanup_active_key",):
+                key = str(maintenance.get(key_name, "")).strip()
+                if key:
+                    value = client.get(key)
+                    if value is not None:
+                        preserved[key] = value
         client.flushdb()
-        cleared[name] = before
+        if preserved:
+            client.mset(preserved)
+        cleared[name] = max(0, before - len(preserved))
     deletion_queue = build_deletion_queue(root)
     purge = deletion_queue.purge_all()
     if purge.get("held", 0):
@@ -286,6 +297,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
     logging.getLogger().addHandler(ActivityLogHandler(activity_hub))
     statuses = healthcheck(root)
     coordinator, live, durable = build_runtime(root, ensure_schema=True)
+    durable.set_runtime_state("deployed_version", load_project_metadata(root)["version"])
     prompt_queue = build_prompt_queue(root)
     resources["prompt_queue"] = prompt_queue
     resources["durable"] = durable

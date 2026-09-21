@@ -208,6 +208,13 @@ class PostgresTaskLog:
                 sql.Identifier(f"idx_{self.schema}_task_summaries_task"), sql.Identifier(self.schema)
             ))
             cur.execute(sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {}.runtime_state (
+                    state_key text PRIMARY KEY,
+                    value jsonb NOT NULL,
+                    updated_at timestamptz NOT NULL DEFAULT now()
+                )
+            """).format(sql.Identifier(self.schema)))
+            cur.execute(sql.SQL("""
                 CREATE TABLE IF NOT EXISTS {}.runtime_maintenance_notes (
                     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                     phase text NOT NULL,
@@ -676,6 +683,30 @@ class PostgresTaskLog:
             summary = f"Task {status}. No step detail was recorded."
         self.finalize_task(task_id, summary, status)
         return True
+
+    def set_runtime_state(self, key: str, value) -> None:
+        key = str(key or "").strip()
+        if not key:
+            raise ValueError("runtime state key must not be blank")
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                INSERT INTO {}.runtime_state(state_key,value,updated_at) VALUES (%s,%s,now())
+                ON CONFLICT (state_key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()
+            """).format(sql.Identifier(self.schema)), (key, Jsonb(value)))
+
+    def get_runtime_state(self, key: str, default=None):
+        key = str(key or "").strip()
+        if not key:
+            return default
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("SELECT value FROM {}.runtime_state WHERE state_key=%s").format(sql.Identifier(self.schema)), (key,))
+            row = cur.fetchone()
+        return row[0] if row else default
+
+    def runtime_state_snapshot(self) -> dict:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("SELECT state_key,value,updated_at FROM {}.runtime_state ORDER BY state_key").format(sql.Identifier(self.schema)))
+            return {str(k): {"value": v, "updated_at": at} for k,v,at in cur.fetchall()}
 
     def record_maintenance_note(self, phase: str, note: str, *, task_id: str | None = None, details: dict | None = None) -> None:
         phase = str(phase or "maintenance").strip() or "maintenance"

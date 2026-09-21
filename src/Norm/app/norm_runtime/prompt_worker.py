@@ -5,7 +5,7 @@ import logging
 import re
 import socket
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from threading import Event, Thread
 from time import monotonic
 
@@ -59,7 +59,6 @@ class PromptWorker:
         self._thread: Thread | None = None
         self._blank_claims = 0
         self._last_memory_maintenance_check = 0.0
-        self._last_deep_history_check = 0.0
         self._last_redis_maintenance_check = 0.0
         self._last_weekly_cleanup_check = 0.0
         self._weekly_cleanup_redis = None
@@ -126,9 +125,7 @@ class PromptWorker:
                     if restored:
                         logging.info("Restored parked prompts count=%s", restored)
                     else:
-                        self._maybe_weekly_cleanup()
                         self._maybe_consolidate_background_memory()
-                        self._maybe_deep_consolidate_history()
                     continue
                 redis_id, job = claimed
                 if not job.prompt or not job.prompt.strip():
@@ -2462,6 +2459,7 @@ class PromptWorker:
     @staticmethod
     def _purge_workspace_directory(output_root, workspace_root) -> dict:
         from pathlib import Path
+
         output = Path(output_root).resolve()
         workspace = Path(workspace_root).resolve()
         try:
@@ -2486,6 +2484,7 @@ class PromptWorker:
     def _purge_image_analysis_outputs(self) -> dict:
         from pathlib import Path
         from norm_runtime.settings import load_path_settings
+
         tools = self._runtime_config().get("tools", {})
         output_raw = str(tools.get("image_output_root") or "").strip()
         if not output_raw:
@@ -2493,122 +2492,111 @@ class PromptWorker:
         workspace = Path(load_path_settings(self._runtime_root())["workspace_root"])
         return self._purge_workspace_directory(Path(output_raw), workspace)
 
-    def _maybe_weekly_cleanup(self) -> None:
-        maint = self._runtime_config().get("maintenance", {})
-        if not bool(maint.get("weekly_cleanup_enabled", True)):
+    @staticmethod
+    def _runtime_state_time(value):
+        if not value:
+            return None
+        try:
+            text = str(value).strip().replace("Z", "+00:00")
+            parsed = datetime.fromisoformat(text)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+
+    def _maybe_consolidate_background_memory(self) -> None:
+        if not self.durable or not hasattr(self.durable, "get_runtime_state"):
+            return
+        memory_cfg = self._runtime_config().get("memory", {})
+        maint_cfg = self._runtime_config().get("maintenance", {})
+        if not bool(maint_cfg.get("weekly_cleanup_enabled", True)):
             return
         now_clock = monotonic()
-        check_seconds = max(60, int(maint.get("weekly_cleanup_check_seconds", 3600)))
-        if now_clock - self._last_weekly_cleanup_check < check_seconds:
+        check_seconds = max(60, int(memory_cfg.get("consolidation_check_seconds", 3600)))
+        if now_clock - self._last_memory_maintenance_check < check_seconds:
             return
-        self._last_weekly_cleanup_check = now_clock
+        self._last_memory_maintenance_check = now_clock
         stats = self.queue.stats()
         if stats.get("stream_length", 0) or stats.get("pending_count", 0):
             return
         client = self._maintenance_redis_client()
-        active_key = str(maint.get("weekly_cleanup_active_key", "norm:maintenance:weekly_cleanup:active"))
-        last_key = str(maint.get("weekly_cleanup_last_key", "norm:maintenance:weekly_cleanup:last"))
+        active_key = str(maint_cfg.get("weekly_cleanup_active_key", "norm:maintenance:weekly_cleanup:active"))
         active_raw = client.get(active_key)
+        marker = None
         if active_raw:
-            logging.warning("Weekly cleanup marker already exists; blocking a new cleanup pass: %r", active_raw)
-            return
-        days = max(1, int(maint.get("weekly_cleanup_days", 7)))
-        last_raw = client.get(last_key)
-        if last_raw:
             try:
-                last = json.loads(last_raw)
-                last_epoch = float(last.get("completed_at_epoch") or 0.0)
+                marker = json.loads(active_raw)
             except Exception:
-                logging.error("Weekly cleanup completion marker is malformed; preserving evidence: %r", last_raw)
+                logging.error("Weekly maintenance marker is malformed; preserving evidence: %r", active_raw)
                 return
-            if last_epoch and _utc_now().timestamp() - last_epoch < days * 86400:
-                return
-        started = _utc_now()
-        marker = {
-            "status": "cleanup_started",
-            "run_id": str(uuid.uuid4()),
-            "started_at": started.isoformat(),
-            "started_at_epoch": started.timestamp(),
-            "consumer": self.consumer,
-            "host": socket.gethostname(),
-        }
-        if not client.set(active_key, json.dumps(marker, sort_keys=True), nx=True):
+        now = _utc_now()
+        regular_days = max(1, int(memory_cfg.get("consolidation_days", 7)))
+        deep_days = max(1, int(memory_cfg.get("deep_history_interval_days", 21)))
+        last_cleanup = self._runtime_state_time(self.durable.get_runtime_state("last_successful_cleanup_at"))
+        last_deep = self._runtime_state_time(self.durable.get_runtime_state("last_successful_deep_cleanup_at"))
+        regular_due = last_cleanup is None or last_cleanup <= now - timedelta(days=regular_days)
+        deep_due = bool(memory_cfg.get("deep_history_enabled", True)) and (
+            last_deep is None or last_deep <= now - timedelta(days=deep_days)
+        )
+        if marker is None and not regular_due:
             return
+        resumed = marker is not None
+        if marker is None:
+            marker = {
+                "status": "cleanup_started", "run_id": str(uuid.uuid4()),
+                "mode": "deep" if deep_due else "regular",
+                "phase": "starting", "resume_count": 0,
+                "started_at": now.isoformat(), "started_at_epoch": now.timestamp(),
+                "consumer": self.consumer, "host": socket.gethostname(),
+            }
+            if not client.set(active_key, json.dumps(marker, sort_keys=True), nx=True):
+                return
+        else:
+            marker["status"] = "cleanup_resumed"
+            marker["resume_count"] = int(marker.get("resume_count", 0)) + 1
+            marker["resumed_at"] = now.isoformat()
+            marker["consumer"] = self.consumer
+            client.set(active_key, json.dumps(marker, sort_keys=True))
+        run_id = str(marker.get("run_id") or "unknown")
+        mode = str(marker.get("mode") or ("deep" if deep_due else "regular"))
         try:
-            purge = self._purge_image_analysis_outputs()
+            marker["phase"] = "image_analysis_purge"
+            client.set(active_key, json.dumps(marker, sort_keys=True))
+            purge = {"files_removed": 0, "bytes_removed": 0, "skipped": "disabled"}
+            if bool(maint_cfg.get("weekly_cleanup_purge_image_analysis", True)):
+                purge = self._purge_image_analysis_outputs()
+            marker["phase"] = "deep_history" if mode == "deep" else "background_memory"
+            client.set(active_key, json.dumps(marker, sort_keys=True))
+            maintainer = DeepHistoryMaintainer(
+                self.durable, self.client, runtime_root=self._runtime_root(), config=memory_cfg,
+                queue=self.queue, drain_event=self._drain,
+            )
+            if mode == "deep":
+                result = maintainer.run()
+                if result is None:
+                    result = {"status": "success", "work": "no_eligible_history"}
+                elif str(result.get("status", "")) not in {"success", "already_completed_before_resume"}:
+                    raise RuntimeError(f"deep maintenance did not complete successfully: {result}")
+            else:
+                summary = maintainer.rebuild_background_snapshot(incremental=True)
+                result = {"status": "success", "background_chars": len(summary or "")}
             completed = _utc_now()
-            report = {
-                **marker,
-                "status": "completed",
-                "completed_at": completed.isoformat(),
-                "completed_at_epoch": completed.timestamp(),
-                "image_analysis_purge": purge,
-            }
-            client.set(last_key, json.dumps(report, sort_keys=True))
+            self.durable.set_runtime_state("last_successful_cleanup_at", completed.isoformat())
+            if mode == "deep":
+                self.durable.set_runtime_state("last_successful_deep_cleanup_at", completed.isoformat())
+            self.durable.record_maintenance_note(
+                "weekly_cleanup", f"{mode.capitalize()} cleanup completed successfully.",
+                details={"status": "success", "mode": mode, "run_id": run_id,
+                         "resumed": resumed, "image_analysis_purge": purge, "maintenance_result": result},
+            )
             client.delete(active_key)
-            logging.info("Weekly image cleanup completed run_id=%s purge=%s", marker["run_id"], purge)
+            logging.info("Weekly maintenance completed run_id=%s mode=%s purge=%s result=%s", run_id, mode, purge, result)
         except Exception as exc:
-            failed = {
-                **marker,
-                "status": "failed",
-                "failed_at": _utc_now().isoformat(),
-                "error": str(exc)[:2000],
-            }
+            failed = {**marker, "status": "failed", "failed_at": _utc_now().isoformat(), "error": str(exc)[:2000]}
             try:
                 client.set(active_key, json.dumps(failed, sort_keys=True))
             except Exception:
-                logging.exception("Could not update weekly cleanup failure marker")
-            logging.exception("Weekly image cleanup failed; active marker retained")
-
-    def _maybe_deep_consolidate_history(self) -> None:
-        if not self.durable or not hasattr(self.durable, "needs_deep_history_consolidation"):
-            return
-        cfg = self._runtime_config().get("memory", {})
-        if not bool(cfg.get("deep_history_enabled", True)):
-            return
-        now = monotonic()
-        check_seconds = max(300, int(cfg.get("deep_history_check_seconds", 3600)))
-        if now - self._last_deep_history_check < check_seconds:
-            return
-        self._last_deep_history_check = now
-        try:
-            maintainer = DeepHistoryMaintainer(
-                self.durable, self.client, runtime_root=self._runtime_root(), config=cfg,
-                queue=self.queue, drain_event=self._drain,
-            )
-            result = maintainer.run()
-            if result:
-                logging.info("Deep history maintenance result=%s", result)
-        except Exception:
-            logging.exception("Deep history maintenance failed")
-
-    def _maybe_consolidate_background_memory(self) -> None:
-        if not self.durable or not hasattr(self.durable, "needs_background_consolidation"):
-            return
-        cfg = self._runtime_config().get("memory", {})
-        if not bool(cfg.get("weekly_consolidation_enabled", True)):
-            return
-        now = monotonic()
-        check_seconds = max(60, int(cfg.get("consolidation_check_seconds", 3600)))
-        if now - self._last_memory_maintenance_check < check_seconds:
-            return
-        self._last_memory_maintenance_check = now
-        try:
-            days = max(1, int(cfg.get("consolidation_days", 7)))
-            if not self.durable.needs_background_consolidation(days):
-                return
-            stats = self.queue.stats()
-            if stats.get("stream_length", 0) or stats.get("pending_count", 0):
-                return
-            maintainer = DeepHistoryMaintainer(
-                self.durable, self.client, runtime_root=self._runtime_root(), config=cfg,
-                queue=self.queue, drain_event=self._drain,
-            )
-            summary = maintainer.rebuild_background_snapshot(incremental=True)
-            if summary:
-                logging.info("Background memory incrementally consolidated chars=%s", len(summary))
-        except Exception:
-            logging.exception("Background memory consolidation failed")
+                logging.exception("Could not update weekly maintenance failure marker")
+            logging.exception("Weekly maintenance failed run_id=%s mode=%s; marker retained for resume", run_id, mode)
 
     def _heartbeat_loop(self, stop: Event, job: PromptJob, started_clock: float) -> None:
         while not stop.wait(self.heartbeat_seconds):
