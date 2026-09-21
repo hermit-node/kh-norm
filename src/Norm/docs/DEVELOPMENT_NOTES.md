@@ -369,3 +369,10 @@ Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-proto
 ## 2026-09-20 - backup venv made reproducible
 - `/backup-zip` no longer archives `C:\Norm\.venv`; the CUDA PyTorch environment was ~4.4 GB and is reproducible. Runtime backup validation dropped from ~4.87 GB to ~235.7 MB before ZIP compression, while the workspace remains separately archived.
 - Added `[environment]` settings plus `tools\requirements-lock.txt` and `tools\ENVIRONMENT_REBUILD.md`. Restore tooling finds Python 3.14, installs it through winget or python.org if absent, recreates the venv when missing/mismatched, installs `torch==2.14.0+cu126` from the configured CUDA wheel index, installs pinned dependencies, and validates vision/runtime imports.
+
+## 2026-09-20 - Norm 0.51.2 weekly image cleanup with crash-visible Redis state
+- Added an independent seven-day weekly cleanup pass to the idle worker loop.
+- Cleanup validates the configured derived-image output path stays inside the writable workspace.
+- Redis DB0 active/last markers expose incomplete and completed cleanup state to /status-context.
+- The promoted build was later superseded by 0.51.2b's unified maintenance scheduler.
+- Historical promoted executable SHA-256: 332f38e05a31fd4740ac23c0ad91cf60895b574889490f3b76b5be9e7f009b8b.

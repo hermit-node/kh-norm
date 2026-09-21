@@ -61,6 +61,8 @@ class PromptWorker:
         self._last_memory_maintenance_check = 0.0
         self._last_deep_history_check = 0.0
         self._last_redis_maintenance_check = 0.0
+        self._last_weekly_cleanup_check = 0.0
+        self._weekly_cleanup_redis = None
         self._stop_after_step = Event()
         self._stop_all_now = Event()
         self.deferred_append_planner = deferred_append_planner
@@ -124,6 +126,7 @@ class PromptWorker:
                     if restored:
                         logging.info("Restored parked prompts count=%s", restored)
                     else:
+                        self._maybe_weekly_cleanup()
                         self._maybe_consolidate_background_memory()
                         self._maybe_deep_consolidate_history()
                     continue
@@ -2441,6 +2444,121 @@ class PromptWorker:
             raise RuntimeError(f"blank queue maintenance verification failed: {blanks} remain")
         logging.info("Blank maintenance complete deleted=%s verified=clean", deleted)
         self._blank_claims = 0
+
+    def _maintenance_redis_client(self):
+        if self._weekly_cleanup_redis is not None:
+            return self._weekly_cleanup_redis
+        cfg = self._runtime_config().get("redis", {})
+        self._weekly_cleanup_redis = redis.Redis(
+            host=str(cfg.get("host", "127.0.0.1")),
+            port=int(cfg.get("port", 6379)),
+            db=int(cfg.get("db", 0)),
+            decode_responses=True,
+            socket_connect_timeout=2.0,
+            socket_timeout=5.0,
+        )
+        return self._weekly_cleanup_redis
+
+    @staticmethod
+    def _purge_workspace_directory(output_root, workspace_root) -> dict:
+        from pathlib import Path
+        output = Path(output_root).resolve()
+        workspace = Path(workspace_root).resolve()
+        try:
+            output.relative_to(workspace)
+        except ValueError as exc:
+            raise RuntimeError(f"cleanup path is outside workspace: {output}") from exc
+        if output == workspace:
+            raise RuntimeError("refusing to purge workspace root")
+        output.mkdir(parents=True, exist_ok=True)
+        files = [p for p in output.rglob("*") if p.is_file() or p.is_symlink()]
+        removed_bytes = sum((p.lstat().st_size if p.is_symlink() else p.stat().st_size) for p in files)
+        for path in files:
+            path.unlink()
+        dirs = sorted(
+            (p for p in output.rglob("*") if p.is_dir() and not p.is_symlink()),
+            key=lambda p: len(p.parts), reverse=True,
+        )
+        for directory in dirs:
+            directory.rmdir()
+        return {"files_removed": len(files), "bytes_removed": int(removed_bytes), "path": str(output)}
+
+    def _purge_image_analysis_outputs(self) -> dict:
+        from pathlib import Path
+        from norm_runtime.settings import load_path_settings
+        tools = self._runtime_config().get("tools", {})
+        output_raw = str(tools.get("image_output_root") or "").strip()
+        if not output_raw:
+            return {"files_removed": 0, "bytes_removed": 0, "path": "", "skipped": "image_output_root not configured"}
+        workspace = Path(load_path_settings(self._runtime_root())["workspace_root"])
+        return self._purge_workspace_directory(Path(output_raw), workspace)
+
+    def _maybe_weekly_cleanup(self) -> None:
+        maint = self._runtime_config().get("maintenance", {})
+        if not bool(maint.get("weekly_cleanup_enabled", True)):
+            return
+        now_clock = monotonic()
+        check_seconds = max(60, int(maint.get("weekly_cleanup_check_seconds", 3600)))
+        if now_clock - self._last_weekly_cleanup_check < check_seconds:
+            return
+        self._last_weekly_cleanup_check = now_clock
+        stats = self.queue.stats()
+        if stats.get("stream_length", 0) or stats.get("pending_count", 0):
+            return
+        client = self._maintenance_redis_client()
+        active_key = str(maint.get("weekly_cleanup_active_key", "norm:maintenance:weekly_cleanup:active"))
+        last_key = str(maint.get("weekly_cleanup_last_key", "norm:maintenance:weekly_cleanup:last"))
+        active_raw = client.get(active_key)
+        if active_raw:
+            logging.warning("Weekly cleanup marker already exists; blocking a new cleanup pass: %r", active_raw)
+            return
+        days = max(1, int(maint.get("weekly_cleanup_days", 7)))
+        last_raw = client.get(last_key)
+        if last_raw:
+            try:
+                last = json.loads(last_raw)
+                last_epoch = float(last.get("completed_at_epoch") or 0.0)
+            except Exception:
+                logging.error("Weekly cleanup completion marker is malformed; preserving evidence: %r", last_raw)
+                return
+            if last_epoch and _utc_now().timestamp() - last_epoch < days * 86400:
+                return
+        started = _utc_now()
+        marker = {
+            "status": "cleanup_started",
+            "run_id": str(uuid.uuid4()),
+            "started_at": started.isoformat(),
+            "started_at_epoch": started.timestamp(),
+            "consumer": self.consumer,
+            "host": socket.gethostname(),
+        }
+        if not client.set(active_key, json.dumps(marker, sort_keys=True), nx=True):
+            return
+        try:
+            purge = self._purge_image_analysis_outputs()
+            completed = _utc_now()
+            report = {
+                **marker,
+                "status": "completed",
+                "completed_at": completed.isoformat(),
+                "completed_at_epoch": completed.timestamp(),
+                "image_analysis_purge": purge,
+            }
+            client.set(last_key, json.dumps(report, sort_keys=True))
+            client.delete(active_key)
+            logging.info("Weekly image cleanup completed run_id=%s purge=%s", marker["run_id"], purge)
+        except Exception as exc:
+            failed = {
+                **marker,
+                "status": "failed",
+                "failed_at": _utc_now().isoformat(),
+                "error": str(exc)[:2000],
+            }
+            try:
+                client.set(active_key, json.dumps(failed, sort_keys=True))
+            except Exception:
+                logging.exception("Could not update weekly cleanup failure marker")
+            logging.exception("Weekly image cleanup failed; active marker retained")
 
     def _maybe_deep_consolidate_history(self) -> None:
         if not self.durable or not hasattr(self.durable, "needs_deep_history_consolidation"):
