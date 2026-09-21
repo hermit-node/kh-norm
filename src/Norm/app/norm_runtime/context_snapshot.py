@@ -275,7 +275,7 @@ def collect_context_snapshot(
 ) -> dict:
     generated_at = datetime.now(NY).isoformat(timespec="milliseconds")
     document_paths = load_document_paths(root)
-    readme = _doc_digest(root / "README.md", ("runtime", "control", "durable", "princip", "tool", "maintenance", "architecture"))
+    readme = _doc_digest(document_paths["readme"], ("runtime", "control", "durable", "princip", "tool", "maintenance", "architecture"))
     current = _doc_digest(document_paths["current_status"], ("source", "configuration", "queue", "princip", "file", "persistence", "limitations"))
     future = _doc_digest(document_paths["future_implementation_notes"], ("coordinator", "memory", "future", "retrieval", "backlog"), section_chars=900)
     postgres = _postgres_snapshot(durable)

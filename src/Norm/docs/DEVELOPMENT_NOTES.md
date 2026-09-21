@@ -29,26 +29,16 @@
 - PyInstaller source should pass `--check` before packaging; then run the packaged EXE's `--check` too.
 - PyInstaller `--onefile` may show a parent and child `norm.exe`; that is expected.
 
-## Future coordinator migration
-- Current prompt-worker maintenance/recovery behavior is intentionally temporary and should be easy to move into a dedicated coordinator later.
-- Dedicated coordinator should own queue policy: chain sequencing, retries, parked chains, idle restoration, retry ceilings, escalation, and maintenance triggers.
-- Python should enforce hard invariants before Redis (for example, reject blank prompts instead of queuing them).
-- If Norm encounters 3 blank queue entries consecutively, trigger a hidden maintenance turn rather than another normal task.
-- That maintenance turn should give Norm bounded Redis queue tools so Norm can inspect work/retry state, remove blank artifacts itself, verify cleanup, and resume normal processing.
-- Keep those Redis operations as small reusable queue primitives so the future coordinator can call the same tools without rewriting queue logic.
-- At retry limit, coordinator should let Norm troubleshoot/recover first; unresolved work should move to the ChatGPT/Sol escalation path rather than spin forever.
-- Goal: worker executes jobs; coordinator decides what happens next. Keep those responsibilities separable now so migration is mostly rewiring rather than redesign.
+## Coordinator migration design note
+- Early development deliberately kept queue/recovery primitives separable so a later coordinator could own scheduling without redesigning the worker.
+- The detailed unimplemented coordinator design is no longer duplicated here; the canonical backlog is `FUTURE_IMPLEMENTATION_NOTES.md`.
 
-## Verification architecture direction
-- Keep deep reasoning verification separate from the final machine-readable acceptance gate.
-- Current deployed gate is intentionally narrow: dedicated no-tools Ollama generation, `think=False`, strict JSON schema, and local retry of malformed/blank verdicts.
-- This gate should not redo the task. Heavy reasoning, tool use, correction, and deterministic action checks happen before it.
-- A malformed verdict envelope is a verifier-transport problem, not evidence that the underlying project task failed; retry only the verdict turn before entering task recovery.
-- Observed with the current Qwen/Ollama stack: schema-constrained `think=True` generation can return a blank response, while the same schema with `think=False` returns valid structured JSON. Do not couple the strict verdict envelope to extended thinking mode.
-- Future target architecture: primary coordinator/worker -> deterministic verification -> separate coordinator/verifier model with its own independent thinking pass -> strict structured acceptance gate -> correction loop if rejected.
-- The future secondary coordinator/verifier should perform the real skeptical reasoning: challenge assumptions, detect omissions and contradictions, and compare the candidate against observed evidence independently of the worker.
-- Preserve the strict JSON gate after that reasoning as a simple reliable protocol boundary; do not make the protocol gate itself responsible for deep reasoning.
-- This separation lets the reasoning verifier model change later without destabilizing queue semantics or the acceptance/result contract.
+
+## Verification architecture history
+- Deep reasoning verification and the strict machine-readable acceptance gate were intentionally separated; the deployed strict gate remains small and schema-constrained.
+- Schema-constrained `think=True` was observed to return blank structured output on the current Qwen/Ollama stack, so the strict verdict envelope uses `think=False`.
+- Remaining verifier/coordinator hardening is tracked only in `FUTURE_IMPLEMENTATION_NOTES.md`.
+
 
 ## 2026-09-14 planner/decomposition and step-aware verification
 - Conversation requests are no longer wrapped in one opaque generic `respond` step. `conversation_service.py` first generates an explicit 1–8 step plan, independently checks it, optionally repairs it once, and then creates a larger `TaskPlan` containing planning/verification meta-steps plus the generated action steps.
@@ -121,7 +111,7 @@
 - A new compact global snapshot was written: 5,967 characters versus the prior 8,785-character snapshot. Detailed project facts remain in project-scoped PostgreSQL memory/thread history rather than being copied into the global snapshot.
 - The earlier delta-only weekly-consolidation idea is NOT the final housekeeping design. It is acceptable only as a cheap between-cleanups refresh. True memory housekeeping must traverse every curated/current memory record so it can detect duplicates, contradictions, newer resolutions, and stale task/problem state.
 - Memory retention policy: age alone never makes a record disposable. Preserve useful old facts and lessons. If a record is genuinely superseded or redundant, permanently delete it rather than keeping a dead `superseded` copy. If an old problem contains a reusable lesson, distill that lesson into a current/historical/resolved memory first, then delete the obsolete source record.
-- Future coordinator responsibility: before substantive work, traverse PostgreSQL for task-relevant context and inject only the best matches into the live prompt. Search must include curated memories plus relevant historical messages, runtime/maintenance notes, task summaries/steps, and similar prior tasks. Ranking should favor semantic similarity and same-project/thread relevance; recency is only a modest signal, not a hard filter. Resolved historical lessons remain retrievable; superseded/redundant records should no longer exist.
+- The deferred coordinator retrieval design motivated this policy; its current canonical specification is in `FUTURE_IMPLEMENTATION_NOTES.md`.
 ## 2026-09-16 immediate tool-evidence persistence — deployed
 - Expensive tool evidence is now persisted immediately when each tool call returns, before any later model/tool-slice failure can discard it.
 - Redis `step_evidence` now retains bounded semantic payloads such as `vision_image.answer`, file contents, paths, image counts, and analysis metadata instead of only `ok/path/hash` success markers.
@@ -199,7 +189,7 @@ Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-proto
 - SPY recast task `chat-f66a1cea-8a23-4ee8-9b80-b68f30b128fa` completed analysis but safety-stopped at final verification because the final candidate was truncated and omitted the explicit Phase-2 error-classification section. `SOS.readme` was the incident record at that point; the later 2026-09-17 maintenance pass verified the task terminal state and removed the live SOS.
 - The same SPY run showed that endpoint detection and price conversion can fail independently: geometry found the important wick near `y≈492`, while a bad y->price transform converted it inconsistently with the visible 750 line.
 - Added `docs\CHART_AXIS_GATE.md` as the generic chart price-axis contract: visible numeric anchors only, explicit label-to-grid association, residual/spacing checks, pane identity, monotonic ordering, and local bracket checks before price conversion.
-- `docs\QQQ_AXIS_GATE.md` is now a regression-specific example rather than the general rule. The generic gate is not yet hard-wired into analyzer code; that remains a pending runtime hardening choice.
+- `docs\QQQ_AXIS_GATE.md` is now a regression-specific example rather than the general rule. The generic gate is not hard-wired into analyzer code; the deferred enforcement design is tracked in `FUTURE_IMPLEMENTATION_NOTES.md`.
 - Remote Windows rule: stop escalating nested PowerShell/Python/SQL quoting once it becomes fragile. Prefer a small script/file. `C:\Users\KHzz\Documents\Norm\verbatim_lines.py` is the newline-safe helper for verbatim append/insert work.
 - Documentation refresh on 2026-09-17 trimmed deployment-history detail from the operator README, updated `CURRENT_STATUS.md`, and preserved `SOS.readme` unchanged as forensic evidence.
 
@@ -212,7 +202,7 @@ Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-proto
 - Direct Redis audit found DB0 empty; DB1 work/retry/escalation/dead streams empty with zero consumer-group pending entries; DB2 empty. The sole DB1 key is the empty `norm:prompt:work` stream/group shell. Do not `FLUSHDB` a live DB1 merely to erase that infrastructure key.
 - Processed the 08:18 SPY `SOS.readme`: later final verification succeeded at 09:37:41 and live `/health` was OK. The incident was preserved in the maintenance backup and the live SOS was deleted. Standing policy is now to treat SOS as transient task-resolution state: retain it until the originating task is durably completed or deliberately finalized failed in PostgreSQL, then remove it after preserving reusable lessons.
 - Generalized `docs\CHART_VISION_CHEATSHEET.md`; removed QQQ-only anchors/candidate coordinates. QQQ-specific details remain in regression files. The generic axis gate remains instruction-level and is not yet an analyzer-enforced numeric transform.
-- Memory housekeeping gap documented accurately: weekly background consolidation compacts summaries but does not hard-delete all redundant/superseded `memory_items`; full curated-row housekeeping remains manual/future coordinator work.
+- Memory housekeeping gap documented accurately: background consolidation does not by itself hard-delete every redundant curated `memory_item`; the remaining automation design is tracked in `FUTURE_IMPLEMENTATION_NOTES.md`.
 
 ## 2026-09-17 - automatic processed-SOS cleanup deployed
 - `prompt_worker._clear_terminal_redis()` now calls `_clear_processed_sos(task_id)`. A matching `SOS.readme` is removed only when the originating PostgreSQL task is `completed` or `failed`, terminal-summary verification passes, and the latest summary is nonblank. Cancelled/unresolved tasks do not clear SOS.
@@ -259,7 +249,7 @@ Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-proto
 - Added bounded `run_command(command, cwd?, timeout_seconds?)` to the model tool executor. Runtime config enables PowerShell with a 180-second cap and 20,000-character stdout/stderr capture.
 - Direct source test ran `D:\LOCAL_Share\Code Projects\Universal\ports.py` successfully with exit code 0 and a bindable returned port. The all-busy utility behavior had already been independently verified at 235 unique probes then `False`.
 - The earlier `ports.py` task exposed a pipeline flaw rather than a script flaw: the planner required execution proof, the old worker lacked a shell, intermediate verification still accepted substitute static reasoning, and final verification correctly rejected the missing runtime evidence. Prose-only final repair cannot manufacture missing execution evidence.
-- Remaining verifier hardening: structurally gate step completion on required evidence and route final missing-evidence rejection back to the exact step/tool requirement.
+- The missing-evidence failure mode remains an architectural limitation; the implementation plan is tracked in `FUTURE_IMPLEMENTATION_NOTES.md`.
 
 ## 2026-09-18 - temporary thinking persistence and cleanup
 - Ollama thinking and answer content are separate. Previously, a slice could spend ~16K tokens thinking, emit almost no answer, hit the limit, and lose most of the useful unfinished work because only answer content was durable.
@@ -290,7 +280,7 @@ Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-proto
 ## 2026-09-18 - planner efficiency without weakening verification
 - The `simpleTables` README trial was intentionally easy but the planner expanded it into six execution steps. That was more decomposition than the task needed.
 - Preserve the good behavior: requirements were repeatedly checked against observed files, the worker did not simply guess the project purpose, and the final artifact still requires write/read-back verification.
-- Future improvement: make decomposition proportional to task complexity. For a bounded README inspection, one adaptive inspect/read step, one write step, and one verification step should usually be enough.
+- The over-decomposition lesson is retained here; the active planner-efficiency design is tracked in `FUTURE_IMPLEMENTATION_NOTES.md`.
 - Do not optimize by reducing evidence. Collapse adjacent inspection work into fewer steps while retaining the same evidence coverage and explicit checks against skipped work or unsupported assumptions.
 - Treat extra verification as valuable when uncertainty, destructive actions, external side effects, or conflicting evidence justify it; avoid mechanically triple-checking every low-risk substep.
 ## 2026-09-19 - teach Norm through its own learning path first
@@ -325,3 +315,57 @@ Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-proto
 - Local commands include `help`/`/help`, `/status`, `/new`, `/multi` with `::send`/`::cancel`, `/repeat-submission`, `/repeat-answer`, `/exit`, and `/shutdown`. Repeat commands requeue the prior content verbatim rather than merely redisplaying it.
 - Ctrl+C in the prompt console requests the existing graceful `/control/shutdown-norm` path. `help` matching is explicitly case/whitespace insensitive through `prompt.strip().lower()`.
 - Validation: Python helpers compile; PostgreSQL history recovery returned a prior submission/answer/thread; UTF-8 round-trip succeeded with `CPI → hike → SPY ✓`; literal `HELP` was intercepted locally; live chat/activity health both returned OK. Deployed EXE remained unchanged at SHA-256 `5D52EDF2519B1951A4109DCD3D8100BEFF830AB08B018EEF91C484F500C33D47`.
+
+## 2026-09-20 - documentation roles consolidated
+- `README.md` is now operator overview only; `CURRENT_STATUS.md` is current facts/limitations; `DEVELOPMENT_NOTES.md` retains chronology/lessons; `FUTURE_IMPLEMENTATION_NOTES.md` is the single active backlog/design notebook.
+- Future-design detail previously duplicated across README/current-status/development notes was collapsed into the canonical future-notes file; historical entries now retain only the lesson/rationale plus a pointer.
+- Canonical future notes moved from `docs\` to the Norm root. The old `docs\FUTURE_IMPLEMENTATION_NOTES.md` path is temporarily an NTFS hard link to the same file so the currently running packaged executable's hard-coded status-context reader is not broken mid-task.
+- `config\settings.ini` now has `[documentation]` pointers for `CURRENT_STATUS.md`, `DEVELOPMENT_NOTES.md`, and `FUTURE_IMPLEMENTATION_NOTES.md`. Source `settings.py`/`context_snapshot.py` was updated and `py_compile`-verified to consume those pointers on the next promoted build.
+- Do not remove the compatibility hard link until a build containing the documentation-pointer source patch is promoted and `/status-context` is verified against the configured paths.
+
+## 2026-09-20 - Norm 0.51.0 promotion and scheduler/recovery repair
+- `config\settings.ini` is the canonical source for project metadata: Norm `0.51.0`, author/company `KernelHermit`, repository URL `https://github.com/hermit-node`; it also holds maintained-document pointers.
+- Added `tools\build_norm.py` as the repeatable PyInstaller build path. It generates Windows version resources from `settings.ini`; Windows metadata and `norm.exe --version` report 0.51.0 / KernelHermit / the repository URL.
+- Promoted executable SHA-256: `F0900495F289DABDF0A38AAA7C4014F6E60A37B19B66955CF4BD930571555DD5`; packaged dependency health passed before promotion.
+- Append/follow-up requests now persist only a `deferred-plan` control node while the predecessor is unfinished. The real plan is generated only after the full predecessor task completes and passes structured final verification.
+- Cancelled/failed oversized-recovery children are replaced within a bounded child retry budget without repeatedly consuming the parent retry budget.
+- Worker shell instructions explicitly advertise `C:\Users\KHzz\Documents\Norm\verbatim_lines.py` for multiline/quote-heavy commands without widening native file-tool roots.
+- The pointer-aware build reads maintained-document paths from `settings.ini`; after promotion, the redundant `docs\FUTURE_IMPLEMENTATION_NOTES.md` hard link was removed while preserving the root canonical file.
+
+## 2026-09-20 - failed documentation self-reconcile stopped and purged
+- A documentation-maintenance task completed inspection but then wrote an incorrect README statement conflating deferred append planning with oversized-step recovery. Its verification also expected missing `docs\_readme_new.md`, causing retry/recovery.
+- Norm was stopped before the misunderstanding propagated through the remaining documentation. DB1 was explicitly cleared while Norm was offline.
+- PostgreSQL audit found one cancelled task, five task-step rows, 41 evidence rows, 21 thinking-segment rows, one task summary, and one dedicated maintenance-project message. No memory items existed for that project and no marker hits were found in validated task history/background memory/maintenance notes.
+- Before deletion, a full `norm_runtime` SQL dump (~6.25 MB) plus targeted JSON export was written under `Norm-backups\failed-docs-cleanup-20260920-191832`. The cancelled task/cascaded working evidence and dedicated maintenance project/orphan message were then removed.
+- Lesson: documentation repair should fail closed on missing temporary verification artifacts and must keep append scheduling distinct from oversized recovery. The UUID/dependency migration remains the next planned architecture cleanup.
+
+## 2026-09-20 - opaque UUID task/node identities and dependency graph deployed
+- Migration was performed only after Norm was stopped, DB1 work was cleared, the failed documentation task had been backed up/purged, and a fresh migration-specific source + full `norm_runtime` SQL backup was created at `Norm-backups\pre-uuid-gui-20260920-192743` (~6.0 MB SQL dump).
+- Added immutable `task_runs.task_uuid`, `task_nodes.node_id`, and `task_dependency_edges.edge_id`. Readable task/step IDs remain compatibility/display aliases; ordinals are stored separately from node identity.
+- Plans now persist task UUID, node UUID, ordinal, legacy dependencies, and `depends_on_node_ids`. Redis work `message_id`, chain identity, previous-node, and next-node references are UUID based; worker/coordinator metadata carries both opaque and legacy identities.
+- PostgreSQL step/evidence/segment/thinking/recovery/archive rows are backfilled with `node_uuid`. Existing plan rows were rewritten with UUID identity metadata. Legacy direct `task_runs` inserts receive database-side `gen_random_uuid()` so transition-era tools/tests keep working.
+- `task_dependency_edges` represents sequence, verification, append, child, and recovery relations. Stable plans preserve existing edge UUIDs across `ensure_schema()`; obsolete internal edges are removed only when the dependency itself changes.
+- Append verification is runtime-enriched with `previous_task_uuid` and `previous_node_id`; execution gating uses opaque identity when present and falls back to legacy lookup only for compatibility. Append edges target task identity so replacing a `deferred-plan` placeholder cannot retarget the dependency.
+- Live migration audit: 71 task rows / 71 distinct non-null task UUIDs; 424 task nodes; 364 dependency edges; zero null node UUIDs in `task_steps`, `task_evidence`, `task_step_segments`, `task_thinking_segments`, `task_recovery_notes`, and `task_evidence_archive`; zero dangling task-edge references; zero plan/registry mismatches. A second migration pass preserved all 364 edge UUIDs exactly.
+- Isolated PostgreSQL test proved recovery-child edges, task-level append edges surviving deferred-plan replacement, evidence node linkage, task lookup by UUID, and stable internal edge IDs; temporary schema was dropped afterward.
+- Existing deferred-planning, append-gate, and cancelled-child recovery regressions all passed after compatibility hardening.
+
+## 2026-09-20 - GUI companion-window lifecycle fix deployed
+- `norm_gui.bat` now uses `cmd.exe /c` for prompt, stream, and reply helpers; `/k` no longer leaves a shell open after Python exits.
+- Stream/reply helpers allow startup grace, detect the running `norm.exe`, and exit normally when the runtime disappears. Reply process checks are throttled rather than spawning `tasklist` continuously.
+- Python `signal`/outer-guard handling alone was insufficient on Windows while the stream blocked inside WinSock: `CTRL_BREAK_EVENT` either terminated with `0xC000013A` or remained queued until the read returned. The final implementation installs native `SetConsoleCtrlHandler` callbacks in the disposable stream/reply viewers and calls `ExitProcess(0)` for Ctrl+C/Ctrl+Break.
+- Live graceful-shutdown regression: stream and reply helpers were started while Norm was down, attached after the promoted executable came online, then Norm received the same graceful shutdown endpoint used by the prompt console. Norm exited normally; stream and reply both exited code 0. A separate real Windows `CTRL_BREAK_EVENT` regression then verified both helpers exit code 0 with no traceback while the stream is connected/blocking.
+- Promoted 0.51.0 executable SHA-256: `A72D7FC8E0268CB42A1F062BB63EFCAA4904B159330972D878779738A2DDAEC6`. Previous live executable backup: `staging\norm-live-before-0.51.0-20260920-194100.exe` (`F0900495...555DD5`).
+
+## 2026-09-20 - Norm 0.51.1 runtime/workspace split and backup tooling
+- Runtime moved to `C:\Norm`; the model-editable workspace remains `C:\Users\KHzz\Documents\Norm`. `config\settings.ini` now defines `runtime_root`, `workspace_root`, and `verbatim_writer`, and startup validates that runtime/workspace do not overlap.
+- Both normal conversation tools and worker/recovery-child tools inject the configured workspace root as an allowed file root. Effective roots are the Norm workspace, `\\KH-CA8D\Local1675`, and `D:\LOCAL_Share\Code Projects`; `C:\Norm` itself is not model-writable.
+- `verbatim_lines.py`, runtime logs/state/tools/config/source, build tooling, and the deployed executable now live under `C:\Norm`. Maintained docs/images/context/statements remain under the writable workspace.
+- Added local GUI command `/backup-zip`. It uses settings to create a timestamped ZIP containing a custom-format PostgreSQL `norm_runtime` dump, the workspace tree, and the runtime tree while excluding disposable build/staging/cache directories. The archive contains `backup-manifest.json` plus `.bat`/PowerShell restore helpers; restore refuses while Norm is running and requires explicit `RESTORE` confirmation.
+- Backup validation succeeded by creating a temporary PostgreSQL dump, validating it with `pg_restore --list`, and walking 29,552 runtime files / 4,871,669,539 bytes plus 1,478 workspace files / 881,549,022 bytes.
+- Obsolete PyInstaller build trees, promotion/release copies, headless-Chrome staging profiles, and superseded candidate EXEs were pruned after the external pre-migration rollback snapshot was created. `app` is now ~37 MB and staging was reduced from ~3.99 GB to ~201 MB.
+- Promoted Norm `0.51.1` executable SHA-256: `FB5E6E2BB7668D1C2CBD1CAEC60F356D193A50B70B208DD0E2B50C56CEF4BBF4`. Packaged `--check` passed for Ollama, Redis, prompt queue, and PostgreSQL; live chat/activity health returned OK and `/status/busy` was idle with zero work/pending/retry/escalation/running tasks.
+
+## 2026-09-20 - backup venv made reproducible
+- `/backup-zip` no longer archives `C:\Norm\.venv`; the CUDA PyTorch environment was ~4.4 GB and is reproducible. Runtime backup validation dropped from ~4.87 GB to ~235.7 MB before ZIP compression, while the workspace remains separately archived.
+- Added `[environment]` settings plus `tools\requirements-lock.txt` and `tools\ENVIRONMENT_REBUILD.md`. Restore tooling finds Python 3.14, installs it through winget or python.org if absent, recreates the venv when missing/mismatched, installs `torch==2.14.0+cu126` from the configured CUDA wheel index, installs pinned dependencies, and validates vision/runtime imports.

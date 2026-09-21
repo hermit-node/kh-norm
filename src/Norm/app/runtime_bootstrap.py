@@ -15,7 +15,7 @@ from norm_runtime.prompt_queue import RedisPromptQueue
 from norm_runtime.conversation_store import ConversationStore
 from norm_runtime.file_tool_executor import FileToolExecutor
 from norm_runtime.ollama_client import OllamaClient
-from norm_runtime.settings import load_ports
+from norm_runtime.settings import load_ports, load_path_settings
 from norm_runtime.conversation_service import ConversationService
 
 
@@ -122,22 +122,25 @@ def build_conversation_service(
     )
     memory_cfg = config.get("memory", {})
     tools_cfg = config.get("tools", {})
+    path_cfg = load_path_settings(root)
+    workspace_root = path_cfg["workspace_root"]
+    allowed_roots = [str(workspace_root), *list(tools_cfg.get("allowed_roots", []))]
     file_tools = None
     if bool(tools_cfg.get("enabled", False)):
         deletion_queue = build_deletion_queue(root)
         file_tools = FileToolExecutor(
-            list(tools_cfg.get("allowed_roots", [])),
+            allowed_roots,
             backup_root=str(tools_cfg.get("backup_root", root / "state" / "file-backups")),
             audit_log=str(tools_cfg.get("audit_log", root / "logs" / "tool-audit.jsonl")),
             max_read_bytes=int(tools_cfg.get("max_read_bytes", 131072)),
             max_write_bytes=int(tools_cfg.get("max_write_bytes", 1048576)),
-            blocked_write_staging_root=str(tools_cfg.get("blocked_write_staging_root", root / "docs" / "blocked-writes")),
+            blocked_write_staging_root=str(tools_cfg.get("blocked_write_staging_root", workspace_root / "docs" / "blocked-writes")),
             write_retry_count=int(tools_cfg.get("write_retry_count", 3)),
             write_retry_delay_seconds=float(tools_cfg.get("write_retry_delay_seconds", 0.25)),
             image_enabled=bool(tools_cfg.get("image_enabled", False)),
             image_python=str(tools_cfg.get("image_python", root / ".venv" / "Scripts" / "python.exe")),
             image_analyzer_script=str(tools_cfg.get("image_analyzer_script", root / "tools" / "image_analyzer.py")),
-            image_output_root=str(tools_cfg.get("image_output_root", root / "images" / "analysis")),
+            image_output_root=str(tools_cfg.get("image_output_root", workspace_root / "images" / "analysis")),
             image_profile_budgets=dict(tools_cfg.get("image_profile_budgets", {})),
             image_max_input_bytes=int(tools_cfg.get("image_max_input_bytes", 25_000_000)),
             vision_client=client,
@@ -147,7 +150,7 @@ def build_conversation_service(
             shell_executable=str(tools_cfg.get("shell_executable", "powershell.exe")),
             shell_timeout_seconds=int(tools_cfg.get("shell_timeout_seconds", 120)),
             shell_max_output_chars=int(tools_cfg.get("shell_max_output_chars", 20000)),
-            verbatim_helper=str(root / "verbatim_lines.py"),
+            verbatim_helper=str(path_cfg["verbatim_writer"]),
             connection_config={
                 "postgres": config.get("postgres", {}),
                 "redis": config.get("redis", {}),

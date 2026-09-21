@@ -1,33 +1,12 @@
-Historical Norm 0.51.0 source reconstruction
+﻿Historical Norm 0.51.1 source reconstruction
+Source full backup: D:\LOCAL_Share\Norm GraveYard\Norm-Backups\Norm-backup-20260920-232101-0400.zip
+Source backup SHA-256: E6E25D80EA1DC825FDB2D470D8548D453A61AB4723BFA3D38CBB781C24E18C50
 
-Reconstruction base:
-D:\LOCAL_Share\Norm GraveYard\Norm-Backups\Norm-current-post-append-condensation-20260920-1506.zip
+This archive was reconstructed from the historical full backup without modifying the original.
+Included: runtime app source, runtime tool source/scripts, launch files, settings.ini, norm.json,
+and top-level workspace documentation.
+Deliberately omitted: runtime.json/runtime.json.tmp, logs, state, PostgreSQL dumps, workspace data,
+and executables/candidate binaries. This reduces the chance of carrying historical credentials or
+private runtime state into a future Git import.
 
-Base SHA-256:
-7B8655259F226495C7B851E75A95F641A0E503A266432A1DD49238790FA01AFE
-
-Method:
-The recovered Sep-20 15:06 source snapshot was copied into an isolated directory.
-Only deterministic source-edit scripts preserved from the original Sep-20 staging
-tree were replayed in timestamp order. Each replay script was rewritten to point
-at this isolated directory. Live database migration, queue operations, tests,
-promotion commands, and executable replacement were NOT run.
-
-Included source patches cover:
-- maintenance continuation/checkpoint fixes present before the release work
-- maintained-document pointer source changes
-- 0.51.0 project/version metadata and deferred append planning
-- bounded oversize-child recovery
-- UUID task/node/dependency identity and compatibility fixes
-- GUI lifecycle / Ctrl+C / native control handling
-
-Known promoted 0.51.0 executable SHA-256 from release records:
-A72D7FC8E0268CB42A1F062BB63EFCAA4904B159330972D878779738A2DDAEC6
-
-The exact promoted 0.51.0 executable and the documented pre-0.51.1 migration
-rollback snapshot were not recovered, so this source reconstruction cannot be
-bytecode-validated against the final promoted binary. It must remain explicitly
-identified as reconstructed, not an original source package.
-
-Runtime state, logs, database data, recovery/task artifacts and credential-bearing
-runtime configuration are excluded.
+It is a reconstruction, not an originally-issued portable-source package.
