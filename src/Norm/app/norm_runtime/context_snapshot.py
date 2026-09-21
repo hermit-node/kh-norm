@@ -150,7 +150,12 @@ def _postgres_snapshot(durable) -> dict:
             }
             for r in cur.fetchall()
         ]
-    return {"running_tasks": running, "recent_tasks": recent, "maintenance": maintenance}
+        cur.execute(f"SELECT state_key,value,updated_at FROM {s}.runtime_state ORDER BY state_key")
+        runtime_state = {
+            str(r[0]): {"value": r[1], "updated_at": r[2].astimezone(NY).isoformat(timespec="seconds")}
+            for r in cur.fetchall()
+        }
+    return {"running_tasks": running, "recent_tasks": recent, "maintenance": maintenance, "runtime_state": runtime_state}
 
 
 def _redis_snapshot(config: dict, prompt_queue) -> dict:
@@ -168,8 +173,6 @@ def _redis_snapshot(config: dict, prompt_queue) -> dict:
     keys = list(client.scan_iter(match="norm:*", count=200))
     maint = config.get("maintenance", {})
     active_key = str(maint.get("weekly_cleanup_active_key", "norm:maintenance:weekly_cleanup:active"))
-    last_key = str(maint.get("weekly_cleanup_last_key", "norm:maintenance:weekly_cleanup:last"))
-
     def _decode_marker(raw):
         if not raw:
             return None
@@ -178,13 +181,11 @@ def _redis_snapshot(config: dict, prompt_queue) -> dict:
             return value if isinstance(value, dict) else {"raw": str(raw)}
         except Exception:
             return {"raw": str(raw)}
-
     return {
         "live_db_size": int(client.dbsize()),
         "live_norm_keys": len(keys),
         "queue": queue,
         "weekly_cleanup_active": _decode_marker(client.get(active_key)),
-        "weekly_cleanup_last": _decode_marker(client.get(last_key)),
     }
 
 def _tail_text(path: Path, lines: int = 80, limit: int = 9000) -> str:
@@ -219,12 +220,13 @@ def _build_markdown(snapshot: dict) -> str:
     lines += ["", "## Live state", f"- Busy: **{busy.get('busy')}**; phase: `{busy.get('phase')}`; confidence: {busy.get('confidence')}"]
     lines.append(f"- Redis: work={rd['queue'].get('stream_length', 0)}, pending={rd['queue'].get('pending_count', 0)}, retry={rd['queue'].get('retry_count', 0)}, escalation={rd['queue'].get('escalation_count', 0)}")
     cleanup_active = rd.get("weekly_cleanup_active")
-    cleanup_last = rd.get("weekly_cleanup_last")
+    state = pg.get("runtime_state") or {}
+    def _state_value(name):
+        item = state.get(name) or {}
+        return item.get("value")
     if cleanup_active:
-        lines.append(f"- Weekly cleanup: **INCOMPLETE/ACTIVE** status={cleanup_active.get('status')} run={cleanup_active.get('run_id')} started={cleanup_active.get('started_at')} error={cleanup_active.get('error', '')}")
-    if cleanup_last:
-        purge = cleanup_last.get("image_analysis_purge") or {}
-        lines.append(f"- Last weekly cleanup: completed={cleanup_last.get('completed_at')} files={purge.get('files_removed')} bytes={purge.get('bytes_removed')}")
+        lines.append(f"- Weekly cleanup: **INCOMPLETE/ACTIVE** status={cleanup_active.get('status')} mode={cleanup_active.get('mode')} phase={cleanup_active.get('phase')} run={cleanup_active.get('run_id')} started={cleanup_active.get('started_at')} error={cleanup_active.get('error', '')}")
+    lines.append(f"- PostgreSQL runtime state: version={_state_value('deployed_version')}; last clean={_state_value('last_successful_cleanup_at')}; last deep clean={_state_value('last_successful_deep_cleanup_at')}")
     lines.append(f"- PostgreSQL running tasks: {len(pg['running_tasks'])}; source files newer than deployed EXE: {len(unfinished['source_newer_than_exe'])}")
     runtime = snapshot.get("runtime") or {}
     lines.append(f"- Deployed EXE: `{runtime.get('exe')}`; modified {runtime.get('exe_modified_at')}; SHA-256 `{runtime.get('exe_sha256')}`")

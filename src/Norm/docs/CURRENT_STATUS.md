@@ -4,24 +4,25 @@ This file records the current deployed state and known limitations of the Norm r
 
 ## Identity and live runtime
 
-- Version: `0.51.1`
+- Version: `0.51.3`
 - Author: `KernelHermit`
 - Repository: `https://github.com/hermit-node`
 - Machine: `KHzz`
-- Root: `C:\Users\KHzz\Documents\Norm`
-- Live source: `C:\Users\KHzz\Documents\Norm\app`
-- Live executable: `C:\Users\KHzz\Documents\Norm\app\norm.exe`
-- Executable SHA-256: `fb5e6e2bb7668d1c2cbd1caec60f356d193a50b70b208dd0e2b50c56cef4bbf4`
+- Runtime root: `C:\Norm`
+- Writable workspace: `C:\Users\KHzz\Documents\Norm`
+- Live source: `C:\Norm\app`
+- Live executable: `C:\Norm\app\norm.exe`
+- Executable SHA-256: `2409ad004cd2c2d17937e35d37e7bd415728e7d94a3d04f714692465fe5239a2`
 - Model alias/base: `norm` / `qwen3.8:27b-q4_K_M`
 - Context length: `84000`
 - GPU: NVIDIA GeForce RTX 3090, 24576 MiB
-- Runtime log: `C:\Users\KHzz\Documents\Norm\logs\norm-runtime.log`
+- Runtime log: `C:\Norm\logs\norm-runtime.log`
 
-The promoted 0.51.1 executable passes packaged `--check` with Ollama, Redis, prompt queue, and PostgreSQL all `ok`. After promotion/restart both HTTP/activity health endpoints return `status=ok`; `/status/busy` reports `idle` with no active chat/model calls, no work, no pending, no retry, no escalation, and no PostgreSQL running tasks.
+The promoted 0.51.3 executable passes packaged `--check` with Ollama, Redis, prompt queue, and PostgreSQL all `ok`. After promotion/restart both HTTP/activity health endpoints return `status=ok`; `/status/busy` reports `idle` with no active chat/model calls, no work, no pending, no retry, no escalation, and no PostgreSQL running tasks.
 
 ## Configuration and services
 
-`config\settings.ini` is the human-editable source of truth for runtime service ports, maintained-document pointers, and project/release metadata (`Norm` / `0.51.1` / `KernelHermit` / `https://github.com/hermit-node`):
+`config\settings.ini` is the human-editable source of truth for runtime service ports, maintained-document pointers, and project/release metadata (`Norm` / `0.51.3` / `KernelHermit` / `https://github.com/hermit-node`):
 
 - Ollama: `11434`
 - Norm HTTP/chat: `12543`
@@ -39,7 +40,7 @@ The activity/control API also exposes `GET /status-context`. Each request builds
 
 `norm_gui.bat` is the lightweight local operator shell. It opens separate prompt, runtime-stream, and reply windows while using the existing Norm APIs rather than creating a second runtime. Healthy existing Norm instances are attached immediately; an existing-but-starting `norm.exe` is given up to 60 seconds to expose its APIs before attach; no duplicate instance is spawned. If Norm is fully stopped, the launcher may start `app\norm.exe` and wait for health.
 
-The GUI uses project `default`, so PostgreSQL remains the canonical running record of user submissions, assistant replies, thread IDs, summaries, and consolidation. On GUI startup, `/repeat-submission` and `/repeat-answer` recover the latest applicable turn from PostgreSQL and requeue it verbatim. A local UTF-8 JSONL fallback is used only when PostgreSQL message persistence is missing. Completed replies are delivered through an atomic UTF-8 staging file; the reply viewer reads the whole file only after completion, displays it once, then deletes the staging file.
+The GUI uses project `default`, so PostgreSQL remains the canonical completed conversation record. Normal prompt input is first written to Redis DB3 (`norm:gui:ingress`) with a timestamp and prompt UUID, allowing the prompt window to return immediately. A dedicated GUI dispatcher submits one oldest prompt at a time through HTTP/chat `12543`; activity/control and immediate stop commands use `8766`. In-flight dispatch is tracked separately and an interrupted/ambiguous dispatch is quarantined as uncertain instead of being replayed automatically. DB3 is not cleared by normal runtime Redis cleanup, so queued GUI input survives Norm restart. On GUI startup, `/repeat-submission` and `/repeat-answer` recover the latest applicable turn and requeue it verbatim. A local UTF-8 JSONL fallback is used only when PostgreSQL message persistence is missing. Completed replies are delivered through an atomic UTF-8 staging file; the reply viewer reads the whole file only after completion, displays it once, then deletes the staging file.
 
 `norm_gui.bat` launches all three helper shells with `cmd.exe /c`; stream/reply helpers wait through startup, then exit when Norm exits, so those companion windows close with the runtime. On Windows the stream/reply viewers install a native `SetConsoleCtrlHandler`; Ctrl+C/CTRL_BREAK exits the disposable viewer through `ExitProcess(0)`, avoiding Python traceback/reconnect behavior even while the SSE socket is blocked. Live graceful-shutdown and actual `CTRL_BREAK_EVENT` regressions both verified stream/reply exit code 0 with no traceback.
 
@@ -78,7 +79,7 @@ The UUID migration is deployed, not future work:
 
 ## Queue durability
 
-PostgreSQL is the durable ledger. DB0/DB1/DB2 are transient runtime state and deletion staging.
+PostgreSQL is the durable task/conversation ledger. DB0/DB1/DB2 are transient runtime state and deletion staging; DB3 is the separate durable GUI ingress/state buffer and survives normal runtime Redis cleanup.
 
 Current code behavior:
 - Terminal completion/failure/cancellation is written and terminal-summary verified before task-specific Redis cleanup.
@@ -145,7 +146,19 @@ Deep history maintenance remains replay-validated and destructive only after bac
 
 ## Backup and environment recovery
 
-`/backup-zip` archives the PostgreSQL `norm_runtime` schema, the writable workspace, and the runtime tree. Rebuildable `.venv`, staging, build, dist, and cache directories are excluded. `[environment]` in `config\settings.ini` pins Python `3.14.0`, CUDA Torch `2.14.0+cu126`, its PyTorch wheel index, the venv path, and `tools\requirements-lock.txt`. The restore BAT/PowerShell helper finds or installs compatible Python, recreates/repairs the venv only when needed, installs CUDA Torch first, installs pinned dependencies, validates runtime/vision imports, then restores PostgreSQL.
+`/backup-zip` archives the PostgreSQL `norm_runtime` schema, the writable workspace, and the runtime tree. Rebuildable `.venv`, staging, build, dist, cache, and derived `workspace\images\analysis` content are excluded. `[environment]` in `config\settings.ini` pins Python `3.14.0`, CUDA Torch `2.14.0+cu126`, its PyTorch wheel index, the venv path, and `tools\requirements-lock.txt`. The restore BAT/PowerShell helper finds or installs compatible Python, recreates/repairs the venv only when needed, installs CUDA Torch first, installs pinned dependencies, validates runtime/vision imports, then restores PostgreSQL.
+
+## Weekly cleanup / crash marker
+
+Norm has one combined idle maintenance scheduler. It polls eligibility no more than once per hour; the hourly poll is only a cheap check, not an hourly cleanup. PostgreSQL `norm_runtime.runtime_state` is authoritative for cadence and currently stores `deployed_version`, `last_successful_cleanup_at`, and `last_successful_deep_cleanup_at`.
+
+A cleanup is due when `last_successful_cleanup_at` is at least 7 days old. At that due run, if `last_successful_deep_cleanup_at` is at least 21 days old or absent, Norm runs the extensive replay-validated deep-history cleanup; otherwise it runs the regular background-memory cleanup. A successful deep run updates both cleanup timestamps; a successful regular run updates only `last_successful_cleanup_at`. Deep-history pruning still only considers eligible terminal history older than the configured 30-day retention threshold.
+
+Both regular and deep runs purge the configured `tools.image_output_root` (`C:\Users\KHzz\Documents\Norm\images\analysis`) after verifying it is inside the writable workspace; source/original images are outside that derived-output directory and are preserved. The initial derived-output purge removed 1,359 files / 873,675,067 bytes.
+
+Before any maintenance work, Redis DB0 receives persistent `norm:maintenance:weekly_cleanup:active` JSON containing the run UUID, mode (`regular` or `deep`), phase, start time, host, consumer, and resume count. Redis does not hold the durable last-success timestamps. If Norm crashes or is gracefully restarted during cleanup, the active marker survives and the same mode resumes on the next idle maintenance opportunity. The marker is deleted only after PostgreSQL success state and a maintenance note are written. `/status-context` reports the active marker plus the PostgreSQL runtime-state timestamps.
+
+The deployed revision is `0.51.2b`; Windows fixed version metadata encodes the letter revision numerically as `0.51.2.2` while FileVersion/ProductVersion and `--version` display `0.51.2b`.
 
 ## Connections and impaired context
 

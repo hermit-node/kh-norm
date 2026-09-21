@@ -1,17 +1,18 @@
 # Norm
 
-**Norm 0.51.1** is the user's local general-purpose assistant and developing coordination layer on **KHzz**. It turns a request into bounded, verified work, executes against local tools and state, preserves durable evidence, and returns ordinary English/Markdown to the user.
+**Norm 0.51.3** is the user's local general-purpose assistant and developing coordination layer on **KHzz**. It turns a request into bounded, verified work, executes against local tools and state, preserves durable evidence, and returns ordinary English/Markdown to the user.
 
 ## Project identity
 
 - Name: `Norm`
-- Version: `0.51.1`
+- Version: `0.51.3`
 - Author: `KernelHermit`
 - Repository: `https://github.com/hermit-node`
 - Canonical metadata: `config\settings.ini` (`[project]`)
-- Runtime root: `C:\Users\KHzz\Documents\Norm`
-- Deployed executable: `app\norm.exe`
-- Verified deployed SHA-256: `fb5e6e2bb7668d1c2cbd1caec60f356d193a50b70b208dd0e2b50c56cef4bbf4`
+- Runtime root: `C:\Norm`
+- Writable workspace: `C:\Users\KHzz\Documents\Norm`
+- Deployed executable: `C:\Norm\app\norm.exe`
+- Verified deployed SHA-256: `2409ad004cd2c2d17937e35d37e7bd415728e7d94a3d04f714692465fe5239a2`
 
 KHzz is the source of truth for the deployed runtime.
 
@@ -49,11 +50,13 @@ Internally, the control plane is schema-validated JSON protocol v2. User-facing 
 
 ## Durable state, identity, and queues
 
-PostgreSQL is Norm's durable ledger for conversations, plans, steps, evidence, summaries, recovery notes, maintenance records, and memory. Redis is transient runtime state: DB0 for task/events, DB1 for work/retry/escalation/dead-letter state, and DB2 for reversible deletion staging.
+PostgreSQL is Norm's durable ledger for conversations, plans, steps, evidence, summaries, recovery notes, maintenance records, and memory. Redis DB0/DB1/DB2 hold runtime task/work/deletion state. Redis DB3 is the durable GUI ingress/state buffer and is intentionally excluded from normal runtime Redis cleanup so queued console prompts survive Norm restarts.
 
-The UUID migration introduced in 0.51.0 remains deployed in 0.51.1. Immutable `task_uuid`, `node_id`, and dependency `edge_id` values are authoritative runtime identity; readable task IDs and step labels remain compatibility/display aliases. The migration audit recorded 71 tasks, 424 nodes, 364 dependency edges, and 0 orphan nodes. New Redis work linkage uses UUID-backed node/chain identities while compatibility fields remain available.
+The UUID migration introduced in 0.51.0 remains deployed in 0.51.3. Immutable `task_uuid`, `node_id`, and dependency `edge_id` values are authoritative runtime identity; readable task IDs and step labels remain compatibility/display aliases. The migration audit recorded 71 tasks, 424 nodes, 364 dependency edges, and 0 orphan nodes. New Redis work linkage uses UUID-backed node/chain identities while compatibility fields remain available.
 
 Terminal state is written and verified in PostgreSQL before task-specific Redis cleanup. Startup and periodic reconciliation compare Redis against durable task state rather than assuming an empty queue means no unfinished work.
+
+Weekly maintenance runs only while the work queue is idle. One scheduler checks hourly for eligibility but PostgreSQL controls the durable cadence: a regular cleanup is due every 7 days, while every due run becomes the extensive deep-history cleanup when the last successful deep clean is at least 21 days old (or has never occurred). Either path purges reproducible files under the configured image-analysis output root while preserving source/original images. PostgreSQL `runtime_state` stores `deployed_version`, `last_successful_cleanup_at`, and `last_successful_deep_cleanup_at`. Redis DB0 stores only the in-progress `norm:maintenance:weekly_cleanup:active` marker; a crash or graceful restart preserves that marker so the same cleanup can resume, and the marker is removed only after the run succeeds.
 
 ## Scheduling and recovery
 
@@ -65,7 +68,7 @@ Two mechanisms must remain conceptually separate:
 ## Running Norm
 
 - **Headless/API:** run `app\norm.exe` directly.
-- **Operator console:** run `norm_gui.bat`. It opens prompt, runtime-stream, and completed-reply windows and attaches to an existing healthy Norm. If an existing process is still starting, it waits for health rather than launching a duplicate.
+- **Operator console:** run `norm_gui.bat`. It opens prompt, runtime-stream, and completed-reply windows and attaches to an existing healthy Norm. Normal prompt input is written immediately to Redis DB3 and the prompt window returns to `You>`; a background dispatcher serially submits the oldest queued prompt through `12543`. Activity/control remains on `8766`, so `/stop` or `/stop all -now` can interrupt work immediately even while `/api/chat` is blocked. If an existing process is still starting, the GUI waits for health rather than launching a duplicate.
 
 `norm_gui.bat` launches its helper shells with `cmd.exe /c`, so stream/reply windows close when Norm exits. On Windows those disposable viewers use native `SetConsoleCtrlHandler` handling and `ExitProcess(0)` for Ctrl+C/Ctrl+Break; real `CTRL_BREAK_EVENT` regression tests exited code 0 with no Python traceback even while the stream was blocked in WinSock.
 
@@ -80,7 +83,7 @@ The prompt window's Ctrl+C uses Norm's graceful shutdown control instead of dire
 - `/shutdown ollama` - unload/stop the Norm-owned Ollama runtime.
 - `/stop all` - finish the current step, preserve unfinished state, unload the model, and stop cleanly.
 - `/stop all -now` - cancel active generation, checkpoint partial work, preserve the recovery buffer, and stop promptly.
-- `/backup-zip` - create a settings-driven ZIP of PostgreSQL `norm_runtime`, the writable workspace, and the runtime tree. Rebuildable `.venv`/build/staging content is excluded; restore helpers recreate the Python environment from pinned settings/dependencies when needed.
+- `/backup-zip` - create a settings-driven ZIP of PostgreSQL `norm_runtime`, the writable workspace, and the runtime tree. Rebuildable `.venv`/build/staging content and derived `workspace\images\analysis` output are excluded; restore helpers recreate the Python environment from pinned settings/dependencies when needed.
 - `/repeat-submission` / `/repeat-answer` - requeue the latest applicable persisted turn verbatim.
 
 Use `GET /status/busy` for authoritative live workload state; it combines pre-queue requests, model activity, worker state, Redis state, PostgreSQL running tasks, and CPU/GPU sampling instead of treating Redis alone as truth.

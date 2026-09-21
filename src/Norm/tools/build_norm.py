@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse, hashlib, shutil, subprocess, sys
+import argparse, hashlib, re, shutil, subprocess, sys
 from configparser import ConfigParser
 from pathlib import Path
 
@@ -15,11 +15,13 @@ def metadata() -> dict[str,str]:
     return result
 
 def version_tuple(value: str) -> tuple[int,int,int,int]:
-    parts=value.split(".")
-    if not 1 <= len(parts) <= 4 or any(not p.isdigit() for p in parts):
-        raise ValueError(f"version must be 1-4 dot-separated integers: {value!r}")
-    nums=[int(p) for p in parts]
-    return tuple((nums+[0,0,0,0])[:4])
+    match=re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:([a-zA-Z]))?", value.strip())
+    if not match:
+        raise ValueError(f"version must look like 0.51.2 or 0.51.2b: {value!r}")
+    major,minor,patch=[int(match.group(i)) for i in (1,2,3)]
+    suffix=match.group(4)
+    revision=(ord(suffix.lower())-ord('a')+1) if suffix else 0
+    return (major,minor,patch,revision)
 
 def version_resource(meta: dict[str,str], target: Path) -> None:
     nums=version_tuple(meta["version"])

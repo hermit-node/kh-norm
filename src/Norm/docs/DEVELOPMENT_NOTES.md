@@ -369,10 +369,30 @@ Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-proto
 ## 2026-09-20 - backup venv made reproducible
 - `/backup-zip` no longer archives `C:\Norm\.venv`; the CUDA PyTorch environment was ~4.4 GB and is reproducible. Runtime backup validation dropped from ~4.87 GB to ~235.7 MB before ZIP compression, while the workspace remains separately archived.
 - Added `[environment]` settings plus `tools\requirements-lock.txt` and `tools\ENVIRONMENT_REBUILD.md`. Restore tooling finds Python 3.14, installs it through winget or python.org if absent, recreates the venv when missing/mismatched, installs `torch==2.14.0+cu126` from the configured CUDA wheel index, installs pinned dependencies, and validates vision/runtime imports.
+## 2026-09-20 - Norm 0.51.2 weekly image cleanup with crash-visible Redis state (SUPERSEDED by 0.51.2b)
+- Added an independent seven-day weekly cleanup pass to the idle worker loop; it is not dependent on background-memory consolidation being due.
+- Cleanup uses the configured `tools.image_output_root` and validates that the purge target is inside the configured writable workspace before deleting anything. Only derived image-analysis output is purged; source/original images remain.
+- Added persistent Redis DB0 markers: `norm:maintenance:weekly_cleanup:active` is written with `status=cleanup_started` before deletion and removed only after `norm:maintenance:weekly_cleanup:last` is written. Caught failures retain `active` with `status=failed`; stale active state blocks a new pass.
+- `/status-context` now surfaces incomplete/active weekly cleanup state and the most recent completed purge summary.
+- Regression tests verified success-marker lifecycle, simulated purge failure retention, stale-marker blocking, outside-workspace path refusal, and status-context Redis visibility.
+- First live 0.51.2 cleanup removed 1,359 files / 873,675,067 bytes from `workspace\images\analysis`, leaving the directory empty and a completed Redis report.
+- Promoted executable SHA-256: `332f38e05a31fd4740ac23c0ad91cf60895b574889490f3b76b5be9e7f009b8b`. Packaged `--version`/`--check`, GUI health probe, and live `/status/busy` all passed; post-restart state was idle with zero queue/pending/retry/escalation/running tasks.
 
-## 2026-09-20 - Norm 0.51.2 weekly image cleanup with crash-visible Redis state
-- Added an independent seven-day weekly cleanup pass to the idle worker loop.
-- Cleanup validates the configured derived-image output path stays inside the writable workspace.
-- Redis DB0 active/last markers expose incomplete and completed cleanup state to /status-context.
-- The promoted build was later superseded by 0.51.2b's unified maintenance scheduler.
-- Historical promoted executable SHA-256: 332f38e05a31fd4740ac23c0ad91cf60895b574889490f3b76b5be9e7f009b8b.
+
+## 2026-09-21 - 0.51.2b unified maintenance correction
+- The initial 0.51.2 image-purge scheduler was superseded rather than promoted as a new feature version. Current identity is `0.51.2b`; future patch repairs to the same feature should use patch-revision labels instead of consuming a new minor version.
+- Collapsed regular memory cleanup, deep-history cleanup selection, and `images\analysis` purge behind one idle scheduler. Eligibility is checked hourly; actual regular cadence is 7 days. If the last successful deep clean is 21+ days old (or absent), that due run takes the deep path instead of the regular path.
+- Added PostgreSQL `norm_runtime.runtime_state` as durable authority for `deployed_version`, `last_successful_cleanup_at`, and `last_successful_deep_cleanup_at`. The last regular-clean timestamp was seeded from the existing background snapshot at `2026-09-20T15:30:49.889203-04:00`; no prior successful deep-history note existed, so the deep timestamp remains unset until the first successful deep pass.
+- Redis now holds only `norm:maintenance:weekly_cleanup:active` for crash/restart recovery. The active marker records mode/phase/run ID/resume count, survives graceful DB0 cleanup, and is removed only after PostgreSQL success state is committed. A live shutdown test verified the marker survives DB0 flush exactly.
+- Interrupted maintenance resumes the same recorded mode on the next idle check. Image-output purge is idempotent and runs for both regular and deep maintenance.
+- `tools\build_norm.py` now accepts letter revision labels such as `0.51.2b`; Windows fixed numeric metadata maps `b` to revision 2 while visible FileVersion/ProductVersion remain `0.51.2b`.
+- Promoted executable SHA-256: `f3710205b3bbcf78e68d3c72eb9d0f7c742677cec19cba77c78d46135136db37`. Packaged `--check` passed Ollama, Redis, prompt queue, and PostgreSQL; live HTTP/activity health passed after restart.
+
+## 2026-09-21 - Norm 0.51.3 nonblocking durable GUI ingress
+- Promoted the tested 0.51.2e console/queue work as feature release `0.51.3`. Live executable SHA-256: `2409ad004cd2c2d17937e35d37e7bd415728e7d94a3d04f714692465fe5239a2`.
+- The normal `norm_gui.bat` prompt helper no longer blocks on `/api/chat`. Every ordinary prompt is timestamped and written immediately to Redis DB3 `norm:gui:ingress`; the prompt window immediately returns to `You>` while a background dispatcher submits one oldest prompt at a time through HTTP/chat port `12543`.
+- Activity/events, busy status, and control commands remain on port `8766`; Ollama remains on loopback `11434`. `/stop` is an immediate alias for `/stop all -now`, so Python/control can interrupt active work even while the dispatcher is blocked waiting for the chat response.
+- Redis DB3 is intentionally excluded from normal runtime DB0/DB1 cleanup. GUI thread/submission/answer state and waiting ingress therefore survive graceful Norm shutdown/restart. Dispatching entries are tracked separately; abandoned in-flight entries are quarantined as uncertain instead of automatically replayed and potentially duplicating a task.
+- The Rich console ingress uses a separate DB3 stream/group namespace from the normal GUI, preventing the two frontends from stealing each other's entries.
+- Synthetic regression passed Redis ordering/ACK/thread-state and uncertain no-replay behavior. Live GUI regression claimed a DB3 prompt, created `chat-96351e6f-e0c2-4556-a232-c10a35da0cfa`, returned exactly `gui redis queue smoke test`, ACKed/deleted the stream entry, cleared dispatch state, and left zero uncertain entries. A live stop-now test also proved the 8766 control path remains responsive while a 12543 chat request is active.
+- Two stale CA8D audit tasks were explicitly cancelled and removed from executable Redis work state before release; their PostgreSQL history remains preserved and startup recovery reports no recoverable stale tasks.

@@ -70,6 +70,9 @@ def endpoints() -> dict[str, str]:
         "events": f"http://{host}:{activity_port}/events",
         "busy": f"http://{host}:{activity_port}/status/busy",
         "shutdown": f"http://{host}:{activity_port}/control/shutdown-norm",
+        "shutdown_now": f"http://{host}:{activity_port}/control/shutdown-norm-now",
+        "stop_all": f"http://{host}:{activity_port}/control/stop-all",
+        "stop_all_now": f"http://{host}:{activity_port}/control/stop-all-now",
     }
 
 

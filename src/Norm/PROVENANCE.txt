@@ -1,26 +1,23 @@
-Historical Norm 0.51.2 source reconstruction
+Historical Norm 0.51.2b source reconstruction
 
-Base source:
-D:\LOCAL_Share\Norm GraveYard\lineage\Norm\01_Norm-0.51.1_RECONSTRUCTED-SOURCE_20260920.zip
+Exact promoted executable:
+D:\LOCAL_Share\Norm GraveYard\_norm_file_review_20260924-011821\payload\C_Norm\staging\release-0-51-2b\dist\norm.exe
 
-Base source SHA-256:
-CC57BCBFC9E7DE123840483744F07B5B7DFF2F391F83B661C4AAEAC88A14E2EB
+Exact promoted executable SHA-256:
+F3710205B3BBCF78E68D3C72EB9D0F7C742677CEC19CBA77C78D46135136DB37
 
-Evidence used:
-- contemporaneous DEVELOPMENT_NOTES / RELEASE_NOTES description of 0.51.2
-- preserved 0.51.2 -> 0.51.2b patch, proving the original scheduler had
-  separate weekly-cleanup, background-memory, and deep-history passes
-- raw 0.51.1 and 0.51.3 runtime.json backups proving 7-day/hourly cadence
-  and later removal of separate weekly-cleanup cadence fields
-- binary-validated 0.51.2b source for retained purge/path-safety helpers
+Reconstruction basis:
+- recovered 0.51.1 source snapshot
+- recovered 0.51.3 source snapshot
+- preserved 0.51.2b PyInstaller build directory
+- preserved patch_unified_weekly_0513.py
 
-Known promoted 0.51.2 executable SHA-256:
-332F38E05A31FD4740AC23C0AD91CF60895B574889490F3B76B5BE9E7F009B8B
+Validation method:
+Every packaged Norm Python module from the exact 0.51.2b PyInstaller archive is
+loaded as a Python code object. The reconstructed source is compiled with Python
+3.14 and compared recursively while ignoring only filename/line-table metadata.
+The entry script norm_main is validated against the CArchive; norm_runtime modules
+and runtime_bootstrap are validated against PYZ-00.pyz.
 
-The exact promoted 0.51.2 executable and documented pre-weekly-cleanup rollback
-snapshot were not recovered. This artifact is explicitly a behavioral/source
-reconstruction and is NOT claimed byte-for-byte or bytecode-identical to the
-lost promoted source.
-
-Runtime state, logs, databases and credential-bearing runtime configuration are
-excluded.
+This is a reconstruction, not an originally-issued source ZIP. Runtime state,
+logs, databases and credential-bearing files are not included.

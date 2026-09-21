@@ -10,6 +10,8 @@ from urllib import request
 import psycopg
 from psycopg import sql
 
+from norm_gui_dispatch import GuiPromptDispatcher
+
 from norm_gui_common import (
     DISPLAY_FILE,
     FALLBACK_LOG,
@@ -122,7 +124,7 @@ def ensure_norm_running(ep: dict[str, str]) -> None:
 def show_help() -> None:
     print("Norm GUI commands:")
     print("  help or /help       List every operator command and its description")
-    print("  /status             Show Norm's current busy/queue/runtime state")
+    print("  /status             Show Norm runtime state plus Redis GUI queue state")
     print("  /backup-zip         Create a ZIP backup of PostgreSQL, workspace, and runtime")
     print("  /new                Start a fresh GUI conversation thread")
     print("  /multi              Start multiline prompt entry")
@@ -131,7 +133,11 @@ def show_help() -> None:
     print("  /repeat-submission  Requeue the last submitted prompt verbatim")
     print("  /repeat-answer      Requeue the last completed Norm answer verbatim")
     print("  /exit               Close only this prompt console; Norm keeps running")
+    print("  /stop               Immediately checkpoint/stop all Norm work and close this console")
+    print("  /stop all           Finish the current step, then stop Norm/Ollama")
+    print("  /stop all -now      Immediately checkpoint current work and stop Norm/Ollama")
     print("  /shutdown           Request Norm's graceful shutdown and close this console")
+    print("  /shutdown now       Immediately request Norm shutdown and close this console")
     print("  Ctrl+C              Request the same graceful shutdown, even while waiting")
 
 
@@ -226,6 +232,25 @@ def probe(ep: dict[str, str]) -> int:
     return 0 if chat_ok and activity_ok else 1
 
 
+def load_console_queue_config() -> dict:
+    cfg = json.loads((ROOT / "config" / "runtime.json").read_text(encoding="utf-8-sig"))
+    return dict(cfg.get("console_queue", {}))
+
+
+def completed_turn(message: str, reply: str, result: dict) -> None:
+    publish_final_answer(reply)
+    if not persistence_complete(result):
+        backup_turn(message, reply, result, "PostgreSQL conversation persistence incomplete")
+    task_id = str(result.get("task_id") or "n/a")
+    print(f"\nQueued prompt completed task={task_id}; answer released to Norm Replies.")
+
+
+def stop_all(ep: dict[str, str], immediate: bool) -> None:
+    url = ep["stop_all_now"] if immediate else ep["stop_all"]
+    result = post_json(url, timeout=5)
+    print(f"Stop-all accepted: {result.get('mode', 'now' if immediate else 'after-step')}.")
+
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -241,10 +266,15 @@ def main() -> int:
     except Exception as exc:
         print(f"Cannot start Norm GUI: {exc}")
         return 1
+
+    last_submission, last_answer, thread_id, history_source = load_last_turn()
+    dispatcher = GuiPromptDispatcher(ep, load_console_queue_config(), on_result=completed_turn)
+    dispatcher.seed_history(last_submission, last_answer, thread_id)
+    dispatcher.start()
     print("=== Norm Prompt Console ===")
     print(f"Connected target: {ep['host']}  project={PROJECT_ID}")
-    print("Type help for commands. Ctrl+C gracefully shuts Norm down.")
-    last_submission, last_answer, thread_id, history_source = load_last_turn()
+    print("Normal prompts are durably queued in Redis and never block this input window.")
+    print("Type help for commands. /stop works even while Norm is busy.")
     if history_source != "none":
         print(f"Recovered the latest GUI turn from {history_source} history.")
     try:
@@ -253,8 +283,7 @@ def main() -> int:
             text = prompt.strip()
             if not text:
                 continue
-            lowered = prompt.strip().lower()
-            remember_submission = True
+            lowered = text.lower()
             if lowered in {"help", "/help"}:
                 show_help()
                 continue
@@ -263,10 +292,12 @@ def main() -> int:
                 continue
             if lowered == "/status":
                 print(json.dumps(get_json(ep["busy"]), indent=2, ensure_ascii=False))
+                queued, uncertain = dispatcher.queue_stats()
+                print(f"GUI Redis queue: {queued} queued/in-flight; {uncertain} uncertain.")
                 continue
             if lowered == "/new":
-                thread_id = None
-                print("Started a fresh GUI conversation thread.")
+                entry_id = dispatcher.enqueue_thread_reset()
+                print(f"Queued conversation-thread reset as {entry_id}.")
                 continue
             if lowered == "/multi":
                 text = read_multiline()
@@ -274,36 +305,48 @@ def main() -> int:
                     print("Multiline prompt cancelled.")
                     continue
             elif lowered == "/repeat-submission":
-                if not last_submission:
-                    print("No previous submission is available in this GUI session.")
+                text = dispatcher.last_submission() or ""
+                if not text:
+                    print("No previous submission is available.")
                     continue
-                text = last_submission
-                remember_submission = False
                 print("Requeueing the last submission verbatim.")
             elif lowered == "/repeat-answer":
-                if not last_answer:
-                    print("No previous Norm answer is available in this GUI session.")
+                text = dispatcher.last_answer() or ""
+                if not text:
+                    print("No previous Norm answer is available.")
                     continue
-                text = last_answer
-                remember_submission = False
                 print("Requeueing the last completed Norm answer verbatim.")
             elif lowered == "/exit":
-                print("Closing GUI prompt console; Norm keeps running.")
+                print("Closing GUI prompt console; queued Redis input is preserved.")
+                return 0
+            elif lowered in {"/stop", "/stop all -now"}:
+                stop_all(ep, immediate=True)
+                return 0
+            elif lowered == "/stop all":
+                stop_all(ep, immediate=False)
                 return 0
             elif lowered == "/shutdown":
                 graceful_shutdown(ep)
                 return 0
+            elif lowered == "/shutdown now":
+                result = post_json(ep["shutdown_now"], timeout=5)
+                print(f"Shutdown accepted: {result.get('shutdown', 'now')}.")
+                return 0
 
-            if remember_submission:
-                last_submission = text
-            thread_id, reply, _ = send_prompt(ep, text, thread_id)
-            last_answer = reply
+            entry_id, prompt_id = dispatcher.enqueue_prompt(text)
+            queued, uncertain = dispatcher.queue_stats()
+            print(
+                f"Queued {prompt_id[:8]} in Redis as {entry_id} "
+                f"({queued} queued/in-flight; {uncertain} uncertain)."
+            )
     except KeyboardInterrupt:
         graceful_shutdown(ep)
         return 130
     except EOFError:
-        print("\nClosing GUI prompt console; Norm keeps running.")
+        print("\nClosing GUI prompt console; queued Redis input is preserved.")
         return 0
+    finally:
+        dispatcher.stop()
 
 
 if __name__ == "__main__":
