@@ -1163,6 +1163,15 @@ class PromptWorker:
             self.live.step_started(child_id, step.id, step.name)
             self.live.step_completed(child_id, step.id, result.summary, result.verification)
         command = self._command_from_job(parent_job)
+        if prompt_origin == "runtime_oversize_recovery_analysis":
+            command = normalize_command({
+                **command,
+                "intent": instruction[:500],
+                "requires_file_mutation": False,
+                "input_has_media": False,
+                "output_requires_media": False,
+                "expected_output": {"type": "answer", "format": "json"},
+            }, instruction)
         work_step = next(step for step in steps if step.id == "work")
         final_verify_step = next(step for step in steps if step.id == "final-verify")
         child_job = PromptJob(
@@ -1198,15 +1207,28 @@ class PromptWorker:
             values.add(int(match.group(1)))
         return sorted(values)
 
+    @staticmethod
+    def _normalize_scope_items(values, *, field: str) -> list[int]:
+        if not isinstance(values, list):
+            raise RuntimeError(f"{field} must be a list of positive integer item ids")
+        clean: set[int] = set()
+        for index, value in enumerate(values):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise RuntimeError(
+                    f"{field}[{index}] must be a positive integer item id; got {value!r}"
+                )
+            clean.add(value)
+        return sorted(clean)
+
     def _recovery_scope_items(self, job: PromptJob) -> list[int]:
         metadata = job.metadata or {}
         supplied = metadata.get("recovery_scope_items")
         if isinstance(supplied, list) and supplied:
-            return sorted({int(v) for v in supplied})
+            return self._normalize_scope_items(supplied, field="recovery_scope_items")
         scope = self._scope_items_from_text(job.prompt)
         if not scope:
             scope = self._scope_items_from_text(str(metadata.get("step_name") or ""))
-        return scope
+        return scope or [1]
 
     @staticmethod
     def _step_result_content(text: str) -> str:
@@ -1370,7 +1392,9 @@ class PromptWorker:
         units = data.get("remaining_units")
         if not isinstance(units, list):
             raise RuntimeError("oversize recovery analysis missing remaining_units")
-        allowed = sorted({int(v) for v in (parent_scope or [])})
+        allowed = PromptWorker._normalize_scope_items(
+            list(parent_scope or []), field="parent_scope"
+        )
         allowed_set = set(allowed)
         clean_units = []
         seen_items: set[int] = set()
@@ -1381,7 +1405,12 @@ class PromptWorker:
             instruction = str(item.get("instruction") or "").strip()
             verify = str(item.get("verify") or "").strip()
             raw_scope = item.get("scope_items")
-            scope = sorted({int(v) for v in raw_scope}) if isinstance(raw_scope, list) else []
+            if raw_scope is None:
+                scope = []
+            else:
+                scope = PromptWorker._normalize_scope_items(
+                    raw_scope, field=f"remaining_units[{len(clean_units)}].scope_items"
+                )
             if not scope and allowed:
                 scope = PromptWorker._scope_items_from_text(name + "\n" + instruction)
             if allowed:

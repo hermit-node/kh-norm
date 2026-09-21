@@ -1,23 +1,12 @@
-Historical Norm 0.51.2b source reconstruction
+﻿Historical Norm 0.51.3 source reconstruction
+Source full backup: D:\LOCAL_Share\Norm GraveYard\Norm-Backups\Norm-backup-20260921-151944-0400.zip
+Source backup SHA-256: D5BC6C238666ACE6E0D3444FAEEAEB990867318D5A7A0B5D667103857A69D682
 
-Exact promoted executable:
-D:\LOCAL_Share\Norm GraveYard\_norm_file_review_20260924-011821\payload\C_Norm\staging\release-0-51-2b\dist\norm.exe
+This archive was reconstructed from the historical full backup without modifying the original.
+Included: runtime app source, runtime tool source/scripts, launch files, settings.ini, norm.json,
+and top-level workspace documentation.
+Deliberately omitted: runtime.json/runtime.json.tmp, logs, state, PostgreSQL dumps, workspace data,
+and executables/candidate binaries. This reduces the chance of carrying historical credentials or
+private runtime state into a future Git import.
 
-Exact promoted executable SHA-256:
-F3710205B3BBCF78E68D3C72EB9D0F7C742677CEC19CBA77C78D46135136DB37
-
-Reconstruction basis:
-- recovered 0.51.1 source snapshot
-- recovered 0.51.3 source snapshot
-- preserved 0.51.2b PyInstaller build directory
-- preserved patch_unified_weekly_0513.py
-
-Validation method:
-Every packaged Norm Python module from the exact 0.51.2b PyInstaller archive is
-loaded as a Python code object. The reconstructed source is compiled with Python
-3.14 and compared recursively while ignoring only filename/line-table metadata.
-The entry script norm_main is validated against the CArchive; norm_runtime modules
-and runtime_bootstrap are validated against PYZ-00.pyz.
-
-This is a reconstruction, not an originally-issued source ZIP. Runtime state,
-logs, databases and credential-bearing files are not included.
+It is a reconstruction, not an originally-issued portable-source package.
