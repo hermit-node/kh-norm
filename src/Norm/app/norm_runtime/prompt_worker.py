@@ -939,6 +939,10 @@ class PromptWorker:
             return None
         root = self._runtime_root()
         from norm_runtime.deletion_queue import RedisDeletionQueue
+        from norm_runtime.settings import load_path_settings
+        path_cfg = load_path_settings(root)
+        workspace_root = path_cfg["workspace_root"]
+        allowed_roots = [str(workspace_root), *list(tools.get("allowed_roots", []))]
         redis_cfg = self._runtime_config().get("redis", {})
         dq = self._runtime_config().get("deletion_queue", {})
         deletion_queue = RedisDeletionQueue(
@@ -949,18 +953,18 @@ class PromptWorker:
             trash_root=str(dq.get("trash_root", root / "state" / "deletion-trash")),
         )
         self._slice_file_tools = FileToolExecutor(
-            list(tools.get("allowed_roots", [])),
+            allowed_roots,
             backup_root=str(tools.get("backup_root", root / "state" / "file-backups")),
             audit_log=str(tools.get("audit_log", root / "logs" / "tool-audit.jsonl")),
             max_read_bytes=int(tools.get("max_read_bytes", 131_072)),
             max_write_bytes=int(tools.get("max_write_bytes", 1_048_576)),
-            blocked_write_staging_root=str(tools.get("blocked_write_staging_root", root / "docs" / "blocked-writes")),
+            blocked_write_staging_root=str(tools.get("blocked_write_staging_root", workspace_root / "docs" / "blocked-writes")),
             write_retry_count=int(tools.get("write_retry_count", 3)),
             write_retry_delay_seconds=float(tools.get("write_retry_delay_seconds", 0.25)),
             image_enabled=bool(tools.get("image_enabled", False)),
             image_python=str(tools.get("image_python", root / ".venv" / "Scripts" / "python.exe")),
             image_analyzer_script=str(tools.get("image_analyzer_script", root / "tools" / "image_analyzer.py")),
-            image_output_root=str(tools.get("image_output_root", root / "images" / "analysis")),
+            image_output_root=str(tools.get("image_output_root", workspace_root / "images" / "analysis")),
             image_profile_budgets=dict(tools.get("image_profile_budgets", {})),
             image_max_input_bytes=int(tools.get("image_max_input_bytes", 25_000_000)),
             vision_client=self.client,
@@ -970,7 +974,7 @@ class PromptWorker:
             shell_executable=str(tools.get("shell_executable", "powershell.exe")),
             shell_timeout_seconds=int(tools.get("shell_timeout_seconds", 120)),
             shell_max_output_chars=int(tools.get("shell_max_output_chars", 20000)),
-            verbatim_helper=str(root / "verbatim_lines.py"),
+            verbatim_helper=str(path_cfg["verbatim_writer"]),
             connection_config={
                 "postgres": self._runtime_config().get("postgres", {}),
                 "redis": self._runtime_config().get("redis", {}),

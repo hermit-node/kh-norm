@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -122,6 +123,7 @@ def show_help() -> None:
     print("Norm GUI commands:")
     print("  help or /help       List every operator command and its description")
     print("  /status             Show Norm's current busy/queue/runtime state")
+    print("  /backup-zip         Create a ZIP backup of PostgreSQL, workspace, and runtime")
     print("  /new                Start a fresh GUI conversation thread")
     print("  /multi              Start multiline prompt entry")
     print("    ::send             Submit the multiline prompt")
@@ -131,6 +133,17 @@ def show_help() -> None:
     print("  /exit               Close only this prompt console; Norm keeps running")
     print("  /shutdown           Request Norm's graceful shutdown and close this console")
     print("  Ctrl+C              Request the same graceful shutdown, even while waiting")
+
+
+def run_backup_zip() -> None:
+    script = ROOT / "tools" / "norm_backup.py"
+    if not script.is_file():
+        print(f"Backup helper is missing: {script}")
+        return
+    print("Creating Norm backup ZIP...")
+    proc = subprocess.run([sys.executable, str(script)], cwd=str(ROOT), check=False)
+    if proc.returncode != 0:
+        print(f"Backup failed with exit code {proc.returncode}.")
 
 
 def graceful_shutdown(ep: dict[str, str]) -> None:
@@ -244,6 +257,9 @@ def main() -> int:
             remember_submission = True
             if lowered in {"help", "/help"}:
                 show_help()
+                continue
+            if lowered == "/backup-zip":
+                run_backup_zip()
                 continue
             if lowered == "/status":
                 print(json.dumps(get_json(ep["busy"]), indent=2, ensure_ascii=False))

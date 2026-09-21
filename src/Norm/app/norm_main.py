@@ -25,7 +25,7 @@ from norm_runtime.ollama_lifecycle import shutdown_ollama
 from norm_runtime.prompt_worker import PromptWorker
 from norm_runtime.shutdown_snapshot import write_sos
 from norm_runtime.rich_console import run_console
-from norm_runtime.settings import load_ports, load_project_metadata
+from norm_runtime.settings import load_ports, load_project_metadata, load_path_settings
 
 MODEL_NAME = "norm"
 MODEL_STORE = r"G:\Ollama\models"
@@ -399,6 +399,7 @@ def main() -> int:
     parser.add_argument("--console", action="store_true", help="Open the interactive Rich console")
     args = parser.parse_args()
     root = norm_root()
+    path_cfg = load_path_settings(root)
     if args.version:
         metadata = load_project_metadata(root)
         print(f"{metadata['name']} {metadata['version']} | {metadata['author']} | {metadata['repository']}")
@@ -416,6 +417,7 @@ def main() -> int:
         )
     setup_logging(root)
     logging.info("Norm startup begin")
+    logging.info("Resolved paths: runtime_root=%s workspace_root=%s verbatim_writer=%s", path_cfg["runtime_root"], path_cfg["workspace_root"], path_cfg["verbatim_writer"])
     config = load_config(root)
     ports = load_ports(root)
     ollama_cfg = config.get('ollama', {})
