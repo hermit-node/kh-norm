@@ -20,6 +20,7 @@ class GuiPromptDispatcher:
             port=int(config.get("port", 6379)),
             db=int(config.get("db", 3)),
             decode_responses=True,
+            encoding_errors="strict",
             socket_connect_timeout=5,
             socket_keepalive=True,
             health_check_interval=30,
@@ -29,6 +30,7 @@ class GuiPromptDispatcher:
         self.thread_key = str(config.get("console_thread_key", "norm:gui:thread-id"))
         self.last_submission_key = str(config.get("console_last_submission_key", "norm:gui:last-submission"))
         self.last_answer_key = str(config.get("console_last_answer_key", "norm:gui:last-answer"))
+        self.reply_stream = str(config.get("console_reply_stream", "norm:gui:replies"))
         self.dispatching_key = str(config.get("console_dispatching_key", "norm:gui:dispatching"))
         self.uncertain_key = str(config.get("console_uncertain_key", "norm:gui:uncertain"))
         self.consumer = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
@@ -58,6 +60,15 @@ class GuiPromptDispatcher:
 
     def last_answer(self) -> str | None:
         return self.redis.get(self.last_answer_key) or None
+
+    def publish_reply(self, text: str, source: str = "completed") -> str:
+        return str(self.redis.xadd(
+            self.reply_stream,
+            {"text": str(text), "source": str(source), "at": self._now_iso()},
+            maxlen=1000,
+            approximate=True,
+        ))
+
     def enqueue_prompt(self, message: str) -> tuple[str, str]:
         prompt_id = str(uuid.uuid4())
         self.redis.set(self.last_submission_key, message)
@@ -185,12 +196,14 @@ class GuiPromptDispatcher:
             "project_id": str(fields.get("project_id") or "default"),
         }
         thread_id = self.redis.get(self.thread_key)
+        if isinstance(thread_id, bytes):
+            thread_id = thread_id.decode("utf-8")
         if thread_id:
             payload["thread_id"] = thread_id
         req = request.Request(
             self.ep["chat"],
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json; charset=utf-8"},
             method="POST",
         )
         try:
@@ -201,6 +214,7 @@ class GuiPromptDispatcher:
             if isinstance(returned, str) and returned:
                 self.redis.set(self.thread_key, returned)
             self.redis.set(self.last_answer_key, reply)
+            self.publish_reply(reply, source="completed")
             if self.on_result is not None:
                 self.on_result(str(fields.get("message") or ""), reply, result)
             self._finish_entry(entry_id)
@@ -217,7 +231,13 @@ class GuiPromptDispatcher:
                 continue
             if item is None:
                 continue
-            entry_id, fields = str(item[0]), dict(item[1])
+            raw_entry_id, raw_fields = item[0], dict(item[1])
+            entry_id = raw_entry_id.decode("utf-8") if isinstance(raw_entry_id, bytes) else str(raw_entry_id)
+            fields = {
+                (key.decode("utf-8") if isinstance(key, bytes) else str(key)):
+                (value.decode("utf-8") if isinstance(value, bytes) else value)
+                for key, value in raw_fields.items()
+            }
             if fields.get("kind") == "thread_reset":
                 self.redis.delete(self.thread_key)
                 self._finish_entry(entry_id)

@@ -36,6 +36,8 @@ class NormConsole:
         self.shutdown_now_url = control_base + "/shutdown-norm-now"
         self.stop_all_url = control_base + "/stop-all"
         self.stop_all_now_url = control_base + "/stop-all-now"
+        self.suppress_task_url = control_base + "/suppress-task"
+        self.flush_suppressed_url = control_base + "/flush-suppressed"
         self.busy_url = activity_url.rsplit("/", 1)[0] + "/status/busy"
         self.ingress_stream = str(cfg.get("console_ingress_stream", "norm:console:ingress"))
         self.ingress_group = str(cfg.get("console_ingress_group", "norm-console-dispatchers"))
@@ -282,6 +284,24 @@ class NormConsole:
         except Exception as exc:
             self.console.print(f"[red]Could not stop all: {exc}[/]")
 
+    def _suppress_task(self) -> None:
+        req = request.Request(self.suppress_task_url, data=json.dumps({"reason": "Operator requested /suppress-task from Norm console."}).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with request.urlopen(req, timeout=5) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            self.console.print(f"[yellow]Suppressed: {result.get('title') or result.get('task_id') or result.get('reason', 'none')}.[/]")
+        except Exception as exc:
+            self.console.print(f"[red]Could not suppress task: {exc}[/]")
+
+    def _flush_suppressed(self) -> None:
+        req = request.Request(self.flush_suppressed_url, data=b"{}", method="POST")
+        try:
+            with request.urlopen(req, timeout=10) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            self.console.print(f"[yellow]Flushed {int(result.get('deleted') or 0)} suppressed task(s).[/]")
+        except Exception as exc:
+            self.console.print(f"[red]Could not flush suppressed tasks: {exc}[/]")
+
     def _show_help(self) -> None:
         self.console.print(
             "[bold]Commands[/]\n"
@@ -297,6 +317,8 @@ class NormConsole:
             "  /shutdown norm now  Cancel active Ollama work, persist cancellation, and exit promptly.\n"
             "  /stop all       Finish the current step, write SOS.md, unload the model, then stop Ollama and Norm.\n"
             "  /stop all -now  Stop the current generation now, preserve it for resume, write SOS.md, unload/stop all.\n"
+            "  /suppress-task  Park the active task, or oldest next queued task, in PostgreSQL.\n"
+            "  /flush-suppressed  Permanently delete all suppressed task records.\n"
             "  /status         Show mute, pause, and pending-input state.\n"
             "  /help           Show these commands.\n"
             "  /exit           Close this console only; Norm keeps running."
@@ -341,6 +363,10 @@ class NormConsole:
             self.console.print("[yellow]Norm is checkpointing the current generation, writing SOS.md, and stopping everything now.[/]")
             self._stop_all(immediate=True)
             return False
+        elif parts == ["/suppress-task"]:
+            threading.Thread(target=self._suppress_task, daemon=True).start()
+        elif parts == ["/flush-suppressed"]:
+            threading.Thread(target=self._flush_suppressed, daemon=True).start()
         elif parts == ["/status"]:
             with self.muted_lock:
                 muted = ", ".join(sorted(self.muted)) or "none"

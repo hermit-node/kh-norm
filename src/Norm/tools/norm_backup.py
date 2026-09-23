@@ -4,6 +4,7 @@ import argparse
 import configparser
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -14,7 +15,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SETTINGS = ROOT / "config" / "settings.ini"
-RUNTIME_JSON = ROOT / "config" / "runtime.json"
+APP = ROOT / "app"
+if str(APP) not in sys.path:
+    sys.path.insert(0, str(APP))
+
+from runtime_bootstrap import load_config
+from norm_runtime.settings import load_path_settings
 
 
 def load_settings() -> configparser.ConfigParser:
@@ -30,7 +36,14 @@ def split_dirs(value: str) -> set[str]:
 
 def is_excluded(rel: Path, exclusions: set[str]) -> bool:
     key = rel.as_posix().strip("/").lower()
-    return any(key == item or key.startswith(item + "/") for item in exclusions)
+    parts = {part.lower() for part in rel.parts}
+    for item in exclusions:
+        if "/" in item:
+            if key == item or key.startswith(item + "/"):
+                return True
+        elif item in parts:
+            return True
+    return False
 
 
 def add_tree(zf: zipfile.ZipFile, source: Path, prefix: str, exclusions: set[str]) -> tuple[int, int]:
@@ -74,11 +87,13 @@ def sha256_file(path: Path) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument('--validate-only', action='store_true')
+    ap.add_argument('--label', default='', help='Optional checkpoint label included in the ZIP filename/manifest.')
     args = ap.parse_args()
     cfg = load_settings()
-    runtime_cfg = json.loads(RUNTIME_JSON.read_text(encoding="utf-8-sig"))
-    runtime_root = Path(cfg.get("paths", "runtime_root")).resolve()
-    workspace_root = Path(cfg.get("paths", "workspace_root")).resolve()
+    path_cfg = load_path_settings(ROOT)
+    resolved_cfg = load_config(ROOT)
+    runtime_root = path_cfg["runtime_root"]
+    workspace_root = path_cfg["workspace_root"]
     backup_root = Path(cfg.get("backup", "backup_root")).resolve()
     pg_dump = Path(cfg.get("backup", "postgres_dump_executable")).resolve()
     pg_restore = Path(cfg.get("backup", "postgres_restore_executable")).resolve()
@@ -93,10 +108,14 @@ def main() -> int:
         raise FileNotFoundError(pg_dump)
     backup_root.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S%z")
-    final_zip = backup_root / f"Norm-backup-{stamp}.zip"
+    requested_label = str(args.label or "").strip()
+    label = requested_label or cfg.get("project", "version", fallback="").strip()
+    safe_label = re.sub(r"[^A-Za-z0-9._-]+", "-", label).strip("-")
+    prefix = f"Norm-backup-{safe_label}" if safe_label else "Norm-backup"
+    final_zip = backup_root / f"{prefix}-{stamp}.zip"
     temp_zip = backup_root / f".{final_zip.name}.partial"
-    conninfo = str(runtime_cfg["postgres"]["conninfo"])
-    db_schema = str(runtime_cfg["postgres"].get("schema", schema))
+    conninfo = str(resolved_cfg["postgres"]["conninfo"])
+    db_schema = str(resolved_cfg["postgres"].get("schema", schema))
 
     with tempfile.TemporaryDirectory(prefix="norm-backup-") as temp_name:
         temp = Path(temp_name)
@@ -124,8 +143,9 @@ def main() -> int:
             "paths": {
                 "runtime_root": str(runtime_root),
                 "workspace_root": str(workspace_root),
-                "verbatim_writer": cfg.get("paths", "verbatim_writer"),
+                "verbatim_writer": str(path_cfg["verbatim_writer"]),
             },
+            "checkpoint_label": label,
             "postgres": {
                 "conninfo": conninfo,
                 "schema": db_schema,

@@ -33,8 +33,13 @@ MODEL_STORE = r"G:\Ollama\models"
 
 def norm_root() -> Path:
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent.parent
-    return Path(__file__).resolve().parents[1]
+        app_root = Path(sys.executable).resolve().parent
+    else:
+        app_root = Path(__file__).resolve().parent
+    runtime_root = app_root.parent.resolve()
+    os.environ["NORM_APP_ROOT"] = str(app_root)
+    os.environ["NORM_RUNTIME_ROOT"] = str(runtime_root)
+    return runtime_root
 
 
 def setup_logging(root: Path) -> None:
@@ -270,6 +275,21 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         logging.info("Stop-all requested mode=%s", mode)
         return {"status": "ok", "mode": mode}
 
+    def request_suppress_task(task_id: str | None, reason: str) -> dict:
+        worker_obj = resources.get("worker")
+        if worker_obj is None:
+            return {"status": "unavailable", "suppressed": False, "reason": "worker is still initializing"}
+        return worker_obj.request_suppress_task(task_id=task_id, reason=reason)
+
+    def request_flush_suppressed() -> dict:
+        worker_obj = resources.get("worker")
+        if worker_obj is None:
+            durable = resources.get("durable")
+            if durable is None:
+                return {"status": "unavailable", "deleted": 0}
+            return {"status": "ok", "deleted": durable.flush_suppressed()}
+        return worker_obj.flush_suppressed()
+
     activity_cfg = config.get("activity", {})
     activity_host = resolve_bind_host(str(activity_cfg.get("host", "127.0.0.1")))
     activity_port = int(ports['activity'])
@@ -291,6 +311,8 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         shutdown_ollama=request_ollama_shutdown,
         shutdown_norm=request_shutdown,
         stop_all=request_stop_all,
+        suppress_task=request_suppress_task,
+        flush_suppressed=request_flush_suppressed,
         busy_status=request_busy_status,
         context_status=request_context_status,
     )
@@ -430,7 +452,7 @@ def main() -> int:
         )
     setup_logging(root)
     logging.info("Norm startup begin")
-    logging.info("Resolved paths: runtime_root=%s workspace_root=%s verbatim_writer=%s", path_cfg["runtime_root"], path_cfg["workspace_root"], path_cfg["verbatim_writer"])
+    logging.info("Resolved paths: app_root=%s runtime_root=%s documents_root=%s workspace_root=%s verbatim_writer=%s", path_cfg["app_root"], path_cfg["runtime_root"], path_cfg["documents_root"], path_cfg["workspace_root"], path_cfg["verbatim_writer"])
     config = load_config(root)
     ports = load_ports(root)
     ollama_cfg = config.get('ollama', {})

@@ -6,7 +6,7 @@ import re
 import socket
 import uuid
 from datetime import datetime, timedelta, timezone
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from time import monotonic
 
 import psycopg
@@ -64,6 +64,9 @@ class PromptWorker:
         self._weekly_cleanup_redis = None
         self._stop_after_step = Event()
         self._stop_all_now = Event()
+        self._state_lock = Lock()
+        self._active_task_id = ""
+        self._suppress_requested: set[str] = set()
         self.deferred_append_planner = deferred_append_planner
 
     def start(self) -> Thread:
@@ -92,6 +95,50 @@ class PromptWorker:
     def request_stop_all_now(self) -> None:
         self._stop_all_now.set()
         self._drain.set()
+
+    def active_task_id(self) -> str:
+        with self._state_lock:
+            return self._active_task_id
+
+    def _suppression_requested(self, task_id: str) -> bool:
+        with self._state_lock:
+            return task_id in self._suppress_requested
+
+    def _clear_suppression_request(self, task_id: str) -> None:
+        with self._state_lock:
+            self._suppress_requested.discard(task_id)
+
+    def request_suppress_task(self, task_id: str | None = None, reason: str = "") -> dict:
+        target = str(task_id or "").strip()
+        if not target:
+            target = self.active_task_id() or str(self.queue.oldest_task_id() or "")
+        if not target:
+            return {"status": "ok", "suppressed": False, "reason": "no active or queued task"}
+        status = self.durable.task_status(target) if self.durable else None
+        if status in {"completed", "failed", "cancelled"}:
+            return {"status": "conflict", "suppressed": False, "task_id": target, "task_status": status}
+        payload = self.queue.snapshot_task_jobs(target)
+        with self._state_lock:
+            self._suppress_requested.add(target)
+        snapshot = self.durable.suppress_task(target, reason or "Operator requested /suppress-task.", payload) if self.durable else {"task_id": target}
+        cleaned = self.queue.cleanup_task(target)
+        if target == self.active_task_id():
+            OllamaClient.cancel_active()
+        return {"status": "ok", "suppressed": True, "task_id": target, "title": snapshot.get("title", ""), "queue_cleanup": cleaned}
+
+    def flush_suppressed(self) -> dict:
+        tasks = self.durable.suppressed_tasks(limit=10000) if self.durable else []
+        active = self.active_task_id()
+        for item in tasks:
+            task_id = str(item.get("task_id") or "")
+            if task_id:
+                self.queue.cleanup_task(task_id)
+                if hasattr(self.live, "cleanup"):
+                    self.live.cleanup(task_id)
+                if task_id != active:
+                    self._clear_suppression_request(task_id)
+        deleted = self.durable.flush_suppressed() if self.durable else 0
+        return {"status": "ok", "deleted": deleted}
 
     def wait_idle(self, timeout: float | None = None) -> bool:
         return self._idle.wait(timeout=timeout)
@@ -133,9 +180,14 @@ class PromptWorker:
                     continue
                 self._blank_claims = 0
                 self._idle.clear()
+                with self._state_lock:
+                    self._active_task_id = job.task_id
                 try:
                     self._process(redis_id, job)
                 finally:
+                    with self._state_lock:
+                        if self._active_task_id == job.task_id:
+                            self._active_task_id = ""
                     self._idle.set()
             except Exception:
                 logging.exception("Prompt worker loop error")
@@ -147,6 +199,11 @@ class PromptWorker:
         request_type = normalize_request_type(job.request_type)
         name = str(metadata.get("step_name") or job.step_id)
         logging.info("Processing queued request task=%s step=%s type=%s", job.task_id, job.step_id, request_type)
+        if self._suppression_requested(job.task_id) or (self.durable and self.durable.task_status(job.task_id) == "suppressed"):
+            self.queue.cleanup_task(job.task_id)
+            self._clear_suppression_request(job.task_id)
+            logging.info("Skipped suppressed queued task=%s step=%s", job.task_id, job.step_id)
+            return
         if self.durable:
             command = self._command_from_job(job)
             if command.get("category") == "append":
@@ -263,6 +320,9 @@ class PromptWorker:
                 )
                 if answer is None:
                     return
+            if self._suppression_requested(job.task_id) or (self.durable and self.durable.task_status(job.task_id) == "suppressed"):
+                self._handle_suppressed(job, reason="Suppression requested during execution.")
+                return
             structured_summary = self._step_result_envelope(job, request_type, answer, resource_status=resource_status)
             result = StepResult(
                 task_id=job.task_id,
@@ -298,7 +358,9 @@ class PromptWorker:
                 self.queue.ack(redis_id)
             logging.info("Prompt completed task=%s step=%s type=%s", job.task_id, job.step_id, request_type)
         except ModelGenerationCancelled as exc:
-            if self._stop_all_now.is_set():
+            if self._suppression_requested(job.task_id) or (self.durable and self.durable.task_status(job.task_id) == "suppressed"):
+                self._handle_suppressed(job, reason=str(exc) or "Suppression requested during model generation.")
+            elif self._stop_all_now.is_set():
                 self._handle_stop_all_now(redis_id, job, name, started, str(exc))
             else:
                 self._handle_cancelled(redis_id, job, name, started, str(exc))
@@ -307,6 +369,9 @@ class PromptWorker:
             self._handle_pathological_failure(redis_id, job, name, started, "verifier", str(exc))
             return
         except Exception as exc:
+            if self._suppression_requested(job.task_id) or (self.durable and self.durable.task_status(job.task_id) == "suppressed"):
+                self._handle_suppressed(job, reason=f"Suppression completed at safe boundary after {type(exc).__name__}.")
+                return
             error = f"{type(exc).__name__}: {exc}"
             terminal = self._recover_or_escalate(redis_id, job, error)
             result = StepResult(
@@ -344,6 +409,17 @@ class PromptWorker:
             self.client.clear_crash_context()
             heartbeat_stop.set()
             heartbeat.join(timeout=1)
+
+    def _handle_suppressed(self, job: PromptJob, reason: str) -> None:
+        status = self.durable.task_status(job.task_id) if self.durable else None
+        if self.durable and status is not None and status != "suppressed":
+            payload = self.queue.snapshot_task_jobs(job.task_id)
+            self.durable.suppress_task(job.task_id, reason or "Suppressed by operator.", payload)
+        self.queue.cleanup_task(job.task_id)
+        if hasattr(self.live, "cleanup"):
+            self.live.cleanup(job.task_id)
+        self._clear_suppression_request(job.task_id)
+        logging.info("Task suppressed task=%s step=%s reason=%s", job.task_id, job.step_id, reason)
 
     def _handle_append_dependency_terminal(self, redis_id: str, job: PromptJob, name: str, command: dict, state: dict) -> None:
         previous_task_id = str(command.get("previous_task_id") or "")
@@ -797,16 +873,31 @@ class PromptWorker:
         requeued = self.queue.requeue_pending_on_startup()
         self._last_redis_maintenance_check = monotonic()
         self.durable.record_maintenance_note("startup", "Redis startup scan began.", details={"pending_requeued": requeued})
-        self._reconcile_redis(reason="startup", finalize_unrecoverable=True)
+        self._reconcile_redis(reason="startup", finalize_unrecoverable=True, include_durable_running=True)
         logging.info("Startup Redis recovery pending_requeued=%s", requeued)
 
-    def _reconcile_redis(self, *, reason: str, finalize_unrecoverable: bool) -> None:
+    def _reconcile_redis(
+        self, *, reason: str, finalize_unrecoverable: bool, include_durable_running: bool = False
+    ) -> None:
         task_ids = self._all_redis_task_ids()
+        if include_durable_running and hasattr(self.durable, "running_tasks"):
+            task_ids.update(
+                str(item.get("task_id") or "")
+                for item in self.durable.running_tasks(limit=1000)
+                if str(item.get("task_id") or "")
+            )
         cleaned = recovered = finalized = unknown = held = 0
         for task_id in sorted(task_ids):
             status = self.durable.task_status(task_id)
             locations = self.queue.task_locations(task_id)
             recoverable = bool(locations["work"] or locations["retry"])
+            if status == "suppressed":
+                self.queue.cleanup_task(task_id)
+                if hasattr(self.live, "cleanup"):
+                    self.live.cleanup(task_id)
+                self._clear_suppression_request(task_id)
+                cleaned += 1
+                continue
             if status in {"completed", "failed", "cancelled"}:
                 if not self.durable.terminal_summary_verified(task_id):
                     self.durable.ensure_terminal_summary(task_id)
@@ -856,7 +947,7 @@ class PromptWorker:
         unfinished = 0
         for task_id in sorted(self._all_redis_task_ids()):
             status = self.durable.task_status(task_id)
-            if status in {"completed", "failed", "cancelled"}:
+            if status in {"completed", "failed", "cancelled", "suppressed"}:
                 continue
             locations = self.queue.task_locations(task_id)
             live_state = self.live.state(task_id) if hasattr(self.live, "state") else {}
@@ -1943,6 +2034,8 @@ class PromptWorker:
         long_form = request_type == "conclusion" or bool(metadata.get("is_final_candidate")) or bool(re.search(r"\bexactly\s+\d+\b", prompt, re.I))
         output_budget = int(metadata.get("num_predict") or (27000 if long_form else 16000))
         while step_rounds < step_limit and task_rounds < task_limit:
+            if self._suppression_requested(job.task_id) or (self.durable and self.durable.task_status(job.task_id) == "suppressed"):
+                raise ModelGenerationCancelled("task suppressed by operator")
             if self._drain.is_set():
                 evidence.extend(self._verify_pending(job, pending_verification, tools))
                 checkpoint = self._continuation_checkpoint(
@@ -2086,6 +2179,8 @@ class PromptWorker:
                 evidence_item = {"tool": str(name), "arguments": arguments, "result": result}
                 evidence.append(evidence_item)
                 self._persist_evidence_now(job, [evidence_item])
+                if self._suppression_requested(job.task_id) or (self.durable and self.durable.task_status(job.task_id) == "suppressed"):
+                    raise ModelGenerationCancelled("task suppressed by operator after current tool boundary")
 
                 if result.get("ok"):
                     observed_path = str(result.get("path") or "")

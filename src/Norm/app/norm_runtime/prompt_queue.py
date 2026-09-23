@@ -466,15 +466,20 @@ class RedisPromptQueue:
                     tail.append((msg_id, queued))
             tail.sort(key=lambda item: item[1].chain_index)
 
-        self.ack(redis_id)
-        for msg_id, _ in tail:
-            self.r.xack(self.stream, self.group, msg_id)
-            self.r.xdel(self.stream, msg_id)
-
-        new_id = self.enqueue(job)
-        for _, queued in tail:
-            self.enqueue(queued)
-        return new_id
+        # Replace the claimed job and its chain tail atomically. This matters for
+        # stop-all-now: a process exit between deleting the claimed entry and
+        # re-enqueueing it would otherwise leave PostgreSQL marked running with
+        # no recoverable Redis work.
+        pipe = self.r.pipeline(transaction=True)
+        pipe.xadd(self.stream, self._job_to_fields(job))
+        pipe.xack(self.stream, self.group, redis_id)
+        pipe.xdel(self.stream, redis_id)
+        for msg_id, queued in tail:
+            pipe.xack(self.stream, self.group, msg_id)
+            pipe.xdel(self.stream, msg_id)
+            pipe.xadd(self.stream, self._job_to_fields(queued))
+        results = list(pipe.execute())
+        return str(results[0])
 
     # ------------------------------------------------------------------
     # Dead letter
@@ -533,6 +538,38 @@ class RedisPromptQueue:
         counts["pending"] = sum(1 for msg_id, fields in self.r.xrange(self.stream, min="-", max="+")
                                 if msg_id in pending_ids and str(fields.get("task_id") or "") == task_id)
         return counts
+
+    def oldest_task_id(self) -> str | None:
+        for stream in (self.stream, self.retry_stream, self.escalation_stream):
+            for _, fields in self.r.xrange(stream, min="-", max="+", count=1):
+                task_id = str(fields.get("task_id") or "").strip()
+                if task_id:
+                    return task_id
+        return None
+
+    def snapshot_task_jobs(self, task_id: str) -> dict:
+        jobs = []
+        for stream, label in ((self.stream, "work"), (self.retry_stream, "retry"), (self.escalation_stream, "escalation")):
+            for redis_id, fields in self.r.xrange(stream, min="-", max="+"):
+                if str(fields.get("task_id") or "") != task_id:
+                    continue
+                job = self._fields_to_job(redis_id, fields)
+                jobs.append({"stream": label, "redis_id": str(redis_id), "job": asdict(job)})
+        return {"jobs": jobs, "captured_at": time.time()}
+
+    def restore_task_jobs(self, payload: dict) -> list[str]:
+        raw = list((payload or {}).get("jobs") or [])
+        jobs = []
+        seen = set()
+        for item in raw:
+            data = dict(item.get("job") or {})
+            message_id = str(data.get("message_id") or "")
+            if not message_id or message_id in seen:
+                continue
+            seen.add(message_id)
+            jobs.append(PromptJob(**data))
+        jobs.sort(key=lambda j: int(j.chain_index))
+        return self.enqueue_chain(jobs) if jobs else []
 
     def requeue_pending_on_startup(self) -> int:
         pending = self.r.xpending_range(self.stream, self.group, min="-", max="+", count=1000)

@@ -13,14 +13,14 @@ from psycopg import sql
 from norm_gui_dispatch import GuiPromptDispatcher
 
 from norm_gui_common import (
-    DISPLAY_FILE,
+    acquire_windows_mutex,
     FALLBACK_LOG,
     ROOT,
     append_fallback_jsonl,
-    atomic_write_utf8,
     endpoints,
     norm_process_running,
     start_norm_detached,
+    load_runtime_config,
 )
 
 PROJECT_ID = "default"
@@ -31,7 +31,7 @@ def now_iso() -> str:
 
 
 def load_last_turn_from_postgres() -> tuple[str | None, str | None, str | None]:
-    cfg = json.loads((ROOT / "config" / "runtime.json").read_text(encoding="utf-8-sig"))
+    cfg = load_runtime_config(ROOT)
     pg = cfg["postgres"]
     schema = str(pg.get("schema", "norm_runtime"))
     query = sql.SQL(
@@ -131,11 +131,15 @@ def show_help() -> None:
     print("    ::send             Submit the multiline prompt")
     print("    ::cancel           Cancel the multiline prompt without sending it")
     print("  /repeat-submission  Requeue the last submitted prompt verbatim")
-    print("  /repeat-answer      Requeue the last completed Norm answer verbatim")
+    print("  /repeat-answer      Redisplay the last completed Norm answer verbatim")
+    print("  /suppress-task      Park the active task, or oldest next queued task, in PostgreSQL")
+    print("  /flush-suppressed   Permanently delete all suppressed task records")
     print("  /exit               Close only this prompt console; Norm keeps running")
-    print("  /stop               Immediately checkpoint/stop all Norm work and close this console")
-    print("  /stop all           Finish the current step, then stop Norm/Ollama")
-    print("  /stop all -now      Immediately checkpoint current work and stop Norm/Ollama")
+    print("  /stop-all           Finish the current step, then stop Norm/Ollama")
+    print("  /stop-all now       Emergency: snapshot progress to SOS.md, then force-stop Norm and Ollama")
+    print("  /stop               Alias for /stop-all now")
+    print("  /stop all           Legacy alias for /stop-all")
+    print("  /stop all -now      Legacy alias for /stop-all now")
     print("  /shutdown           Request Norm's graceful shutdown and close this console")
     print("  /shutdown now       Immediately request Norm shutdown and close this console")
     print("  Ctrl+C              Request the same graceful shutdown, even while waiting")
@@ -193,32 +197,6 @@ def backup_turn(message: str, reply: str, result: dict, reason: str) -> None:
     )
 
 
-def publish_final_answer(reply: str) -> None:
-    text = (reply or "[Norm returned an empty reply]").rstrip() + "\n"
-    atomic_write_utf8(DISPLAY_FILE, text)
-
-
-def send_prompt(
-    ep: dict[str, str], message: str, thread_id: str | None
-) -> tuple[str | None, str, dict]:
-    payload: dict[str, object] = {"message": message, "project_id": PROJECT_ID}
-    if thread_id:
-        payload["thread_id"] = thread_id
-    print("Sent to Norm. Waiting for completion; Ctrl+C requests graceful shutdown.")
-    result = post_json(ep["chat"], payload=payload, timeout=None)
-    reply = str(result.get("reply", ""))
-    publish_final_answer(reply)
-    if not persistence_complete(result):
-        backup_turn(message, reply, result, "PostgreSQL conversation persistence incomplete")
-        print("PostgreSQL history was incomplete; saved a UTF-8 local fallback record.")
-    else:
-        print("Turn persisted in PostgreSQL history.")
-    print("Completed answer staged as UTF-8 and released to the Norm Replies window.")
-    returned = result.get("primary_thread_id") or result.get("thread_id")
-    next_thread = returned if isinstance(returned, str) and returned else thread_id
-    return next_thread, reply, result
-
-
 def probe(ep: dict[str, str]) -> int:
     print(f"Host: {ep['host']}")
     print(f"Chat: {ep['chat']}")
@@ -233,12 +211,11 @@ def probe(ep: dict[str, str]) -> int:
 
 
 def load_console_queue_config() -> dict:
-    cfg = json.loads((ROOT / "config" / "runtime.json").read_text(encoding="utf-8-sig"))
+    cfg = load_runtime_config(ROOT)
     return dict(cfg.get("console_queue", {}))
 
 
 def completed_turn(message: str, reply: str, result: dict) -> None:
-    publish_final_answer(reply)
     if not persistence_complete(result):
         backup_turn(message, reply, result, "PostgreSQL conversation persistence incomplete")
     task_id = str(result.get("task_id") or "n/a")
@@ -246,12 +223,20 @@ def completed_turn(message: str, reply: str, result: dict) -> None:
 
 
 def stop_all(ep: dict[str, str], immediate: bool) -> None:
-    url = ep["stop_all_now"] if immediate else ep["stop_all"]
-    result = post_json(url, timeout=5)
-    print(f"Stop-all accepted: {result.get('mode', 'now' if immediate else 'after-step')}.")
+    if immediate:
+        helper = ROOT / "tools" / "norm_emergency_stop.py"
+        print("Emergency stop: preserving current recovery state to SOS.md, then force-stopping Norm/Ollama...")
+        proc = subprocess.run([sys.executable, str(helper)], cwd=str(ROOT), check=False)
+        if proc.returncode != 0:
+            raise RuntimeError(f"Emergency stop helper failed with exit code {proc.returncode}; Norm was not force-killed.")
+        return
+    result = post_json(ep["stop_all"], timeout=5)
+    print(f"Stop-all accepted: {result.get('mode', 'after-step')}.")
 
 
 def main() -> int:
+    if not acquire_windows_mutex('NormGuiPrompt'):
+        return 0
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     try:
@@ -313,16 +298,29 @@ def main() -> int:
             elif lowered == "/repeat-answer":
                 text = dispatcher.last_answer() or ""
                 if not text:
-                    print("No previous Norm answer is available.")
+                    print("No previous Norm answer is available in Redis.")
                     continue
-                print("Requeueing the last completed Norm answer verbatim.")
+                dispatcher.publish_reply(text, source="repeat")
+                print("Redisplayed the last completed Norm answer verbatim from Redis.")
+                continue
+            elif lowered == "/suppress-task":
+                result = post_json(ep["suppress_task"], payload={"reason": "Operator requested /suppress-task from Norm GUI."}, timeout=5)
+                if result.get("suppressed"):
+                    print(f"Suppressed: {result.get('title') or result.get('task_id')}.")
+                else:
+                    print(f"Nothing suppressed: {result.get('reason') or result.get('task_status') or 'no eligible task'}.")
+                continue
+            elif lowered == "/flush-suppressed":
+                result = post_json(ep["flush_suppressed"], timeout=10)
+                print(f"Flushed {int(result.get('deleted') or 0)} suppressed task(s).")
+                continue
             elif lowered == "/exit":
                 print("Closing GUI prompt console; queued Redis input is preserved.")
                 return 0
-            elif lowered in {"/stop", "/stop all -now"}:
+            elif lowered in {"/stop", "/stop-all now", "/stop-all -now", "/stop all now", "/stop all -now"}:
                 stop_all(ep, immediate=True)
                 return 0
-            elif lowered == "/stop all":
+            elif lowered in {"/stop-all", "/stop all"}:
                 stop_all(ep, immediate=False)
                 return 0
             elif lowered == "/shutdown":

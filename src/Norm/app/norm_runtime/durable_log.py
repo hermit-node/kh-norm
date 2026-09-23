@@ -175,6 +175,15 @@ class PostgresTaskLog:
                     created_at timestamptz NOT NULL DEFAULT now()
                 )
             """).format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
+            cur.execute(sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {}.task_suppressions (
+                    task_id text PRIMARY KEY REFERENCES {}.task_runs(task_id) ON DELETE CASCADE,
+                    reason text NOT NULL,
+                    resume_payload jsonb NOT NULL DEFAULT '{{}}'::jsonb,
+                    suppressed_at timestamptz NOT NULL DEFAULT now(),
+                    updated_at timestamptz NOT NULL DEFAULT now()
+                )
+            """).format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
             cur.execute(sql.SQL("ALTER TABLE {}.task_runs ADD COLUMN IF NOT EXISTS effectiveness_note text").format(sql.Identifier(self.schema)))
             cur.execute(sql.SQL("ALTER TABLE {}.task_runs ADD COLUMN IF NOT EXISTS parent_task_id text").format(sql.Identifier(self.schema)))
             cur.execute(sql.SQL("ALTER TABLE {}.task_runs ADD COLUMN IF NOT EXISTS parent_step_id text").format(sql.Identifier(self.schema)))
@@ -370,6 +379,54 @@ class PostgresTaskLog:
                 "task_id": str(r[0]), "title": str(r[1]), "status": str(r[2]),
                 "started_at": r[3].isoformat(), "updated_at": r[4].isoformat(),
             } for r in cur.fetchall()]
+
+    def suppress_task(self, task_id: str, reason: str, resume_payload: dict | None = None) -> dict:
+        reason = str(reason or "Suppressed by explicit user request.").strip()
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("SELECT title,status,plan,task_uuid::text FROM {}.task_runs WHERE task_id=%s").format(sql.Identifier(self.schema)), (task_id,))
+            row = cur.fetchone()
+            if not row:
+                raise KeyError(f"Unknown task: {task_id}")
+            if str(row[1]) in {"completed", "failed", "cancelled"}:
+                raise ValueError(f"task is already terminal: {row[1]}")
+            cur.execute(sql.SQL("SELECT step_id,name,status,summary,error FROM {}.task_steps WHERE task_id=%s ORDER BY completed_at DESC NULLS LAST LIMIT 1").format(sql.Identifier(self.schema)), (task_id,))
+            step = cur.fetchone()
+            detail = "No durable step result was recorded yet."
+            if step:
+                observed = str(step[3] or step[4] or "").strip() or "No step detail was recorded."
+                detail = f"Last recorded step {step[0]} ({step[1]}) [{step[2]}]: {observed}"
+            summary = f"Task suppressed by explicit user request. Reason: {reason}. {detail}"
+            cur.execute(sql.SQL("INSERT INTO {}.task_suppressions(task_id,reason,resume_payload) VALUES (%s,%s,%s) ON CONFLICT(task_id) DO UPDATE SET reason=EXCLUDED.reason,resume_payload=EXCLUDED.resume_payload,updated_at=now()").format(sql.Identifier(self.schema)), (task_id, reason, Jsonb(resume_payload or {})))
+            cur.execute(sql.SQL("INSERT INTO {}.task_summaries(task_id,summary) VALUES (%s,%s)").format(sql.Identifier(self.schema)), (task_id, summary))
+            cur.execute(sql.SQL("UPDATE {}.task_runs SET status='suppressed',updated_at=now() WHERE task_id=%s").format(sql.Identifier(self.schema)), (task_id,))
+        return self.task_plan_snapshot(task_id) or {"task_id": task_id, "status": "suppressed"}
+
+    def suppressed_tasks(self, limit: int = 100) -> list[dict]:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("SELECT task_id,title,plan,started_at,updated_at FROM {}.task_runs WHERE status='suppressed' ORDER BY updated_at DESC LIMIT %s").format(sql.Identifier(self.schema)), (max(1, int(limit)),))
+            rows = cur.fetchall()
+        result = []
+        for task_id, title, plan, started_at, updated_at in rows:
+            plan = plan if isinstance(plan, dict) else {}
+            result.append({"task_id": str(task_id), "title": str(title), "original_request": self._original_request_from_plan(plan), "started_at": started_at.isoformat(), "updated_at": updated_at.isoformat(), "steps": (self.task_plan_snapshot(str(task_id)) or {}).get("steps", [])})
+        return result
+
+    def suppression_payload(self, task_id: str) -> dict:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("SELECT resume_payload FROM {}.task_suppressions WHERE task_id=%s").format(sql.Identifier(self.schema)), (task_id,))
+            row = cur.fetchone()
+            return dict(row[0] or {}) if row else {}
+
+    def resume_suppressed_task(self, task_id: str) -> None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("UPDATE {}.task_runs SET status='running',updated_at=now() WHERE task_id=%s AND status='suppressed'").format(sql.Identifier(self.schema)), (task_id,))
+            if cur.rowcount != 1:
+                raise ValueError(f"task is not suppressed: {task_id}")
+
+    def flush_suppressed(self) -> int:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("DELETE FROM {}.task_runs WHERE status='suppressed'").format(sql.Identifier(self.schema)))
+            return int(cur.rowcount or 0)
 
     def start_task(self, plan: TaskPlan) -> None:
         with self._connect() as conn, conn.cursor() as cur:
@@ -702,6 +759,13 @@ class PostgresTaskLog:
             cur.execute(sql.SQL("SELECT value FROM {}.runtime_state WHERE state_key=%s").format(sql.Identifier(self.schema)), (key,))
             row = cur.fetchone()
         return row[0] if row else default
+
+    def delete_runtime_state(self, key: str) -> None:
+        key = str(key or "").strip()
+        if not key:
+            return
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("DELETE FROM {}.runtime_state WHERE state_key=%s").format(sql.Identifier(self.schema)), (key,))
 
     def runtime_state_snapshot(self) -> dict:
         with self._connect() as conn, conn.cursor() as cur:

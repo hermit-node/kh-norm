@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
+from difflib import SequenceMatcher
 from dataclasses import dataclass
 
 import psycopg
@@ -59,6 +61,95 @@ class ConversationService:
     def _persistent_instruction_text(self) -> str:
         return "\n".join(f"- {item}" for item in self.persistent_instructions)
 
+    @staticmethod
+    def _resume_state_key(thread_id: str) -> str:
+        return f"suppressed_resume_pending:{thread_id}"
+
+    def _best_suppressed_match(self, message: str) -> tuple[dict | None, float]:
+        if self.durable is None or not hasattr(self.durable, "suppressed_tasks"):
+            return None, 0.0
+        candidates = self.durable.suppressed_tasks(limit=200)
+        if not candidates:
+            return None, 0.0
+        query = message.lower()
+        qtokens = set(re.findall(r"[a-z0-9_]+", query))
+        scored = []
+        for item in candidates:
+            text = (str(item.get("title") or "") + " " + str(item.get("original_request") or "")).lower()
+            ttokens = set(re.findall(r"[a-z0-9_]+", text))
+            overlap = len(qtokens & ttokens) / max(1, len(qtokens))
+            seq = SequenceMatcher(None, query[:1200], text[:2400]).ratio()
+            scored.append((0.72 * overlap + 0.28 * seq, item))
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return scored[0][1], float(scored[0][0])
+
+    def _resume_suppressed_and_wait(self, task_id: str, *, thread_ids: list[str], primary_thread_id: str, user_message_id: str) -> tuple[str, str, dict]:
+        payload = self.durable.suppression_payload(task_id)
+        raw_jobs = list(payload.get("jobs") or [])
+        if not raw_jobs:
+            return task_id, "I found the suppressed task, but it has no captured executable queue state to resume safely.", full_context_status()
+        for item in raw_jobs:
+            job = item.get("job") if isinstance(item, dict) else None
+            if not isinstance(job, dict):
+                continue
+            metadata = job.get("metadata") if isinstance(job.get("metadata"), dict) else {}
+            metadata["conversation"] = {"thread_ids": thread_ids, "primary_thread_id": primary_thread_id, "user_message_id": user_message_id}
+            metadata["resumed_from_suppressed"] = True
+            job["metadata"] = metadata
+        self.durable.resume_suppressed_task(task_id)
+        try:
+            restored = self.prompt_queue.restore_task_jobs(payload)
+            if not restored:
+                raise RuntimeError("suppressed task had no restorable jobs")
+        except Exception:
+            self.durable.suppress_task(task_id, "Resume enqueue failed; task was safely re-suppressed.", payload)
+            raise
+        deadline = time.monotonic() + self.wait_timeout_seconds
+        while time.monotonic() < deadline:
+            status = self.durable.task_status(task_id)
+            if status == "completed":
+                return task_id, self.durable.latest_summary(task_id) or "Resumed task completed.", full_context_status()
+            if status in {"failed", "cancelled"}:
+                return task_id, self.durable.latest_summary(task_id) or f"Resumed task ended {status}.", full_context_status()
+            if status == "suppressed":
+                return task_id, "The task was suppressed again before completion.", full_context_status()
+            time.sleep(0.1)
+        raise TimeoutError(f"resumed suppressed task did not finish within {self.wait_timeout_seconds:g} seconds")
+
+    def _suppressed_resume_flow(self, message: str, *, primary_thread_id: str, thread_ids: list[str], user_message_id: str):
+        if self.durable is None or self.prompt_queue is None:
+            return None
+        key = self._resume_state_key(primary_thread_id)
+        pending = self.durable.get_runtime_state(key, None)
+        lowered = re.sub(r"\s+", " ", message.strip().lower())
+        if isinstance(pending, dict) and pending.get("task_id"):
+            age = time.time() - float(pending.get("created_at") or 0)
+            if age > 3600:
+                self.durable.delete_runtime_state(key)
+                pending = None
+            elif lowered in {"yes", "y", "confirm", "yes resume", "resume it", "do it", "go ahead"}:
+                task_id = str(pending["task_id"])
+                self.durable.delete_runtime_state(key)
+                return self._resume_suppressed_and_wait(task_id, thread_ids=thread_ids, primary_thread_id=primary_thread_id, user_message_id=user_message_id)
+            elif lowered in {"no", "n", "cancel", "never mind", "nevermind"}:
+                self.durable.delete_runtime_state(key)
+                return None, "Okay. I left the suppressed task parked and unchanged.", full_context_status()
+        if "resume" not in lowered or "task" not in lowered:
+            return None
+        candidate, score = self._best_suppressed_match(message)
+        if not candidate:
+            return None
+        self.durable.set_runtime_state(key, {"task_id": candidate["task_id"], "created_at": time.time(), "match_score": score})
+        steps = candidate.get("steps") or []
+        done = sum(1 for step in steps if step.get("status") == "completed")
+        original = str(candidate.get("original_request") or "").strip()
+        if len(original) > 450:
+            original = original[:447] + "..."
+        reply = (f"The best suppressed-task match I found is **{candidate.get('title') or candidate['task_id']}**. "
+                 f"It has {done}/{len(steps)} recorded steps completed. The original request was: {original or '[original request unavailable]'}\n\n"
+                 "Do you want me to resume that task from its saved PostgreSQL/queue state?")
+        return None, reply, full_context_status()
+
     def chat(self, message: str, *, project_id: str = "default", thread_id: str | None = None) -> dict:
         message = message.strip()
         if not message:
@@ -87,19 +178,30 @@ class ConversationService:
                 thread_ids.insert(0, route.primary_thread_id)
 
             user_id = self.store.add_message("user", message, thread_ids, route.primary_thread_id)
-            prompt, resource_status = self._answer_prompt(project_id, thread_ids, message)
+            special = self._suppressed_resume_flow(
+                message, primary_thread_id=route.primary_thread_id,
+                thread_ids=thread_ids, user_message_id=user_id,
+            )
+            if special is None:
+                prompt, resource_status = self._answer_prompt(project_id, thread_ids, message)
+            else:
+                prompt = ""
+                resource_status = full_context_status()
         except psycopg.Error as exc:
             return self._degraded_postgres_chat(message, project_id, exc)
 
-        task_id, reply, task_resource_status = self._enqueue_and_wait(
-            prompt,
-            original_user_prompt=message,
-            project_id=project_id,
-            thread_ids=thread_ids,
-            primary_thread_id=route.primary_thread_id,
-            user_message_id=user_id,
-            resource_status=resource_status,
-        )
+        if special is None:
+            task_id, reply, task_resource_status = self._enqueue_and_wait(
+                prompt,
+                original_user_prompt=message,
+                project_id=project_id,
+                thread_ids=thread_ids,
+                primary_thread_id=route.primary_thread_id,
+                user_message_id=user_id,
+                resource_status=resource_status,
+            )
+        else:
+            task_id, reply, task_resource_status = special
         resource_status = merge_resource_status(resource_status, task_resource_status)
 
         assistant_id = None

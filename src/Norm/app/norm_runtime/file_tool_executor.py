@@ -89,6 +89,7 @@ class FileToolExecutor:
         self.deletion_queue = deletion_queue
         self.storage = StorageContext(storage_config) if storage_config else None
         self.connection_config = dict(connection_config or {})
+        self.authority_config = dict(self.connection_config.get("authority") or {})
         self.shell_enabled = bool(shell_enabled)
         self.shell_executable = str(shell_executable or "powershell.exe")
         self.shell_timeout_seconds = max(1, int(shell_timeout_seconds))
@@ -265,11 +266,25 @@ class FileToolExecutor:
             ])
         return schemas
 
+    def _require_authority(self) -> None:
+        if not bool(self.authority_config.get("required", False)):
+            return
+        host = str(self.authority_config.get("host") or "").strip()
+        port = int(self.authority_config.get("port") or 0)
+        if not host or not port:
+            raise RuntimeError("authority network is required but not configured")
+        try:
+            with socket.create_connection((host, port), timeout=1.5):
+                pass
+        except OSError as exc:
+            raise RuntimeError(f"authority network unavailable at {host}:{port}") from exc
+
     def execute(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         started = time.time()
         self._storage_context_for_call = None
         result: dict[str, Any]
         try:
+            self._require_authority()
             if name not in self.TOOL_NAMES:
                 raise ValueError(f"unsupported tool: {name}; deletion is not available")
             method = getattr(self, f"_{name}")
