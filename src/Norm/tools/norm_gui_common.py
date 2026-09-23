@@ -1,32 +1,36 @@
 from __future__ import annotations
 
 import configparser
+import ctypes
 import json
 import os
 import subprocess
-import tempfile
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+APP_DIR = ROOT / "app"
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
+from norm_runtime.settings import load_ports
+from runtime_bootstrap import load_config as load_runtime_config
 STATE_DIR = ROOT / "state"
-DISPLAY_FILE = STATE_DIR / "norm_gui_final_answer.txt"
 FALLBACK_LOG = STATE_DIR / "norm_gui_history_fallback.jsonl"
 SETTINGS_FILE = ROOT / "config" / "settings.ini"
+_MUTEX_HANDLES = []
 
+def acquire_windows_mutex(name: str) -> bool:
+    if os.name != "nt":
+        return True
+    handle = ctypes.windll.kernel32.CreateMutexW(None, False, name)
+    if not handle:
+        return False
+    if ctypes.windll.kernel32.GetLastError() == 183:
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return False
+    _MUTEX_HANDLES.append(handle)
+    return True
 
-def atomic_write_utf8(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, path)
-    finally:
-        if tmp_path.exists():
-            tmp_path.unlink(missing_ok=True)
 
 def append_fallback_jsonl(record: dict) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -54,13 +58,12 @@ def tailscale_ipv4() -> str:
 
 
 def endpoints() -> dict[str, str]:
-    cfg = configparser.ConfigParser()
     if not SETTINGS_FILE.is_file():
         raise RuntimeError(f"Missing settings file: {SETTINGS_FILE}")
-    cfg.read(SETTINGS_FILE, encoding="utf-8")
+    ports = load_ports(ROOT)
     host = tailscale_ipv4()
-    norm_port = cfg.getint("ports", "norm_http")
-    activity_port = cfg.getint("ports", "activity")
+    norm_port = int(ports["norm_http"])
+    activity_port = int(ports["activity"])
     return {
         "host": host,
         "chat": f"http://{host}:{norm_port}/api/chat",
@@ -73,6 +76,8 @@ def endpoints() -> dict[str, str]:
         "shutdown_now": f"http://{host}:{activity_port}/control/shutdown-norm-now",
         "stop_all": f"http://{host}:{activity_port}/control/stop-all",
         "stop_all_now": f"http://{host}:{activity_port}/control/stop-all-now",
+        "suppress_task": f"http://{host}:{activity_port}/control/suppress-task",
+        "flush_suppressed": f"http://{host}:{activity_port}/control/flush-suppressed",
     }
 
 

@@ -78,6 +78,8 @@ class ActivityHTTPServer(ThreadingHTTPServer):
         shutdown_ollama: Callable[[], dict] | None = None,
         shutdown_norm: Callable[[bool], dict] | None = None,
         stop_all: Callable[[bool], dict] | None = None,
+        suppress_task: Callable[[str | None, str], dict] | None = None,
+        flush_suppressed: Callable[[], dict] | None = None,
         busy_status: Callable[[], dict] | None = None,
         context_status: Callable[[], dict] | None = None,
     ) -> None:
@@ -87,6 +89,8 @@ class ActivityHTTPServer(ThreadingHTTPServer):
         self.shutdown_ollama = shutdown_ollama
         self.shutdown_norm = shutdown_norm
         self.stop_all = stop_all
+        self.suppress_task = suppress_task
+        self.flush_suppressed = flush_suppressed
         self.busy_status = busy_status
         self.context_status = context_status
 
@@ -182,7 +186,20 @@ class ActivityRequestHandler(BaseHTTPRequestHandler):
         finally:
             self.server.hub.unsubscribe(subscriber)
 
+    def _read_json_body(self) -> dict:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0:
+            return {}
+        try:
+            return json.loads(self.rfile.read(length).decode("utf-8"))
+        except Exception:
+            return {}
+
     def do_POST(self) -> None:
+        payload = self._read_json_body()
         if self.path == "/control/cancel-ollama":
             count = self.server.cancel_ollama()
             self._send_json(200, {"status": "ok", "cancelled": count})
@@ -200,6 +217,19 @@ class ActivityRequestHandler(BaseHTTPRequestHandler):
                 return
             result = self.server.shutdown_norm(self.path.endswith("-now"))
             self._send_json(200, result)
+            return
+        if self.path == "/control/suppress-task":
+            if self.server.suppress_task is None:
+                self._send_json(503, {"error": "suppress-task control unavailable"})
+                return
+            result = self.server.suppress_task(payload.get("task_id"), str(payload.get("reason") or ""))
+            self._send_json(200 if result.get("status") == "ok" else 409, result)
+            return
+        if self.path == "/control/flush-suppressed":
+            if self.server.flush_suppressed is None:
+                self._send_json(503, {"error": "flush-suppressed control unavailable"})
+                return
+            self._send_json(200, self.server.flush_suppressed())
             return
         if self.path in {"/control/stop-all", "/control/stop-all-now"}:
             if self.server.stop_all is None:
@@ -220,6 +250,8 @@ def start_activity_server(
     shutdown_ollama: Callable[[], dict] | None = None,
     shutdown_norm: Callable[[bool], dict] | None = None,
     stop_all: Callable[[bool], dict] | None = None,
+    suppress_task: Callable[[str | None, str], dict] | None = None,
+    flush_suppressed: Callable[[], dict] | None = None,
     busy_status: Callable[[], dict] | None = None,
     context_status: Callable[[], dict] | None = None,
 ):
@@ -230,7 +262,7 @@ def start_activity_server(
     if not (ip.is_loopback or ip in ipaddress.ip_network("100.64.0.0/10")):
         raise ValueError("service bind host must remain loopback or Tailscale-only")
     server = ActivityHTTPServer(
-        (host, port), hub, cancel_ollama, shutdown_ollama, shutdown_norm, stop_all, busy_status, context_status
+        (host, port), hub, cancel_ollama, shutdown_ollama, shutdown_norm, stop_all, suppress_task, flush_suppressed, busy_status, context_status
     )
     thread = threading.Thread(
         target=server.serve_forever,

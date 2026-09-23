@@ -15,6 +15,7 @@ from urllib import request as urlrequest
 import psycopg
 import redis as redis_lib
 
+from .command_runner import run_bounded
 from .deletion_queue import RedisDeletionQueue
 from .resource_status import full_context_status, impaired_context_status
 from .storage_context import StorageContext
@@ -147,7 +148,7 @@ class FileToolExecutor:
             "require the sha256 returned by read_file.\n"
             "- replace_text(path, old_text, new_text, expected_sha256, expected_occurrences?): hash-checked exact edit.\n"
             "- delete_file(path, expected_sha256, reason): move a file into the deletion queue; permanent purge waits for graceful shutdown.\n"
-            + (("- run_command(command, cwd?, timeout_seconds?): execute a PowerShell command for running/tests/inspection; returns exit_code, stdout, and stderr. Prefer native file tools for file edits/deletes.\n" + (f"- For multiline or quote-heavy command work, use the operator helper at {self.verbatim_helper} to write a temporary Python script from verbatim stdin, then run that script and verify its result; do not build large nested PowerShell quoting expressions.\n" if self.verbatim_helper else "")) if self.shell_enabled else "")
+            + (("- run_command(command, cwd?, timeout_seconds?, stdin_text?): execute a PowerShell command for running/tests/inspection; returns exit_code, stdout, and stderr. Prefer native file tools for file edits/deletes.\n" + (f"- For multiline or quote-heavy command work, use the operator helper at {self.verbatim_helper} with stdin_text containing the complete script (stdin is otherwise closed), then run that script and verify its result; do not build large nested PowerShell quoting expressions.\n" if self.verbatim_helper else "")) if self.shell_enabled else "")
             + image_help
             + "\nDeletion is available only inside allowed roots and is reversible until graceful shutdown. Never claim a file changed unless a tool result says ok=true. "
             "If a write reports staged=true, the target was NOT changed: do not retry that write again in the same step. "
@@ -240,7 +241,7 @@ class FileToolExecutor:
             schemas.append(tool(
                 "run_command",
                 "Execute a PowerShell command for running code, tests, or inspection. Returns observed exit_code/stdout/stderr. Prefer native file tools for edits and deletion.",
-                {"command": {"type": "string"}, "cwd": path, "timeout_seconds": {"type": "integer", "minimum": 1}},
+                {"command": {"type": "string"}, "cwd": path, "timeout_seconds": {"type": "integer", "minimum": 1}, "stdin_text": {"type": "string", "description": "Optional complete UTF-8 stdin. Otherwise stdin is closed; interactive input is unavailable."}},
                 ["command"],
             ))
         if self.image_enabled:
@@ -355,22 +356,12 @@ class FileToolExecutor:
             raise NotADirectoryError(cwd)
         requested_timeout = int(arguments.get("timeout_seconds", self.shell_timeout_seconds))
         timeout = max(1, min(requested_timeout, self.shell_timeout_seconds))
-        started = time.monotonic()
-        try:
-            cp = subprocess.run(
-                [self.shell_executable, "-NoProfile", "-NonInteractive", "-Command", command],
-                cwd=str(cwd), capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=timeout, check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            stdout = (exc.stdout or "") if isinstance(exc.stdout, str) else ""
-            stderr = (exc.stderr or "") if isinstance(exc.stderr, str) else ""
-            return {"command": command, "cwd": str(cwd), "exit_code": None, "timed_out": True,
-                    "timeout_seconds": timeout, "duration_seconds": round(time.monotonic()-started, 3),
-                    "stdout": stdout[-self.shell_max_output_chars:], "stderr": stderr[-self.shell_max_output_chars:]}
-        return {"command": command, "cwd": str(cwd), "exit_code": cp.returncode, "timed_out": False,
-                "timeout_seconds": timeout, "duration_seconds": round(time.monotonic()-started, 3),
-                "stdout": cp.stdout[-self.shell_max_output_chars:], "stderr": cp.stderr[-self.shell_max_output_chars:]}
+        result = run_bounded(
+            [self.shell_executable, "-NoProfile", "-NonInteractive", "-Command", command],
+            cwd=str(cwd), timeout=timeout, max_output_chars=self.shell_max_output_chars,
+            stdin_text=arguments.get("stdin_text"),
+        )
+        return {"command": command, "cwd": str(cwd), **result}
 
     def _check_connection(self, arguments: dict[str, Any]) -> dict[str, Any]:
         target = str(arguments.get("target") or "").strip().lower()

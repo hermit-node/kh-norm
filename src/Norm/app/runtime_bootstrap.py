@@ -15,14 +15,43 @@ from norm_runtime.prompt_queue import RedisPromptQueue
 from norm_runtime.conversation_store import ConversationStore
 from norm_runtime.file_tool_executor import FileToolExecutor
 from norm_runtime.ollama_client import OllamaClient
-from norm_runtime.settings import load_ports, load_path_settings
+from norm_runtime.settings import load_ports, load_path_settings, load_network_settings, resolve_network_host, load_secrets
 from norm_runtime.conversation_service import ConversationService
 
 
 def load_config(root: Path) -> dict[str, Any]:
     path = root / "config" / "runtime.json"
     with path.open("r", encoding="utf-8-sig") as handle:
-        return json.load(handle)
+        config = json.load(handle)
+    network = load_network_settings(root)
+    ports = load_ports(root)
+    secrets = load_secrets(root)
+    path_cfg = load_path_settings(root)
+    documents_root = path_cfg["documents_root"]
+    config["_paths"] = {name: str(path) for name, path in path_cfg.items()}
+    tools_cfg = config.setdefault("tools", {})
+    tools_cfg["blocked_write_staging_root"] = str(documents_root / "docs" / "blocked-writes")
+    tools_cfg["image_output_root"] = str(documents_root / "images" / "analysis")
+    tools_cfg.setdefault("storage_context", {})["backup_root"] = str(documents_root / "docs")
+    redis_host = resolve_network_host(network, "redis_host")
+    for section in ("redis", "prompt_queue", "deletion_queue", "console_queue", "rich_console_queue"):
+        config.setdefault(section, {})["host"] = redis_host
+        config[section]["port"] = ports["redis"]
+    config.setdefault("ollama", {})["host"] = resolve_network_host(network, "ollama_host")
+    config.setdefault("http", {})["host"] = resolve_network_host(network, "norm_host", bind=True)
+    config.setdefault("activity", {})["host"] = resolve_network_host(network, "activity_host", bind=True)
+    pg_host = resolve_network_host(network, "postgres_host")
+    pg_user = secrets.get("NORM_POSTGRES_USER", "").strip()
+    pg_password = secrets.get("NORM_POSTGRES_PASSWORD", "").strip()
+    pg_db = secrets.get("NORM_POSTGRES_DB", "postgres").strip() or "postgres"
+    if not pg_user or not pg_password:
+        raise ValueError("NORM_POSTGRES_USER and NORM_POSTGRES_PASSWORD are required")
+    config.setdefault("postgres", {})["conninfo"] = psycopg.conninfo.make_conninfo(host=pg_host, port=ports["postgres"], dbname=pg_db, user=pg_user, password=pg_password)
+    config["postgres"]["schema"] = secrets.get("NORM_POSTGRES_SCHEMA", "norm_runtime").strip() or "norm_runtime"
+    stocks_db = secrets.get("NORM_STOCKS_DB", "stocks_api").strip() or "stocks_api"
+    config["stocks_postgres"] = {"conninfo": psycopg.conninfo.make_conninfo(host=pg_host, port=ports["postgres"], dbname=stocks_db, user=pg_user, password=pg_password)}
+    config["_authority"] = {"host": redis_host, "port": ports["redis"], "required": bool(network.get("require_tailscale", True))}
+    return config
 
 
 def build_deletion_queue(root: Path) -> RedisDeletionQueue:
@@ -156,6 +185,8 @@ def build_conversation_service(
                 "redis": config.get("redis", {}),
                 "prompt_queue": config.get("prompt_queue", {}),
                 "ollama_base_url": f"http://{ollama_host}:{ports['ollama']}",
+                "stocks_postgres": config.get("stocks_postgres", {}),
+                "authority": config.get("_authority", {}),
             },
         )
     return ConversationService(

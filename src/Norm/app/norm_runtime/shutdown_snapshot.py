@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -66,21 +67,45 @@ def write_sos(root: Path, live, durable, prompt_queue, mode: str) -> Path:
         lines.append(f"Prompt queue at stop: {json.dumps(prompt_queue.stats(), ensure_ascii=False)}")
     except Exception as exc:
         lines.append(f"Prompt queue snapshot failed: {type(exc).__name__}: {exc}")
+    task_ids = sorted(live.task_ids()) if hasattr(live, "task_ids") else []
+    lines.extend(["", "## Redis live task state / printed working buffer", ""])
+    if not task_ids:
+        lines.append("No live Redis task-state hashes were present.")
+    for task_id in task_ids:
+        state = live.state(task_id)
+        lines.extend([
+            f"### Task {task_id}",
+            "",
+            f"Redis task state: {json.dumps(state, ensure_ascii=False)}",
+            "",
+            "#### Redis printed working buffer",
+            "",
+        ])
+        try:
+            lines.append(live.working_memory(task_id))
+        except Exception as exc:
+            lines.append(f"Working-buffer read failed: {type(exc).__name__}: {exc}")
+        lines.append("")
+
     keys = _buffer_keys(live)
+    lines.extend(["", "## Redis raw model buffers", ""])
     if not keys:
-        lines.extend(["", "## Raw model buffers", "", "No raw model buffer was present. Resume from PostgreSQL/Redis queue state."])
+        lines.append("No raw model buffer was present. Resume from PostgreSQL/Redis queue state.")
     for key in keys:
         task_id, step_id = _split_key(live, key)
         state = live.state(task_id)
+        rows = live.client.xrange(key, min="-", max="+")
+        last_id = rows[-1][0] if rows else "none"
         lines.extend([
             "",
-            f"## Task {task_id} / Step {step_id}",
+            f"### Task {task_id} / Step {step_id}",
             "",
             f"Redis task state: {json.dumps(state, ensure_ascii=False)}",
+            f"Redis model-buffer key: {key}",
+            f"Redis model-buffer rows: {len(rows)}; last stream id: {last_id}",
         ])
         lines.extend(_durable_checkpoint(durable, task_id))
-        lines.extend(["", "### Raw Ollama stream", ""])
-        rows = live.client.xrange(key, min="-", max="+")
+        lines.extend(["", "#### Printed Ollama buffer", ""])
         if not rows:
             lines.append("[buffer empty]")
             continue
@@ -100,13 +125,20 @@ def write_sos(root: Path, live, durable, prompt_queue, mode: str) -> Path:
                 lines.append(f"--- BEGIN {kind} [{stream_id}] ---")
                 lines.append(text)
                 lines.append(f"--- END {kind} ---")
+
     lines.extend([
         "",
         "## Recovery",
         "",
-        "On restart, trust PostgreSQL checkpoints first. Redis/SOS content is best-effort context for the interrupted step.",
+        "On restart, trust PostgreSQL checkpoints first. Redis task state, working-buffer events, and raw model-buffer streams are the best-effort interrupted-step context.",
         "",
     ])
     target = root / "SOS.md"
-    target.write_text("\n".join(lines), encoding="utf-8")
+    content = "\n".join(lines)
+    with target.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
+    with target.open("r+b") as handle:
+        os.fsync(handle.fileno())
     return target
