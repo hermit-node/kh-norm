@@ -7,7 +7,7 @@ import socket
 import uuid
 from datetime import datetime, timedelta, timezone
 from threading import Event, Lock, Thread
-from time import monotonic
+from time import monotonic, time
 
 import psycopg
 import redis
@@ -109,28 +109,86 @@ class PromptWorker:
             self._suppress_requested.discard(task_id)
 
     def request_suppress_task(self, task_id: str | None = None, reason: str = "") -> dict:
-        target = str(task_id or "").strip()
-        if not target:
-            target = self.active_task_id() or str(self.queue.oldest_task_id() or "")
-        if not target:
+        explicit = bool(str(task_id or "").strip())
+        seed = str(task_id or "").strip() or self.active_task_id() or str(self.queue.oldest_task_id() or "")
+        if not seed:
             return {"status": "ok", "suppressed": False, "reason": "no active or queued task"}
-        status = self.durable.task_status(target) if self.durable else None
-        if status in {"completed", "failed", "cancelled"}:
+
+        target = seed
+        tree = []
+        if self.durable:
+            # No-ID suppression is an operator command against the user-facing work
+            # tree, not whichever internal child happens to own the model call.
+            if not explicit and hasattr(self.durable, "root_task_id"):
+                target = str(self.durable.root_task_id(seed) or seed)
+            if hasattr(self.durable, "task_tree"):
+                tree = list(self.durable.task_tree(target) or [])
+        if not tree:
+            status = self.durable.task_status(target) if self.durable else None
+            tree = [{"task_id": target, "status": status or "running", "task_kind": "root", "task_depth": 0}]
+
+        terminal = {"completed", "failed", "cancelled"}
+        members = [item for item in tree if str(item.get("status") or "") not in terminal]
+        if not members:
+            status = self.durable.task_status(target) if self.durable else None
             return {"status": "conflict", "suppressed": False, "task_id": target, "task_status": status}
-        payload = self.queue.snapshot_task_jobs(target)
+
+        member_ids = [str(item.get("task_id") or "") for item in members if str(item.get("task_id") or "")]
+        reason = reason or "Operator requested /suppress-task."
+        payload = {
+            "schema_version": 2,
+            "suppression_scope": "task_tree",
+            "root_task_id": target,
+            "captured_at": time(),
+            "tasks": [],
+        }
+        for item in members:
+            member_id = str(item.get("task_id") or "")
+            payload["tasks"].append({
+                "task_id": member_id,
+                "task_kind": str(item.get("task_kind") or "root"),
+                "task_depth": int(item.get("task_depth") or 0),
+                "status_before": str(item.get("status") or "running"),
+                "queue": self.queue.snapshot_task_jobs(member_id),
+            })
+
         with self._state_lock:
-            self._suppress_requested.add(target)
-        snapshot = self.durable.suppress_task(target, reason or "Operator requested /suppress-task.", payload) if self.durable else {"task_id": target}
-        cleaned = self.queue.cleanup_task(target)
-        if target == self.active_task_id():
-            OllamaClient.cancel_active()
-        return {"status": "ok", "suppressed": True, "task_id": target, "title": snapshot.get("title", ""), "queue_cleanup": cleaned}
+            self._suppress_requested.update(member_ids)
+        try:
+            if self.durable and hasattr(self.durable, "suppress_task_tree"):
+                snapshot = self.durable.suppress_task_tree(target, member_ids, reason, payload)
+            elif self.durable:
+                snapshot = self.durable.suppress_task(target, reason, payload)
+            else:
+                snapshot = {"task_id": target}
+            cleaned = {"work": 0, "retry": 0, "escalation": 0, "dead": 0, "round_key": 0}
+            for member_id in member_ids:
+                counts = self.queue.cleanup_task(member_id)
+                for key, value in counts.items():
+                    cleaned[key] = int(cleaned.get(key, 0)) + int(value or 0)
+            active = self.active_task_id()
+            if active in member_ids:
+                OllamaClient.cancel_active()
+            return {
+                "status": "ok", "suppressed": True, "task_id": target,
+                "title": snapshot.get("title", ""), "suppressed_task_ids": member_ids,
+                "queue_cleanup": cleaned,
+            }
+        finally:
+            # PostgreSQL status is the durable suppression gate. This in-memory set
+            # is only a transition/cancellation hint and must not poison later resume.
+            with self._state_lock:
+                for member_id in member_ids:
+                    self._suppress_requested.discard(member_id)
 
     def flush_suppressed(self) -> dict:
-        tasks = self.durable.suppressed_tasks(limit=10000) if self.durable else []
+        if self.durable and hasattr(self.durable, "suppressed_task_ids"):
+            task_ids = list(self.durable.suppressed_task_ids(limit=10000))
+        else:
+            tasks = self.durable.suppressed_tasks(limit=10000) if self.durable else []
+            task_ids = [str(item.get("task_id") or "") for item in tasks]
         active = self.active_task_id()
-        for item in tasks:
-            task_id = str(item.get("task_id") or "")
+        for task_id in task_ids:
             if task_id:
                 self.queue.cleanup_task(task_id)
                 if hasattr(self.live, "cleanup"):

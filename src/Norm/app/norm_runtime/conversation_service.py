@@ -85,7 +85,21 @@ class ConversationService:
 
     def _resume_suppressed_and_wait(self, task_id: str, *, thread_ids: list[str], primary_thread_id: str, user_message_id: str) -> tuple[str, str, dict]:
         payload = self.durable.suppression_payload(task_id)
-        raw_jobs = list(payload.get("jobs") or [])
+        tree_items = payload.get("tasks") if isinstance(payload.get("tasks"), list) else None
+        if tree_items is not None:
+            raw_jobs = []
+            member_ids = []
+            for task_item in tree_items:
+                if not isinstance(task_item, dict):
+                    continue
+                member_id = str(task_item.get("task_id") or "").strip()
+                if member_id:
+                    member_ids.append(member_id)
+                queue_payload = task_item.get("queue") if isinstance(task_item.get("queue"), dict) else {}
+                raw_jobs.extend(item for item in list(queue_payload.get("jobs") or []) if isinstance(item, dict))
+        else:
+            raw_jobs = [item for item in list(payload.get("jobs") or []) if isinstance(item, dict)]
+            member_ids = [task_id]
         if not raw_jobs:
             return task_id, "I found the suppressed task, but it has no captured executable queue state to resume safely.", full_context_status()
         for item in raw_jobs:
@@ -96,13 +110,24 @@ class ConversationService:
             metadata["conversation"] = {"thread_ids": thread_ids, "primary_thread_id": primary_thread_id, "user_message_id": user_message_id}
             metadata["resumed_from_suppressed"] = True
             job["metadata"] = metadata
-        self.durable.resume_suppressed_task(task_id)
+
+        if tree_items is not None and hasattr(self.durable, "resume_suppressed_tree"):
+            self.durable.resume_suppressed_tree(task_id, member_ids)
+        else:
+            self.durable.resume_suppressed_task(task_id)
         try:
             restored = self.prompt_queue.restore_task_jobs(payload)
             if not restored:
                 raise RuntimeError("suppressed task had no restorable jobs")
         except Exception:
-            self.durable.suppress_task(task_id, "Resume enqueue failed; task was safely re-suppressed.", payload)
+            reason = "Resume enqueue failed; task was safely re-suppressed."
+            if tree_items is not None and hasattr(self.durable, "suppress_task_tree"):
+                self.durable.suppress_task_tree(task_id, member_ids, reason, payload)
+                for member_id in member_ids:
+                    self.prompt_queue.cleanup_task(member_id)
+            else:
+                self.durable.suppress_task(task_id, reason, payload)
+                self.prompt_queue.cleanup_task(task_id)
             raise
         deadline = time.monotonic() + self.wait_timeout_seconds
         while time.monotonic() < deadline:

@@ -125,6 +125,9 @@ def show_help() -> None:
     print("Norm GUI commands:")
     print("  help or /help       List every operator command and its description")
     print("  /status             Show Norm runtime state plus Redis GUI queue state")
+    print("  /queue [N]          Show queued GUI prompts with stable snapshot indexes")
+    print("  /resume-queue       Resume after the blocked front item(s); wrap deferred work to the tail")
+    print("  /resume-queue N     Start from snapshot index N, then wrap around to earlier items")
     print("  /backup-zip         Create a ZIP backup of PostgreSQL, workspace, and runtime")
     print("  /new                Start a fresh GUI conversation thread")
     print("  /multi              Start multiline prompt entry")
@@ -280,6 +283,55 @@ def main() -> int:
                 queued, uncertain = dispatcher.queue_stats()
                 print(f"GUI Redis queue: {queued} queued/in-flight; {uncertain} uncertain.")
                 continue
+            if lowered == "/queue" or lowered.startswith("/queue "):
+                parts = text.split()
+                limit = 100
+                if len(parts) > 2:
+                    print("Usage: /queue [N]")
+                    continue
+                if len(parts) == 2:
+                    try:
+                        limit = max(1, int(parts[1]))
+                    except ValueError:
+                        print("Usage: /queue [N]")
+                        continue
+                items = dispatcher.queue_snapshot(limit=limit)
+                if not items:
+                    print("GUI Redis queue is empty.")
+                    continue
+                for item in items:
+                    preview = item["message"].replace("\r", " ").replace("\n", " ")
+                    if len(preview) > 110:
+                        preview = preview[:107] + "..."
+                    print(f"[{item['index']}] {item['state']:<11} {item['entry_id']} {item['prompt_id'][:8]}  {preview}")
+                continue
+            if lowered == "/resume-queue" or lowered.startswith("/resume-queue "):
+                parts = text.split()
+                if len(parts) > 2:
+                    print("Usage: /resume-queue [index]")
+                    continue
+                index = None
+                if len(parts) == 2:
+                    try:
+                        index = int(parts[1])
+                    except ValueError:
+                        print("Usage: /resume-queue [index]")
+                        continue
+                try:
+                    result = dispatcher.resume_queue(index=index)
+                except (IndexError, ValueError) as exc:
+                    print(f"Cannot resume queue: {exc}")
+                    continue
+                if result.get("status") == "scheduled":
+                    print(f"Queue resume scheduled ({result.get('requested')}); it will apply when the current HTTP dispatch releases or after restart.")
+                elif result.get("rotated"):
+                    first = str(result.get("first_message") or "").replace("\r", " ").replace("\n", " ")
+                    if len(first) > 100:
+                        first = first[:97] + "..."
+                    print(f"Queue resumed at index {result.get('start_index')} across {result.get('count')} item(s). First: {first}")
+                else:
+                    print("GUI Redis queue is empty; nothing to resume.")
+                continue
             if lowered == "/new":
                 entry_id = dispatcher.enqueue_thread_reset()
                 print(f"Queued conversation-thread reset as {entry_id}.")
@@ -349,3 +401,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
