@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib import request
 
 ROOT = Path(__file__).resolve().parents[1]
+EMERGENCY_SNAPSHOT_ROOT = ROOT / "state" / "emergency-stop"
 APP = ROOT / "app"
 if str(APP) not in sys.path:
     sys.path.insert(0, str(APP))
@@ -31,7 +32,7 @@ def _tailscale_ipv4() -> str:
     return next((line.strip() for line in proc.stdout.splitlines() if line.strip()), "")
 
 
-def _request_cancel() -> str:
+def _request_stop_all_now() -> str:
     host = _tailscale_ipv4()
     if not host:
         return "control unavailable: no Tailscale IPv4"
@@ -96,9 +97,13 @@ def _wait_for_redis_flush(timeout: float = 5.0) -> str:
 
 
 def _snapshot() -> Path:
+    # The running norm.exe also writes C:\Norm\SOS.md while handling /stop-all-now.
+    # Writing the helper snapshot to the same pathname creates a cross-process write race.
+    # Keep the emergency helper copy separate; both snapshots can coexist and be compared.
+    EMERGENCY_SNAPSHOT_ROOT.mkdir(parents=True, exist_ok=True)
     _coordinator, live, durable = build_runtime(ROOT, ensure_schema=False)
     queue = build_prompt_queue(ROOT)
-    return write_sos(ROOT, live, durable, queue, "stop-all-now-emergency")
+    return write_sos(EMERGENCY_SNAPSHOT_ROOT, live, durable, queue, "stop-all-now-emergency-helper")
 
 
 def _verify_snapshot(target: Path) -> tuple[int, str]:
@@ -128,7 +133,7 @@ def _force_kill_image(image: str) -> tuple[int, str]:
 
 def main() -> int:
     print("Emergency stop-all-now: cancelling active generation...")
-    print(_request_cancel())
+    print(_request_stop_all_now())
     try:
         print(_wait_for_redis_flush())
         sos_path = _snapshot()
@@ -148,3 +153,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

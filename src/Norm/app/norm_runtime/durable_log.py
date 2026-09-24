@@ -401,9 +401,129 @@ class PostgresTaskLog:
             cur.execute(sql.SQL("UPDATE {}.task_runs SET status='suppressed',updated_at=now() WHERE task_id=%s").format(sql.Identifier(self.schema)), (task_id,))
         return self.task_plan_snapshot(task_id) or {"task_id": task_id, "status": "suppressed"}
 
+    def root_task_id(self, task_id: str) -> str | None:
+        task_id = str(task_id or "").strip()
+        if not task_id:
+            return None
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                WITH RECURSIVE ancestors(task_id,parent_task_id,task_depth,path) AS (
+                    SELECT task_id,parent_task_id,task_depth,ARRAY[task_id]
+                    FROM {}.task_runs WHERE task_id=%s
+                    UNION ALL
+                    SELECT p.task_id,p.parent_task_id,p.task_depth,a.path || p.task_id
+                    FROM {}.task_runs p
+                    JOIN ancestors a ON a.parent_task_id=p.task_id
+                    WHERE NOT p.task_id = ANY(a.path)
+                )
+                SELECT task_id FROM ancestors ORDER BY task_depth ASC LIMIT 1
+            """).format(sql.Identifier(self.schema), sql.Identifier(self.schema)), (task_id,))
+            row = cur.fetchone()
+        return str(row[0]) if row else None
+
+    def task_tree(self, root_task_id: str) -> list[dict]:
+        root_task_id = str(root_task_id or "").strip()
+        if not root_task_id:
+            return []
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                WITH RECURSIVE tree(task_id,status,task_kind,parent_task_id,parent_step_id,task_depth,started_at,path) AS (
+                    SELECT task_id,status,task_kind,parent_task_id,parent_step_id,task_depth,started_at,ARRAY[task_id]
+                    FROM {}.task_runs WHERE task_id=%s
+                    UNION ALL
+                    SELECT c.task_id,c.status,c.task_kind,c.parent_task_id,c.parent_step_id,c.task_depth,c.started_at,t.path || c.task_id
+                    FROM {}.task_runs c
+                    JOIN tree t ON c.parent_task_id=t.task_id
+                    WHERE NOT c.task_id = ANY(t.path)
+                )
+                SELECT task_id,status,task_kind,parent_task_id,parent_step_id,task_depth
+                FROM tree ORDER BY task_depth ASC, started_at ASC, task_id ASC
+            """).format(sql.Identifier(self.schema), sql.Identifier(self.schema)), (root_task_id,))
+            rows = cur.fetchall()
+        return [{
+            "task_id": str(row[0]), "status": str(row[1]), "task_kind": str(row[2] or "root"),
+            "parent_task_id": str(row[3] or ""), "parent_step_id": str(row[4] or ""),
+            "task_depth": int(row[5] or 0),
+        } for row in rows]
+
+    def suppress_task_tree(self, root_task_id: str, task_ids: list[str], reason: str, resume_payload: dict) -> dict:
+        root_task_id = str(root_task_id or "").strip()
+        members = []
+        seen = set()
+        for value in task_ids:
+            task_id = str(value or "").strip()
+            if task_id and task_id not in seen:
+                seen.add(task_id)
+                members.append(task_id)
+        if not root_task_id or root_task_id not in seen:
+            raise ValueError("suppression tree must include its root task")
+        reason = str(reason or "Suppressed by explicit user request.").strip()
+        with self._connect() as conn, conn.cursor() as cur:
+            for task_id in members:
+                cur.execute(sql.SQL("SELECT title,status FROM {}.task_runs WHERE task_id=%s").format(sql.Identifier(self.schema)), (task_id,))
+                row = cur.fetchone()
+                if not row:
+                    raise KeyError(f"Unknown task: {task_id}")
+                if str(row[1]) in {"completed", "failed", "cancelled"}:
+                    raise ValueError(f"task is already terminal: {task_id} ({row[1]})")
+            for task_id in members:
+                member_payload = resume_payload if task_id == root_task_id else {
+                    "schema_version": 2,
+                    "suppression_scope": "task_tree_member",
+                    "root_task_id": root_task_id,
+                }
+                member_reason = reason if task_id == root_task_id else f"Suppressed with root task {root_task_id}. {reason}"
+                cur.execute(sql.SQL("""
+                    INSERT INTO {}.task_suppressions(task_id,reason,resume_payload)
+                    VALUES (%s,%s,%s)
+                    ON CONFLICT(task_id) DO UPDATE SET
+                        reason=EXCLUDED.reason,resume_payload=EXCLUDED.resume_payload,updated_at=now()
+                """).format(sql.Identifier(self.schema)), (task_id, member_reason, Jsonb(member_payload)))
+                cur.execute(sql.SQL("INSERT INTO {}.task_summaries(task_id,summary) VALUES (%s,%s)").format(sql.Identifier(self.schema)), (
+                    task_id,
+                    f"Task suppressed by explicit user request as part of tree rooted at {root_task_id}. Reason: {reason}",
+                ))
+                cur.execute(sql.SQL("UPDATE {}.task_runs SET status='suppressed',updated_at=now() WHERE task_id=%s").format(sql.Identifier(self.schema)), (task_id,))
+        return self.task_plan_snapshot(root_task_id) or {"task_id": root_task_id, "status": "suppressed"}
+
+    def resume_suppressed_tree(self, root_task_id: str, task_ids: list[str]) -> None:
+        root_task_id = str(root_task_id or "").strip()
+        members = []
+        seen = set()
+        for value in task_ids:
+            task_id = str(value or "").strip()
+            if task_id and task_id not in seen:
+                seen.add(task_id)
+                members.append(task_id)
+        if not root_task_id or root_task_id not in seen:
+            raise ValueError("resume tree must include its root task")
+        with self._connect() as conn, conn.cursor() as cur:
+            for task_id in members:
+                cur.execute(sql.SQL("SELECT status FROM {}.task_runs WHERE task_id=%s").format(sql.Identifier(self.schema)), (task_id,))
+                row = cur.fetchone()
+                if not row or str(row[0]) != "suppressed":
+                    raise ValueError(f"task is not suppressed: {task_id}")
+            for task_id in members:
+                cur.execute(sql.SQL("UPDATE {}.task_runs SET status='running',updated_at=now() WHERE task_id=%s").format(sql.Identifier(self.schema)), (task_id,))
+
+    def suppressed_task_ids(self, limit: int = 10000) -> list[str]:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("SELECT task_id FROM {}.task_runs WHERE status='suppressed' ORDER BY updated_at DESC LIMIT %s").format(sql.Identifier(self.schema)), (max(1, int(limit)),))
+            return [str(row[0]) for row in cur.fetchall()]
+
     def suppressed_tasks(self, limit: int = 100) -> list[dict]:
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(sql.SQL("SELECT task_id,title,plan,started_at,updated_at FROM {}.task_runs WHERE status='suppressed' ORDER BY updated_at DESC LIMIT %s").format(sql.Identifier(self.schema)), (max(1, int(limit)),))
+            cur.execute(sql.SQL("""
+                SELECT tr.task_id,tr.title,tr.plan,tr.started_at,tr.updated_at
+                FROM {}.task_runs tr
+                LEFT JOIN {}.task_suppressions ts ON ts.task_id=tr.task_id
+                WHERE tr.status='suppressed'
+                  AND (
+                    COALESCE(ts.resume_payload->>'suppression_scope','') <> 'task_tree_member'
+                    OR COALESCE(ts.resume_payload->>'root_task_id','') = tr.task_id
+                  )
+                ORDER BY tr.updated_at DESC LIMIT %s
+            """).format(sql.Identifier(self.schema), sql.Identifier(self.schema)), (max(1, int(limit)),))
             rows = cur.fetchall()
         result = []
         for task_id, title, plan, started_at, updated_at in rows:

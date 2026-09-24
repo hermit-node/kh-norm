@@ -558,18 +558,55 @@ class RedisPromptQueue:
         return {"jobs": jobs, "captured_at": time.time()}
 
     def restore_task_jobs(self, payload: dict) -> list[str]:
-        raw = list((payload or {}).get("jobs") or [])
-        jobs = []
-        seen = set()
+        """Restore a captured suppression snapshot without changing stream semantics.
+
+        Legacy payloads contain ``jobs`` directly. Tree-aware v2 payloads contain
+        per-task queue snapshots under ``tasks``. A single Redis transaction restores
+        all entries so a failed resume cannot leave only part of a task tree queued.
+        """
+        payload = dict(payload or {})
+        raw: list[dict] = []
+        task_items = payload.get("tasks")
+        if isinstance(task_items, list):
+            # Deepest tasks first. If both a child and its waiting parent were parked
+            # in retry, this lets the child become runnable before the parent chain.
+            ordered = sorted(
+                (item for item in task_items if isinstance(item, dict)),
+                key=lambda item: int(item.get("task_depth") or 0),
+                reverse=True,
+            )
+            for task_item in ordered:
+                queue_payload = task_item.get("queue") if isinstance(task_item.get("queue"), dict) else {}
+                raw.extend(item for item in list(queue_payload.get("jobs") or []) if isinstance(item, dict))
+        else:
+            raw = [item for item in list(payload.get("jobs") or []) if isinstance(item, dict)]
+
+        destinations = {
+            "work": self.stream,
+            "retry": self.retry_stream,
+            "escalation": self.escalation_stream,
+        }
+        restored: list[tuple[str, PromptJob]] = []
+        seen: set[str] = set()
         for item in raw:
             data = dict(item.get("job") or {})
             message_id = str(data.get("message_id") or "")
             if not message_id or message_id in seen:
                 continue
             seen.add(message_id)
-            jobs.append(PromptJob(**data))
-        jobs.sort(key=lambda j: int(j.chain_index))
-        return self.enqueue_chain(jobs) if jobs else []
+            if self.contains_message_id(message_id):
+                continue
+            label = str(item.get("stream") or "work").strip().lower()
+            if label not in destinations:
+                raise ValueError(f"unsupported suppression snapshot stream: {label!r}")
+            restored.append((label, PromptJob(**data)))
+
+        if not restored:
+            return []
+        pipe = self.r.pipeline(transaction=True)
+        for label, job in restored:
+            pipe.xadd(destinations[label], self._job_to_fields(job))
+        return [str(value) for value in pipe.execute()]
 
     def requeue_pending_on_startup(self) -> int:
         pending = self.r.xpending_range(self.stream, self.group, min="-", max="+", count=1000)

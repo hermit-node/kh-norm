@@ -317,7 +317,7 @@ class NormConsole:
             "  /shutdown norm now  Cancel active Ollama work, persist cancellation, and exit promptly.\n"
             "  /stop all       Finish the current step, write SOS.md, unload the model, then stop Ollama and Norm.\n"
             "  /stop all -now  Stop the current generation now, preserve it for resume, write SOS.md, unload/stop all.\n"
-            "  /suppress-task  Park the active task, or oldest next queued task, in PostgreSQL.\n"
+            "  /suppress-task  Park the active root task tree, or oldest next queued task tree, in PostgreSQL.\n"
             "  /flush-suppressed  Permanently delete all suppressed task records.\n"
             "  /status         Show mute, pause, and pending-input state.\n"
             "  /help           Show these commands.\n"
