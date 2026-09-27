@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 import redis
 
-from .settings import load_document_paths
+from .settings import load_path_settings, load_document_paths
 
 NY = ZoneInfo("America/New_York")
 
@@ -261,7 +261,7 @@ def _build_markdown(snapshot: dict) -> str:
 
 def _persist_context_handoff(root: Path, markdown: str, generated_at: str) -> Path:
     stamp = generated_at.replace(":", "").replace("-", "").replace("T", "-")[:15]
-    directory = root / "docs" / "recovery-notes" / "system-context"
+    directory = Path(load_path_settings(root)["temp_root"]) / "recovery" / "system-context"
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"context-{stamp}.md"
     tmp = path.with_suffix(".md.tmp")
@@ -274,7 +274,7 @@ def _persist_context_handoff(root: Path, markdown: str, generated_at: str) -> Pa
 
 def _persist_generated_handoff(root: Path, markdown: str, generated_at: str) -> Path:
     stamp = generated_at.replace(":", "").replace("-", "").replace("T", "-")[:15]
-    directory = root / "docs" / "recovery-notes" / "system-context"
+    directory = Path(load_path_settings(root)["temp_root"]) / "recovery" / "system-context"
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"generated-{stamp}.md"
     tmp = path.with_suffix(".md.tmp")
@@ -319,7 +319,7 @@ def collect_context_snapshot(
         "redis": redis_state,
         "postgres": postgres,
         "unfinished": {
-            "sos_present": any((root / name).exists() for name in ("SOS.readme", "SOS.md")),
+            "sos_present": any((Path(load_path_settings(root)["temp_root"]) / "recovery" / name).exists() for name in ("SOS.readme", "SOS.md")),
             "source_newer_than_exe": _source_newer_than_exe(root),
         },
         "runtime": {

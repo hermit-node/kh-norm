@@ -207,7 +207,9 @@ def show_help() -> None:
     print("  /queue-full         Show full prompts and status for live + parked/uncertain entries")
     print("  /resume-queue       Resume after the blocked front item(s); wrap deferred work to the tail")
     print("  /resume-queue N     Start from snapshot index N, then wrap around to earlier items")
-    print("  /backup-zip         Create a ZIP backup of PostgreSQL, workspace, and runtime")
+    print("  /backup             Create a portable installer/source backup (no secrets/private state)")
+    print("  /backup full        Create a sensitive full backup with .ssh, secrets, workspace, plugins, and PostgreSQL")
+    print("  /backup-zip         Legacy alias for /backup full")
     print("  /new                Start a fresh GUI conversation thread")
     print("  /multi              Start multiline prompt entry")
     print("    ::send             Submit the multiline prompt")
@@ -219,7 +221,7 @@ def show_help() -> None:
     print("  /flush-suppressed   Permanently delete all suppressed task records")
     print("  /exit               Close only this prompt console; Norm keeps running")
     print("  /stop-all           Finish the current step, then stop Norm/Ollama")
-    print("  /stop-all now       Emergency: snapshot progress to SOS.md, then force-stop Norm and Ollama")
+    print("  /stop-all now       Emergency: snapshot progress to temp\\recovery\\SOS.md, then force-stop Norm and Ollama")
     print("  /stop               Alias for /stop-all now")
     print("  /stop all           Legacy alias for /stop-all")
     print("  /stop all -now      Legacy alias for /stop-all now")
@@ -228,13 +230,17 @@ def show_help() -> None:
     print("  Esc / Ctrl+C        Cancel entry and go back one level; Norm keeps running")
 
 
-def run_backup_zip() -> None:
+def run_backup(*, full: bool) -> None:
     script = ROOT / "tools" / "norm_backup.py"
     if not script.is_file():
         print(f"Backup helper is missing: {script}")
         return
-    print("Creating Norm backup ZIP...")
-    proc = subprocess.run([sys.executable, str(script)], cwd=str(ROOT), check=False)
+    mode = "full" if full else "source"
+    if full:
+        print("Creating SENSITIVE full Norm backup (includes .ssh, secrets, workspace, plugins, and PostgreSQL; excludes .venv)...")
+    else:
+        print("Creating portable Norm source backup (no secrets, .ssh, PostgreSQL, or private workspace state)...")
+    proc = subprocess.run([sys.executable, str(script), "--mode", mode], cwd=str(ROOT), check=False)
     if proc.returncode != 0:
         print(f"Backup failed with exit code {proc.returncode}.")
 
@@ -311,7 +317,7 @@ def completed_turn(message: str, reply: str, result: dict) -> None:
 def stop_all(ep: dict[str, str], immediate: bool) -> None:
     if immediate:
         helper = ROOT / "tools" / "norm_emergency_stop.py"
-        print("Emergency stop: preserving current recovery state to SOS.md, then force-stopping Norm/Ollama...")
+        print("Emergency stop: preserving current recovery state to temp\\recovery\\SOS.md, then force-stopping Norm/Ollama...")
         proc = subprocess.run([sys.executable, str(helper)], cwd=str(ROOT), check=False)
         if proc.returncode != 0:
             raise RuntimeError(f"Emergency stop helper failed with exit code {proc.returncode}; Norm was not force-killed.")
@@ -377,8 +383,11 @@ def main() -> int:
                 except Exception as exc:
                     print(f"Context injection could not be confirmed: {exc}. Request ID: {payload['request_id']}")
                 continue
-            if lowered == "/backup-zip":
-                run_backup_zip()
+            if lowered == "/backup":
+                run_backup(full=False)
+                continue
+            if lowered in {"/backup full", "/backup-zip"}:
+                run_backup(full=True)
                 continue
             if lowered in {"/status", "/status/busy"}:
                 print(json.dumps(get_json(ep["busy"]), indent=2, ensure_ascii=False))

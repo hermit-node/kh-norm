@@ -9,6 +9,7 @@ from typing import Iterator
 import psycopg
 from psycopg import sql
 
+from .integrity_repair import repair_memory_threads_cur
 _SCHEMA_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _MEMORY_TYPES = {"fact", "preference", "decision", "constraint", "task", "assumption"}
 
@@ -29,6 +30,10 @@ class ConversationStore:
 
     def ensure_schema(self) -> None:
         with self._connect() as conn, conn.cursor() as cur:
+            # Startup migrations must never wait forever behind a stale transaction.
+            cur.execute("SET LOCAL lock_timeout = '5s'")
+            cur.execute("SET LOCAL statement_timeout = '120s'")
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"norm:schema:{self.schema}",))
             s = sql.Identifier(self.schema)
             cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(s))
             cur.execute(sql.SQL("""CREATE TABLE IF NOT EXISTS {}.projects (
@@ -77,6 +82,7 @@ class ConversationStore:
                 sql.Identifier(f"idx_{self.schema}_message_threads_thread"), s))
             cur.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {}.memory_items(project_id, status)").format(
                 sql.Identifier(f"idx_{self.schema}_memory_project_status"), s))
+            repair_memory_threads_cur(cur, self.schema)
 
     def ensure_project(self, project_id: str, name: str | None = None) -> None:
         with self._connect() as conn, conn.cursor() as cur:

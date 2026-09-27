@@ -116,15 +116,15 @@ class FileToolExecutor:
             for name, values in defaults.items()
         }
         if self.image_enabled:
-            if self.image_python is None or not self.image_python.is_file():
-                raise FileNotFoundError(f"image Python runtime not found: {self.image_python}")
-            if self.image_analyzer_script is None or not self.image_analyzer_script.is_file():
-                raise FileNotFoundError(f"image analyzer script not found: {self.image_analyzer_script}")
+            # Image analysis is an optional capability. Do not make construction of the
+            # whole tool executor depend on its private Python/analyzer files: plain text
+            # tasks and unrelated tools must remain usable when image support is absent or
+            # temporarily misconfigured. The analyzer-specific paths are checked lazily in
+            # _analyze_image().
             if self.image_output_root is None:
                 raise ValueError("image_output_root is required when image tools are enabled")
             if not any(self.image_output_root == root or self.image_output_root.is_relative_to(root) for root in self.allowed_roots):
                 raise PermissionError("image_output_root must be inside an allowed root")
-            self.image_output_root.mkdir(parents=True, exist_ok=True)
 
     def instructions(self) -> str:
         roots = ", ".join(str(root) for root in self.allowed_roots)
@@ -489,7 +489,13 @@ class FileToolExecutor:
 
     def _analyze_image(self, arguments: dict[str, Any]) -> dict[str, Any]:
         if not self.image_enabled:
-            raise RuntimeError("image tools are disabled")
+            raise RuntimeError("image analysis is disabled")
+        if self.image_python is None or not self.image_python.is_file():
+            raise FileNotFoundError(f"image Python runtime not found: {self.image_python}")
+        if self.image_analyzer_script is None or not self.image_analyzer_script.is_file():
+            raise FileNotFoundError(f"image analyzer script not found: {self.image_analyzer_script}")
+        assert self.image_output_root is not None
+        self.image_output_root.mkdir(parents=True, exist_ok=True)
         path = self._resolve(arguments.get("path"))
         if not path.is_file():
             raise FileNotFoundError(path)

@@ -296,6 +296,7 @@ class DeepHistoryMaintainer:
                 "source_task_ids": len(source_task_ids), "replay_samples": len(replay_results),
                 "messages_deleted": conversation["messages_deleted"],
                 "thread_summaries_deleted": conversation["thread_summaries_deleted"],
+                "memory_links_preserved": conversation.get("memory_links_preserved", 0),
                 "superseded_memories_deleted": superseded_deleted,
                 "background_chars": len(snapshot), "backup_deleted": True,
             }

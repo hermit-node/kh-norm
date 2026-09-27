@@ -97,13 +97,13 @@ def _wait_for_redis_flush(timeout: float = 5.0) -> str:
 
 
 def _snapshot() -> Path:
-    # The running norm.exe also writes the runtime root SOS.md while handling /stop-all-now.
+    # The running norm.exe also writes temp\recovery\SOS.md while handling /stop-all-now.
     # Writing the helper snapshot to the same pathname creates a cross-process write race.
     # Keep the emergency helper copy separate; both snapshots can coexist and be compared.
     EMERGENCY_SNAPSHOT_ROOT.mkdir(parents=True, exist_ok=True)
     _coordinator, live, durable = build_runtime(ROOT, ensure_schema=False)
     queue = build_prompt_queue(ROOT)
-    return write_sos(EMERGENCY_SNAPSHOT_ROOT, live, durable, queue, "stop-all-now-emergency-helper")
+    return write_sos(ROOT, live, durable, queue, "stop-all-now-emergency-helper", output_root=EMERGENCY_SNAPSHOT_ROOT)
 
 
 def _verify_snapshot(target: Path) -> tuple[int, str]:

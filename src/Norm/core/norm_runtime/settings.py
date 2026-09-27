@@ -30,8 +30,13 @@ def load_path_settings(root: Path) -> dict[str, Path]:
     parser = load_settings(root)
     if not parser.has_section("paths"):
         raise ValueError("settings.ini requires a [paths] section")
-    app_root = Path(os.environ.get("NORM_APP_ROOT") or (root / "core")).resolve()
-    result: dict[str, Path] = {"runtime_root": root, "app_root": app_root}
+    runtime_raw = parser.get("paths", "runtime_root", fallback=".").strip() or "."
+    runtime_candidate = Path(os.path.expandvars(os.path.expanduser(runtime_raw)))
+    configured_runtime = runtime_candidate.resolve() if runtime_candidate.is_absolute() else (root / runtime_candidate).resolve()
+    if configured_runtime != root:
+        raise ValueError(f"settings.ini paths.runtime_root resolves to {configured_runtime}, but this runtime was opened from {root}")
+    app_root = Path(os.environ.get("NORM_APP_ROOT") or (configured_runtime / "core")).resolve()
+    result: dict[str, Path] = {"runtime_root": configured_runtime, "app_root": app_root}
     for key in PATH_KEYS:
         raw = parser.get("paths", key, fallback="").strip()
         if not raw:
@@ -49,10 +54,14 @@ def load_path_settings(root: Path) -> dict[str, Path]:
         verbatim_path = Path(os.path.expandvars(os.path.expanduser(verbatim_raw)))
         verbatim = verbatim_path.resolve() if verbatim_path.is_absolute() else (root / verbatim_path).resolve()
     else:
-        verbatim = (root / "verbatim_lines.py").resolve()
+        verbatim = (root / "plugins" / "verbatim_lines" / "_cli.py").resolve()
+    temp_raw = parser.get("paths", "temp_root", fallback="temp").strip() or "temp"
+    temp_path = Path(os.path.expandvars(os.path.expanduser(temp_raw)))
+    temp_root = temp_path.resolve() if temp_path.is_absolute() else (documents / temp_path).resolve()
     result["workspace_root"] = workspace
+    result["temp_root"] = temp_root
     result["verbatim_writer"] = verbatim
-    for label, path in (("documents_root", documents), ("workspace_root", workspace)):
+    for label, path in (("documents_root", documents), ("workspace_root", workspace), ("temp_root", temp_root)):
         if path == root or path in root.parents or root in path.parents:
             raise ValueError(f"runtime_root and {label} must not overlap")
         if not path.is_dir():
@@ -120,9 +129,8 @@ def load_ssh_settings(root: Path) -> dict[str, object]:
     if not parser.has_section("ssh"):
         return {"enabled": False}
     enabled = parser.getboolean("ssh", "enabled", fallback=True)
-    documents = load_path_settings(root)["documents_root"]
     raw_root = parser.get("ssh", "root", fallback=".ssh").strip() or ".ssh"
-    ssh_root = _setting_path(raw_root) if Path(raw_root).is_absolute() else (documents / raw_root).resolve()
+    ssh_root = _setting_path(raw_root) if Path(raw_root).is_absolute() else (Path(root).resolve() / raw_root).resolve()
 
     def child(key: str, default: str) -> Path:
         raw = parser.get("ssh", key, fallback=default).strip() or default
@@ -147,10 +155,9 @@ def load_ssh_settings(root: Path) -> dict[str, object]:
 def load_plugin_settings(root: Path) -> dict[str, Path]:
     root = Path(root).resolve()
     parser = load_settings(root)
-    documents = load_path_settings(root)["documents_root"]
     raw_root = parser.get("plugins", "root", fallback="plugins").strip() or "plugins"
     plugin_candidate = Path(os.path.expandvars(os.path.expanduser(raw_root)))
-    plugin_root = plugin_candidate.resolve() if plugin_candidate.is_absolute() else (documents / plugin_candidate).resolve()
+    plugin_root = plugin_candidate.resolve() if plugin_candidate.is_absolute() else (root / plugin_candidate).resolve()
     raw_registry = parser.get("plugins", "registry_file", fallback=".registry.json").strip() or ".registry.json"
     registry_candidate = Path(os.path.expandvars(os.path.expanduser(raw_registry)))
     registry_file = registry_candidate.resolve() if registry_candidate.is_absolute() else (plugin_root / registry_candidate).resolve()
@@ -161,14 +168,13 @@ def load_document_paths(root: Path) -> dict[str, Path]:
     parser = load_settings(root)
     if not parser.has_section("documentation"):
         raise ValueError("settings.ini requires a [documentation] section")
-    documents = load_path_settings(root)["documents_root"]
     result: dict[str, Path] = {}
     for key in DOCUMENT_KEYS:
         raw = parser.get("documentation", key, fallback="").strip()
         if not raw:
             raise ValueError(f"settings.ini requires documentation.{key}")
         path = Path(raw)
-        result[key] = path.resolve() if path.is_absolute() else (documents / path).resolve()
+        result[key] = path.resolve() if path.is_absolute() else (root / path).resolve()
     return result
 
 

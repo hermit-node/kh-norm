@@ -287,20 +287,6 @@ class GuiPromptDispatcher:
 
         return sorted(prompt_ids)
 
-    def _prompt_retry_suppressed(self, prompt_id: str) -> bool:
-        """True when this GUI submission must not be automatically recreated."""
-        prompt_id = str(prompt_id or "").strip()
-
-        if not prompt_id:
-            return False
-
-        return bool(
-            self.redis.sismember(
-                self.suppressed_prompt_ids_key,
-                prompt_id,
-            )
-        )
-
     def suppress_prompt_retries(self, prompt_ids) -> dict:
         """Durably disable GUI uncertain recovery for these submissions."""
         ids = sorted(
@@ -368,23 +354,6 @@ class GuiPromptDispatcher:
                 uncertain_id,
                 json.dumps(parked, ensure_ascii=False),
             )
-            return None
-        # Explicit suppression is a hard GUI retry gate.
-        # This prevents the GUI layer from recreating a NEW Norm task
-        # after the original task/tree was suppressed in PostgreSQL.
-        if self._prompt_retry_suppressed(
-            str(record.get("prompt_id") or "")
-        ):
-            parked = dict(record)
-            parked["auto_retry"] = False
-            parked["suppressed"] = True
-
-            self.redis.hset(
-                self.uncertain_key,
-                uncertain_id,
-                json.dumps(parked, ensure_ascii=False),
-            )
-
             return None
         if not bool(record.get("auto_retry")):
             return None
@@ -456,12 +425,6 @@ class GuiPromptDispatcher:
         # A request suppressed while HTTP was active stays parked rather than
         # becoming eligible for the GUI's delayed automatic retry.
         if self._prompt_retry_suppressed(str(record.get("prompt_id") or "")):
-            record["auto_retry"] = False
-            record["suppressed"] = True
-        # A submission already suppressed while HTTP was active stays parked.
-        if self._prompt_retry_suppressed(
-            str(record.get("prompt_id") or "")
-        ):
             record["auto_retry"] = False
             record["suppressed"] = True
         self.redis.hset(self.uncertain_key, entry_id, json.dumps(record, ensure_ascii=False))
@@ -695,6 +658,10 @@ class GuiPromptDispatcher:
         self.stop_event.wait(self.uncertain_continue_seconds)
 
     def _dispatch_prompt(self, entry_id: str, fields: dict) -> None:
+        prompt_id = str(fields.get("prompt_id") or "")
+        if self._prompt_retry_suppressed(prompt_id):
+            self._defer_entry(entry_id, fields, "prompt suppressed by operator")
+            return
         self.dispatch_active.set()
         with self._activity_lock:
             self._last_activity = time.monotonic()
@@ -819,6 +786,10 @@ class GuiPromptDispatcher:
             if fields.get("kind") == "thread_reset":
                 self.redis.delete(self.thread_key)
                 self._finish_entry(entry_id)
+                continue
+            prompt_id = str(fields.get("prompt_id") or "")
+            if self._prompt_retry_suppressed(prompt_id):
+                self._defer_entry(entry_id, fields, "prompt suppressed by operator")
                 continue
             self._dispatch_prompt(entry_id, fields)
 

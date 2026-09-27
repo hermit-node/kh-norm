@@ -9,6 +9,10 @@ class ContextInjections:
 
     def ensure_schema(self):
         with self.durable._connect() as conn, conn.cursor() as cur:
+            # Use the same bounded schema lock as the primary durable stores.
+            cur.execute("SET LOCAL lock_timeout = '5s'")
+            cur.execute("SET LOCAL statement_timeout = '120s'")
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"norm:schema:{self.durable.schema}",))
             cur.execute(sql.SQL('''CREATE TABLE IF NOT EXISTS {}.task_context_injections (
                 injection_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 request_id uuid NOT NULL UNIQUE,
