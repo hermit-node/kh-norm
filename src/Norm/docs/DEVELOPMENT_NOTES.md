@@ -516,3 +516,21 @@ No PostgreSQL memory write, task creation or service start was performed.
 - Installer 1.3.4 changed pip maintenance from an exact pin to `pip>=26.1` with `--upgrade`, allowing newer pip releases without changing Norm's runtime requirements lock.
 - Cleaned visible help to canonical command forms while retaining historical aliases in parsers for compatibility.
 - Installer 1.3.4 skips a pip reinstall when the requested pip is already present and keeps `.ssh`, `.venv`, user plugins, logs, and state protected during normal in-place updates.
+
+## 2026-09-27 - 0.52.4 canonical console/SSH prompt ingress
+- Reconciled the local Rich console and SSH prompt GUI onto one DB3 ingress stream/group/thread key and one shared core dispatcher implementation.
+- Both frontends now submit to project `default`; the old `norm:rich-console:*` queue namespace is removed from active configuration.
+- The dispatcher establishes an explicit current thread before chat submission, then requires a durable `task_id` in the successful response before acknowledging/deleting the ingress item.
+- A 200 response without task creation is retained as a non-auto-retrying protocol violation rather than being silently treated as completed work.
+## 2026-09-27 - 0.52.4 startup ownership / PostgreSQL retry / plugin serialization
+- Folded every `run_host()`-owned server/worker into one `try/finally` ownership boundary. A failure after activity port 8766 is bound now shuts that server down before the outer startup retry, preventing a recoverable PostgreSQL error from becoming `WinError 10048`.
+- Removed the duplicate normal-start `healthcheck()` before the retry loop. `build_runtime(..., ensure_schema=True)` is the authoritative PostgreSQL startup path, so psycopg connection/schema failures are covered by the existing bounded three-attempt retry. `--check` retains its explicit one-shot health probe.
+- Generated PostgreSQL and stocks conninfo now include `connect_timeout=5`; lock and statement timeouts continue to govern established schema-migration sessions.
+- Added one process-global reentrant plugin lock. This deliberately serializes hot hydration and execution across all `PluginManager` instances because `sys.modules`, `sys.path`, `redirect_stdout`, and `redirect_stderr` are process-global. Synthetic concurrent execution kept each call's stdout isolated.
+- Deferred rather than mixed into this reliability patch: transactional whole-install rollback, explicit plugin export declarations, and routing `verbatim_lines` through the same allowed-root policy as native file tools.
+
+
+
+## 2026-09-27 - 0.52.5 proportional plan verifier
+
+The plan verifier was tightened around blocking execution correctness while reducing false-positive rejection. Cohesive bounded steps may cover multiple tightly coupled modules/functions when their responsibilities and checks are explicit. Advisory decomposition/style concerns are non-blocking. Existing inspected/reused mechanisms and execution-time invariant tests count as evidence, preventing speculative objections such as boundary-value cases already eliminated by the inherited implementation. Repair cycles are instructed to make the smallest material correction rather than mechanically split steps or repeat an unchanged rejected plan.

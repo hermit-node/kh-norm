@@ -428,7 +428,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
 
         delivery = {}
         errors = []
-        for section, prefix in (("console_queue", "norm:gui"), ("rich_console_queue", "norm:rich-console")):
+        for section, prefix in (("console_queue", "norm:gui"),):
             try:
                 delivery[section] = _flush_console_suppressed_state(config, section, default_prefix=prefix)
             except Exception as exc:
@@ -458,91 +458,127 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         activity_sink=activity_hub.publish,
         activity_source="context-snapshot",
     )
-    activity_server, _ = start_activity_server(
-        activity_hub,
-        host=activity_host,
-        port=activity_port,
-        cancel_ollama=OllamaClient.cancel_active,
-        shutdown_ollama=request_ollama_shutdown,
-        shutdown_norm=request_shutdown,
-        stop_all=request_stop_all,
-        suppress_task=request_suppress_task,
-        flush_suppressed=request_flush_suppressed,
-        busy_status=request_busy_status,
-        context_status=request_context_status,
-        health_status=request_activity_health,
-    )
-    logging.getLogger().addHandler(ActivityLogHandler(activity_hub))
-    logging.info("Activity/control API available during startup: http://%s:%s", activity_host, activity_port)
-    resources["startup_phase"] = "service-healthcheck"
-    statuses = healthcheck(root)
-    resources["startup_phase"] = "postgres-schema-migration"
-    coordinator, live, durable = build_runtime(root, ensure_schema=True)
-    durable.set_runtime_state("deployed_version", load_project_metadata(root)["version"])
-    resources["startup_phase"] = "prompt-queue-initialization"
-    prompt_queue = build_prompt_queue(root, durable=durable)
-    resources["prompt_queue"] = prompt_queue
-    resources["durable"] = durable
-    resources["startup_phase"] = "conversation-store-initialization"
-    service = build_conversation_service(
-        root,
-        ensure_schema=True,
-        activity_sink=activity_hub.publish,
-        prompt_queue=prompt_queue,
-        coordinator=coordinator,
-        durable=durable,
-    )
-    http_cfg = config.get("http", {})
-    worker_cfg = config.get("worker", {})
-    queue_cfg = config.get("prompt_queue", {})
-    host = resolve_bind_host(str(http_cfg.get("host", "127.0.0.1")))
-    port = int(ports['norm_http'])
+
+    # Every startup-owned resource lives under one cleanup boundary.  A failed
+    # PostgreSQL migration, conversation-store initialization, worker startup, or
+    # chat bind must release :8766 before the outer retry loop gets another turn.
+    activity_server = None
+    activity_thread = None
+    activity_handler = None
+    chat_server = None
+    chat_thread = None
     worker = None
+    prompt_queue = None
+    durable = None
+    live = None
+    startup_completed = False
+    graceful_exit = False
 
-    if shutdown_requested.is_set():
-        logging.info("Shutdown requested during startup; stopping before worker/chat activation")
-        activity_server.shutdown()
-        activity_server.server_close()
-        return
-
-    logging.info("Runtime connected: %s", statuses)
-    logging.info("Coordinator ready; heartbeat interval=%ss", coordinator.heartbeat_seconds)
-    logging.info("Prompt queue ready: %s", prompt_queue.stats())
-    logging.info("Activity stream ready: http://%s:%s/events", activity_host, activity_port)
-    resources["startup_phase"] = "worker-initialization"
-    if bool(worker_cfg.get("enabled", True)):
-        ollama_cfg = config.get("ollama", {})
-        ollama_host = str(ollama_cfg.get('host', '127.0.0.1'))
-        worker_client = OllamaClient(
-            base_url=f"http://{ollama_host}:{ports['ollama']}",
-            model=ollama_cfg.get("model", MODEL_NAME),
-            timeout_seconds=worker_cfg.get("model_timeout_seconds", 86400),
-            activity_sink=activity_hub.publish,
-            activity_source="worker",
-            crash_sink=live.record_model_buffer,
-        )
-        worker = PromptWorker(
-            prompt_queue,
-            worker_client,
-            live,
-            durable,
-            heartbeat_seconds=coordinator.heartbeat_seconds,
-            claim_idle_seconds=int(queue_cfg.get("claim_idle_seconds", 900)),
-            poll_ms=int(worker_cfg.get("poll_ms", 5000)),
-            deferred_append_planner=service.materialize_deferred_append,
-        )
-        worker.start()
-        resources["worker"] = worker
-        logging.info("Prompt worker started consumer=%s", worker.consumer)
-
-    resources["startup_phase"] = "chat-api-initialization"
-    chat_server, chat_thread = start_chat_api(service, host=host, port=port)
-    resources["chat_server"] = chat_server
-    resources["startup_phase"] = "ready"
-    resources["startup_ready"] = True
-    logging.info("Conversation persistence ready")
     try:
+        resources["startup_phase"] = "activity-api-initialization"
+        activity_server, activity_thread = start_activity_server(
+            activity_hub,
+            host=activity_host,
+            port=activity_port,
+            cancel_ollama=OllamaClient.cancel_active,
+            shutdown_ollama=request_ollama_shutdown,
+            shutdown_norm=request_shutdown,
+            stop_all=request_stop_all,
+            suppress_task=request_suppress_task,
+            flush_suppressed=request_flush_suppressed,
+            busy_status=request_busy_status,
+            context_status=request_context_status,
+            health_status=request_activity_health,
+        )
+        activity_handler = ActivityLogHandler(activity_hub)
+        logging.getLogger().addHandler(activity_handler)
+        logging.info("Activity/control API available during startup: http://%s:%s", activity_host, activity_port)
+
+        if shutdown_requested.is_set():
+            logging.info("Shutdown requested during startup; stopping before dependency initialization")
+            graceful_exit = True
+            return
+
+        # build_runtime performs the authoritative Redis connection and PostgreSQL
+        # schema migration.  Avoid a second PostgreSQL preflight before it: any
+        # psycopg failure here remains inside main()'s bounded retry policy.
+        resources["startup_phase"] = "postgres-schema-migration"
+        coordinator, live, durable = build_runtime(root, ensure_schema=True)
+        resources["durable"] = durable
+        durable.set_runtime_state("deployed_version", load_project_metadata(root)["version"])
+
+        if shutdown_requested.is_set():
+            logging.info("Shutdown requested during startup; stopping after durable initialization")
+            graceful_exit = True
+            return
+
+        resources["startup_phase"] = "prompt-queue-initialization"
+        prompt_queue = build_prompt_queue(root, durable=durable)
+        resources["prompt_queue"] = prompt_queue
+
+        resources["startup_phase"] = "conversation-store-initialization"
+        service = build_conversation_service(
+            root,
+            ensure_schema=True,
+            activity_sink=activity_hub.publish,
+            prompt_queue=prompt_queue,
+            coordinator=coordinator,
+            durable=durable,
+        )
+
+        statuses = {"redis": "ok", "prompt_queue": "ok", "postgres": "ok"}
+        http_cfg = config.get("http", {})
+        worker_cfg = config.get("worker", {})
+        queue_cfg = config.get("prompt_queue", {})
+        host = resolve_bind_host(str(http_cfg.get("host", "127.0.0.1")))
+        port = int(ports['norm_http'])
+
+        if shutdown_requested.is_set():
+            logging.info("Shutdown requested during startup; stopping before worker/chat activation")
+            graceful_exit = True
+            return
+
+        logging.info("Runtime connected: %s", statuses)
+        logging.info("Coordinator ready; heartbeat interval=%ss", coordinator.heartbeat_seconds)
+        logging.info("Prompt queue ready: %s", prompt_queue.stats())
+        logging.info("Activity stream ready: http://%s:%s/events", activity_host, activity_port)
+
+        resources["startup_phase"] = "worker-initialization"
+        if bool(worker_cfg.get("enabled", True)):
+            ollama_cfg = config.get("ollama", {})
+            ollama_host = str(ollama_cfg.get('host', '127.0.0.1'))
+            worker_client = OllamaClient(
+                base_url=f"http://{ollama_host}:{ports['ollama']}",
+                model=ollama_cfg.get("model", MODEL_NAME),
+                timeout_seconds=worker_cfg.get("model_timeout_seconds", 86400),
+                activity_sink=activity_hub.publish,
+                activity_source="worker",
+                crash_sink=live.record_model_buffer,
+            )
+            worker = PromptWorker(
+                prompt_queue,
+                worker_client,
+                live,
+                durable,
+                heartbeat_seconds=coordinator.heartbeat_seconds,
+                claim_idle_seconds=int(queue_cfg.get("claim_idle_seconds", 900)),
+                poll_ms=int(worker_cfg.get("poll_ms", 5000)),
+                deferred_append_planner=service.materialize_deferred_append,
+            )
+            worker.start()
+            resources["worker"] = worker
+            logging.info("Prompt worker started consumer=%s", worker.consumer)
+
+        resources["startup_phase"] = "chat-api-initialization"
+        chat_server, chat_thread = start_chat_api(service, host=host, port=port)
+        resources["chat_server"] = chat_server
+        resources["startup_phase"] = "ready"
+        resources["startup_ready"] = True
+        startup_completed = True
+        logging.info("Conversation persistence ready")
+
         shutdown_requested.wait()
+        graceful_exit = True
         if worker:
             if stop_all_requested.is_set():
                 if stop_all_now.is_set():
@@ -550,8 +586,6 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
                 else:
                     if not worker.is_idle():
                         logging.info("Stop-all waiting for current step to finish")
-                    # wait_idle is an Event wait: completion wakes this immediately.
-                    # The timeout only checks for escalation; it is not a busy probe.
                     while not worker.wait_idle(timeout=30):
                         if stop_all_now.is_set():
                             worker.wait_idle(timeout=30)
@@ -566,41 +600,84 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
                     if idle and int(stats.get("stream_length", 0)) == 0 and int(stats.get("pending_count", 0)) == 0 and retry_count == 0:
                         worker.request_drain()
                         break
-                    logging.info("Graceful shutdown draining queued work stream=%s pending=%s retry=%s", stats.get("stream_length"), stats.get("pending_count"), retry_count)
+                    logging.info(
+                        "Graceful shutdown draining queued work stream=%s pending=%s retry=%s",
+                        stats.get("stream_length"), stats.get("pending_count"), retry_count,
+                    )
     except KeyboardInterrupt:
+        # Interactive/manual mode keeps Ctrl+C semantics.  --service installs the
+        # console-control guard, so a stray control event should never reach here.
+        graceful_exit = True
         logging.info("Norm coordinator stopping normally")
-        chat_server.accepting_requests = False
+        if chat_server is not None:
+            chat_server.accepting_requests = False
         if worker:
             worker.request_drain()
             OllamaClient.cancel_active()
             worker.wait_idle(timeout=10)
     finally:
-        chat_server.accepting_requests = False
-        if worker:
+        cleanup_origin_phase = str(resources.get("startup_phase") or "unknown")
+        resources["startup_ready"] = False
+        resources["startup_phase"] = "stopping"
+
+        if chat_server is not None:
+            chat_server.accepting_requests = False
+
+        if worker is not None:
             try:
                 worker.note_shutdown_state()
             except Exception:
                 logging.exception("Shutdown Redis scan failed; preserving Redis state")
-            worker.stop(timeout=10)
+            try:
+                worker.stop(timeout=10)
+            except KeyboardInterrupt:
+                logging.warning("Interrupted while stopping prompt worker; continuing resource cleanup")
+
         if stop_all_requested.is_set():
             mode = "stop-all-now" if stop_all_now.is_set() else "stop-all-after-step"
-            try:
-                sos_path = write_sos(root, live, durable, prompt_queue, mode)
-                logging.info("Stop-all recovery snapshot written: %s", sos_path)
-            except Exception:
-                logging.exception("Failed to write SOS.md; Redis/PostgreSQL state preserved")
+            if live is not None and durable is not None and prompt_queue is not None:
+                try:
+                    sos_path = write_sos(root, live, durable, prompt_queue, mode)
+                    logging.info("Stop-all recovery snapshot written: %s", sos_path)
+                except Exception:
+                    logging.exception("Failed to write SOS.md; Redis/PostgreSQL state preserved")
+            else:
+                logging.warning("Stop-all occurred before durable runtime initialization; no task SOS snapshot was available")
             ollama_result = request_ollama_shutdown()
             logging.info("Stop-all Ollama result: %s", ollama_result)
-        elif not shutdown_now.is_set():
+        elif graceful_exit and startup_completed and not shutdown_now.is_set():
             cleared = clear_runtime_redis(root)
             logging.info("Graceful shutdown purged deletion queue and cleared Redis: %s", cleared)
-        chat_server.shutdown()
-        chat_server.server_close()
-        chat_thread.join(timeout=5)
-        activity_server.shutdown()
-        activity_server.server_close()
-        logging.info("Norm coordinator stopped normally")
-        logging.shutdown()
+
+        if chat_server is not None:
+            try:
+                chat_server.shutdown()
+            finally:
+                chat_server.server_close()
+            if chat_thread is not None:
+                chat_thread.join(timeout=5)
+        resources.pop("chat_server", None)
+
+        if activity_server is not None:
+            try:
+                activity_server.shutdown()
+            finally:
+                activity_server.server_close()
+            if activity_thread is not None:
+                activity_thread.join(timeout=5)
+
+        if activity_handler is not None:
+            root_logger = logging.getLogger()
+            root_logger.removeHandler(activity_handler)
+            try:
+                activity_handler.close()
+            except Exception:
+                pass
+
+        if startup_completed or graceful_exit:
+            logging.info("Norm coordinator stopped normally")
+        else:
+            logging.info("Startup resources released after failure phase=%s", cleanup_origin_phase)
 
 
 def main() -> int:
@@ -626,7 +703,7 @@ def main() -> int:
             int(ports['norm_http']),
             resolve_bind_host(str(activity_cfg.get("host", "127.0.0.1"))),
             int(ports['activity']),
-            queue_config=config.get("rich_console_queue", {}),
+            queue_config=config.get("console_queue", {}),
         )
     setup_logging(root)
     if args.service:
@@ -643,9 +720,9 @@ def main() -> int:
     logging.info("Resolved service ports: ollama=%s norm_http=%s activity=%s", ports['ollama'], ports['norm_http'], ports['activity'])
     ollama_process = start_ollama_if_needed(root, ollama_url, model_name, model_store)
     preload_norm(ollama_url, model_name)
-    statuses = healthcheck(root)
-    logging.info("Health check: %s", statuses)
     if args.check:
+        statuses = healthcheck(root)
+        logging.info("Health check: %s", statuses)
         print(json.dumps({"ollama": "ok", **statuses}))
         return 0
     startup_attempts = 3

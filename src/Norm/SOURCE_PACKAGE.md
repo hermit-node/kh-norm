@@ -1,4 +1,4 @@
-# Norm 0.52.3 portable source package
+# Norm 0.52.5 portable source package
 
 This archive is the clean source baseline for installing or rebuilding Norm.
 
@@ -34,6 +34,16 @@ Package-managed built-in plugin subtrees are `plugins\backup`, `plugins\verbatim
 
 `/backup` creates portable/source installer media; `/backup full` creates the sensitive private-state format; `/backup-zip` is the legacy full-backup alias. `/condense-memories` is intentionally absent until the complete fail-closed curated-memory housekeeping policy is implemented.
 
+
+## 0.52.5 proportional plan verification
+
+The independent verifier now distinguishes blocking execution defects from advisory plan-shape/style concerns. Explicitly bounded cohesive work may remain together, and existing mechanisms plus execution-time tests are treated as evidence rather than invitations for speculative rejection. Repair cycles must materially address the reported blocker.
+
+## 0.52.4 canonical console/SSH ingress
+
+The local Rich console and SSH prompt GUI are producers/consumers of the same Redis DB3 ingress stream, group, and selected-thread key, with dispatch implemented once in `core\norm_runtime\prompt_ingress.py`. `tools\norm_gui_dispatch.py` is only a compatibility import shim. Both frontends use project `default`, and a normal ingress entry is acknowledged only after the chat response contains a durable task ID.
+
+Startup resources are owned transactionally at the process level: activity server, worker, and chat server are initialized inside one cleanup boundary and released on every startup failure before the outer retry. Normal startup no longer performs a PostgreSQL health probe outside the retry loop; generated PostgreSQL conninfo carries `connect_timeout=5`. Dynamic plugin hydration and execution are serialized by a process-global `RLock` because Python import state and stdout/stderr redirection are global.
 
 ## 0.52.3 Windows service mode
 

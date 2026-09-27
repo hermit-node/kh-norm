@@ -134,14 +134,5 @@
     "console_dispatching_key": "norm:gui:dispatching",
     "console_uncertain_key": "norm:gui:uncertain",
     "console_suppressed_prompt_ids_key": "norm:gui:suppressed-prompt-ids"
-  },
-  "rich_console_queue": {
-    "db": 3,
-    "console_ingress_stream": "norm:rich-console:ingress",
-    "console_ingress_group": "norm-rich-console-dispatchers",
-    "console_thread_key": "norm:rich-console:thread-id",
-    "console_dispatching_key": "norm:rich-console:dispatching",
-    "console_uncertain_key": "norm:rich-console:uncertain",
-    "console_suppressed_prompt_ids_key": "norm:rich-console:suppressed-prompt-ids"
   }
 }

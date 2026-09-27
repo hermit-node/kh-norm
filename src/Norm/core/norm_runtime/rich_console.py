@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from urllib import request
 from urllib.parse import quote
 
-import redis
+from .prompt_ingress import GuiPromptDispatcher
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
@@ -28,11 +28,6 @@ class NormConsole:
         self.chat_url = chat_url
         self.activity_url = activity_url
         cfg = dict(queue_config or {})
-        self.redis = redis.Redis(
-            host=cfg.get("host", "127.0.0.1"), port=int(cfg.get("port", 6379)),
-            db=int(cfg.get("db", 1)), decode_responses=True, socket_timeout=10,
-            socket_connect_timeout=5, socket_keepalive=True, health_check_interval=30,
-        )
         control_base = activity_url.rsplit("/", 1)[0] + "/control"
         self.control_url = control_base + "/cancel-ollama"
         self.shutdown_ollama_url = control_base + "/shutdown-ollama"
@@ -43,25 +38,30 @@ class NormConsole:
         self.suppress_task_url = control_base + "/suppress-task"
         self.flush_suppressed_url = control_base + "/flush-suppressed"
         self.busy_url = activity_url.rsplit("/", 1)[0] + "/status/busy"
-        self.ingress_stream = str(cfg.get("console_ingress_stream", "norm:console:ingress"))
-        self.ingress_group = str(cfg.get("console_ingress_group", "norm-console-dispatchers"))
-        self.ingress_consumer = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
-        self.thread_key = str(cfg.get("console_thread_key", "norm:console:thread-id"))
-        self.dispatching_key = str(cfg.get("console_dispatching_key", "norm:console:dispatching"))
-        self.uncertain_key = str(cfg.get("console_uncertain_key", "norm:console:uncertain"))
-        self.redis.ping()
-        try:
-            self.redis.xgroup_create(self.ingress_stream, self.ingress_group, id="0", mkstream=True)
-        except redis.ResponseError as exc:
-            if "BUSYGROUP" not in str(exc):
-                raise
+        shared_endpoints = {
+            "chat": self.chat_url,
+            "events": self.activity_url,
+            "busy": self.busy_url,
+        }
+        self.ingress = GuiPromptDispatcher(shared_endpoints, cfg, on_result=self._on_ingress_result, source_name="local-rich")
+        self.redis = self.ingress.redis
+        self.ingress_stream = self.ingress.stream
+        self.ingress_group = self.ingress.group
+        self.ingress_consumer = self.ingress.consumer
+        self.thread_key = self.ingress.thread_key
+        self.dispatching_key = self.ingress.dispatching_key
+        self.uncertain_key = self.ingress.uncertain_key
         self.console = Console(highlight=False)
         self.muted: set[str] = set()
         self.muted_lock = threading.Lock()
         self.stop_event = threading.Event()
-        self.norm_paused = threading.Event()
+        self.norm_paused = self.ingress.pause_dispatch
         self.activity_wakeup = threading.Event()
         self.thread_id: str | None = self.redis.get(self.thread_key) or None
+
+    def _on_ingress_result(self, message: str, reply: str, result: dict) -> None:
+        task_id = str(result.get("task_id") or "")
+        self.console.print(f"[dim]Completed queued prompt task={task_id or 'n/a'}.[/]")
 
     def _is_muted(self, channel: str) -> bool:
         with self.muted_lock:
@@ -83,7 +83,7 @@ class NormConsole:
         return self.chat_url[:-len(suffix)] if self.chat_url.endswith(suffix) else self.chat_url.rsplit("/", 1)[0]
 
     def _thread_rows(self, limit: int = 100) -> list[dict]:
-        project_id = "norm-console"
+        project_id = "default"
         url = f"{self._api_base()}/api/threads?project_id={quote(project_id)}&limit={max(1, min(int(limit), 200))}"
         with request.urlopen(url, timeout=10) as response:
             payload = json.loads(response.read().decode("utf-8"))
@@ -93,7 +93,7 @@ class NormConsole:
     def _create_named_thread(self, title: str) -> dict:
         req = request.Request(
             f"{self._api_base()}/api/threads/new",
-            data=json.dumps({"project_id": "norm-console", "title": title}, ensure_ascii=False).encode("utf-8"),
+            data=json.dumps({"project_id": "default", "title": title}, ensure_ascii=False).encode("utf-8"),
             headers={"Content-Type": "application/json; charset=utf-8"},
             method="POST",
         )
@@ -120,31 +120,17 @@ class NormConsole:
         return None, exact_title or id_prefix or title_prefix
 
     def _enqueue_thread_control(self, kind: str, *, thread_id: str = "", title: str = "") -> str:
-        fields = {"kind": kind, "enqueued_at": self._now_iso()}
-        if thread_id:
-            fields["thread_id"] = thread_id
-        if title:
-            fields["title"] = title
-        return str(self.redis.xadd(self.ingress_stream, fields, maxlen=5000, approximate=True))
+        if kind == "thread_reset":
+            return self.ingress.enqueue_thread_reset()
+        if kind == "thread_switch":
+            return self.ingress.enqueue_thread_switch(thread_id, title)
+        raise ValueError(f"unsupported thread control: {kind}")
 
     def _enqueue_prompt(self, message: str) -> tuple[str, str]:
-        prompt_id = str(uuid.uuid4())
-        entry_id = self.redis.xadd(self.ingress_stream, {
-            "kind": "prompt", "prompt_id": prompt_id, "message": message, "project_id": "norm-console",
-            "enqueued_at": self._now_iso(),
-        }, maxlen=5000, approximate=True)
-        return str(entry_id), prompt_id
+        return self.ingress.enqueue_prompt(message)
 
-    def _queue_stats(self) -> tuple[int, int]:
-        queued = 0
-        try:
-            for info in self.redis.xinfo_groups(self.ingress_stream):
-                if str(info.get("name")) == self.ingress_group:
-                    queued = int(info.get("pending") or 0) + int(info.get("lag") or 0)
-                    break
-        except Exception:
-            pass
-        return queued, int(self.redis.hlen(self.uncertain_key))
+    def _queue_stats(self) -> tuple[int | None, int]:
+        return self.ingress.queue_stats()
 
     def _listen(self) -> None:
         while not self.stop_event.is_set():
@@ -186,127 +172,6 @@ class NormConsole:
             self.console.print(Rule("Ollama complete"))
         elif kind == "model_error":
             self.console.print(f"\n[bold red]Ollama call ended: {text}[/]")
-
-    def _claim_abandoned(self) -> None:
-        try:
-            pending = self.redis.xpending_range(self.ingress_stream, self.ingress_group, "-", "+", 1000)
-        except Exception:
-            return
-        for item in pending:
-            entry_id = str(item.get("message_id") or "")
-            owner = str(item.get("consumer") or "")
-            if not entry_id or owner == self.ingress_consumer:
-                continue
-            dispatching = self.redis.hget(self.dispatching_key, entry_id)
-            if dispatching:
-                self.redis.hset(self.uncertain_key, entry_id, dispatching)
-                self.redis.hdel(self.dispatching_key, entry_id)
-                self.redis.xack(self.ingress_stream, self.ingress_group, entry_id)
-                continue
-            self.redis.xclaim(self.ingress_stream, self.ingress_group, self.ingress_consumer, 0, [entry_id])
-
-    def _next_ingress(self):
-        rows = self.redis.xreadgroup(self.ingress_group, self.ingress_consumer, {self.ingress_stream: "0"}, count=1)
-        if not rows or not rows[0][1]:
-            rows = self.redis.xreadgroup(self.ingress_group, self.ingress_consumer, {self.ingress_stream: ">"}, count=1, block=5000)
-        if not rows or not rows[0][1]:
-            return None
-        return rows[0][1][0]
-
-    def _wait_until_idle(self) -> bool:
-        while not self.stop_event.is_set():
-            if self.norm_paused.is_set():
-                self.stop_event.wait(0.25)
-                continue
-            self.activity_wakeup.clear()
-            try:
-                with request.urlopen(self.busy_url, timeout=2) as response:
-                    status = json.loads(response.read().decode("utf-8"))
-                if not bool(status.get("busy")):
-                    return True
-            except Exception:
-                pass
-            # Activity on port 8766 wakes us immediately; timeout is only a lost-event safety net.
-            self.activity_wakeup.wait(300)
-        return False
-
-    def _dispatch_ingress(self, entry_id: str, fields: dict) -> None:
-        kind = str(fields.get("kind") or "prompt")
-        if kind == "thread_reset":
-            self.redis.delete(self.thread_key)
-            self.thread_id = None
-            self.redis.xack(self.ingress_stream, self.ingress_group, entry_id)
-            return
-        if kind == "thread_switch":
-            thread_id = str(fields.get("thread_id") or "").strip()
-            if thread_id:
-                self.thread_id = thread_id
-                self.redis.set(self.thread_key, thread_id)
-            else:
-                self.thread_id = None
-                self.redis.delete(self.thread_key)
-            self.redis.xack(self.ingress_stream, self.ingress_group, entry_id)
-            return
-        if not self._wait_until_idle():
-            return
-        dispatch_state = json.dumps({
-            "prompt_id": str(fields.get("prompt_id") or ""),
-            "enqueued_at": str(fields.get("enqueued_at") or ""),
-            "dispatch_started_at": self._now_iso(),
-        }, ensure_ascii=False)
-        self.redis.hset(self.dispatching_key, entry_id, dispatch_state)
-        payload = {
-            "message": str(fields.get("message") or ""),
-            "project_id": str(fields.get("project_id") or "norm-console"),
-        }
-        thread_id = self.redis.get(self.thread_key) or self.thread_id
-        if thread_id:
-            payload["thread_id"] = thread_id
-        req = request.Request(
-            self.chat_url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with request.urlopen(req, timeout=None) as response:
-                result = json.loads(response.read().decode("utf-8"))
-            returned_thread = result.get("primary_thread_id") or result.get("thread_id")
-            if isinstance(returned_thread, str) and returned_thread:
-                self.thread_id = returned_thread
-                self.redis.set(self.thread_key, returned_thread)
-            self.redis.hdel(self.dispatching_key, entry_id)
-            self.redis.xack(self.ingress_stream, self.ingress_group, entry_id)
-            task_id = str(result.get("task_id") or "")
-            self.console.print(f"[dim]Completed queued prompt {fields.get('prompt_id', '')[:8]} task={task_id or 'n/a'}.[/]")
-        except Exception as exc:
-            uncertain = json.dumps({
-                "prompt_id": str(fields.get("prompt_id") or ""),
-                "enqueued_at": str(fields.get("enqueued_at") or ""),
-                "dispatch_started_at": json.loads(dispatch_state).get("dispatch_started_at"),
-                "failed_at": self._now_iso(), "error": f"{type(exc).__name__}: {exc}",
-            }, ensure_ascii=False)
-            self.redis.hset(self.uncertain_key, entry_id, uncertain)
-            self.redis.hdel(self.dispatching_key, entry_id)
-            self.redis.xack(self.ingress_stream, self.ingress_group, entry_id)
-            self.console.print(
-                f"[bold red]Queued prompt {fields.get('prompt_id', '')[:8]} became uncertain during dispatch; it will NOT auto-replay.[/]"
-            )
-
-    def _submission_worker(self) -> None:
-        self._claim_abandoned()
-        while not self.stop_event.is_set():
-            try:
-                item = self._next_ingress()
-            except Exception as exc:
-                if not self.stop_event.is_set():
-                    self.console.print(f"[yellow]Redis ingress reconnecting: {exc}[/]")
-                    self.stop_event.wait(2)
-                continue
-            if item is None:
-                continue
-            entry_id, fields = item
-            self._dispatch_ingress(str(entry_id), dict(fields))
 
     def _cancel_ollama(self) -> None:
         req = request.Request(self.control_url, data=b"{}", method="POST")
@@ -543,9 +408,8 @@ class NormConsole:
 
     def run(self) -> int:
         listener = threading.Thread(target=self._listen, name="norm-console-events", daemon=True)
-        submitter = threading.Thread(target=self._submission_worker, name="norm-console-submit", daemon=True)
         listener.start()
-        submitter.start()
+        self.ingress.start()
         self.console.print(Rule("Norm interactive console"))
         self.console.print("Type a message at any time. Type [bold]/help[/] for controls.")
         try:
@@ -576,6 +440,7 @@ class NormConsole:
                         )
         finally:
             self.stop_event.set()
+            self.ingress.stop()
         return 0
 
 

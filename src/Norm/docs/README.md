@@ -1,6 +1,6 @@
 # Norm
 
-**Norm 0.52.3** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
+**Norm 0.52.5** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
 
 ## Canonical layout
 
@@ -51,7 +51,7 @@ The GUI recognizes `help`/`/help`, `/status`, `/status/busy`, `/queue-full`, `/m
 
 ## Build/update
 
-`tools\build_norm.py` is the repeatable PyInstaller path. `package-manifest.json` defines the reusable installer contract. Normal updates should use the reusable Norm installer rather than deleting `C:\Norm`: it mirrors package-owned source files, preserves local/persistent state, reuses the venv when compatible, installs only missing/changed dependencies, and optionally rebuilds `core\norm.exe`.
+`tools\build_norm.py` is the repeatable PyInstaller path. `package-manifest.json` defines the reusable installer contract. Normal updates should use the reusable Norm installer rather than deleting `C:\Norm`: it mirrors package-owned source files, preserves local/persistent state, reuses the venv when compatible, installs only missing/changed dependencies, and optionally rebuilds `core\norm.exe`. Installer 1.3.8 binds one exact source payload by filename and SHA-256. Its builder reads this package's requirements lock and can create a derived payload using either the locked version or the newest eligible stable/release-candidate version for each package; alpha, beta, and dev builds are excluded. The package schema remains 1.
 
 ## Documentation
 
@@ -63,6 +63,16 @@ The GUI recognizes `help`/`/help`, `/status`, `/status/busy`, `/queue-full`, `/m
 
 Historical notes may mention earlier `app\` and Documents-root layouts. Those are historical records, not current paths.
 
+
+## 0.52.5 proportional plan verification
+
+The independent plan verifier now rejects only blocking execution defects. Cohesive bounded steps may contain multiple tightly coupled implementation parts when their roles and verification are explicit. Advisory organization/style concerns no longer veto a plan, and the verifier is instructed not to invent hypothetical implementation failures when the plan explicitly inspects/reuses an existing mechanism or verifies the invariant during execution. Repair cycles must make the smallest material correction instead of mechanically splitting cohesive work or returning the same rejected plan.
+
+## 0.52.4 canonical prompt ingress
+
+Local Rich-console prompts and SSH `P` prompts now share one Redis DB3 ingress stream/group/thread key and the same core dispatcher implementation. Both submit to project `default`. The dispatcher establishes an explicit current thread before chat submission and only acknowledges a normal prompt after `/api/chat` returns a durable `task_id`; HTTP 200 without task creation is parked as a visible protocol violation rather than silently discarded.
+
+Startup ownership is fail-closed: the activity API, worker, and chat API are all released if any later startup stage fails, so a bounded PostgreSQL retry cannot collide with a leaked `:8766` listener. Normal startup no longer performs a PostgreSQL preflight outside the retry loop, generated PostgreSQL conninfo uses a 5-second connection timeout, and plugin hydration/execution is serialized process-wide around Python's global import/stdio state.
 
 ## 0.52.3 service-start stability
 

@@ -1,4 +1,27 @@
+# Norm release notes
+
+## 0.52.5 — 2026-09-27 — proportional plan verification
+
+- Plan verification rejects only blocking defects: lost constraints, unauthorized/unsafe actions, materially contradictory or impossible designs, missing material verification, unbounded work, or missing final synthesis on multi-step plans.
+- Clearly described tightly coupled implementation parts may remain in one bounded step; advisory organization/granularity concerns no longer veto execution.
+- Redundant mechanisms are only blocking when they create a real contradiction, ambiguity, or user-constraint violation.
+- The verifier no longer invents hypothetical implementation/boundary failures when the plan explicitly inspects/reuses an existing mechanism or includes execution tests for that invariant.
+- Repair prompts require the smallest material fix and prohibit mechanically returning the same rejected plan.
+- Runtime build tooling lock moves PyInstaller from 6.22.2 to 6.22.3.
+
 # Norm Release Notes
+
+## 0.52.4 — 2026-09-27 — canonical prompt ingress and startup reliability
+
+- Local Rich-console prompts and SSH `P` prompts now use the same Redis DB3 ingress stream, consumer group, selected-thread key, default project, and core dispatcher implementation.
+- Removed the second `norm:rich-console:*` durable ingress namespace. Frontends differ only in transport/UI; prompt interpretation and task creation no longer diverge.
+- The canonical dispatcher creates/selects an explicit thread before `/api/chat`, so an accepted console prompt cannot be converted into a semantic-routing clarification before task creation.
+- HTTP 200 is no longer sufficient to acknowledge a normal queued prompt: the response must contain a durable `task_id`. A protocol violation is parked visibly in uncertain state without automatic replay.
+- Added ingress lifecycle logging for prompt/source/thread/task IDs to make queue-to-task handoff auditable.
+- Put the activity API, worker, chat API, and their server threads under one startup ownership/cleanup boundary so a failed migration or later startup stage releases ports before retry.
+- Removed the normal-start duplicate PostgreSQL health preflight; PostgreSQL connection/schema failures now occur inside the bounded startup retry loop.
+- Added `connect_timeout=5` to generated PostgreSQL connection strings in addition to the existing lock/statement timeouts.
+- Serialized plugin refresh/hydration/execution with one process-global `RLock`, covering global `sys.modules`, `sys.path`, stdout, and stderr mutations across multiple `PluginManager` instances.
 
 This file is the concise, version-by-version record of **implemented and promoted changes** in Norm. It answers “what changed in this iteration?” rather than “what is true right now?”
 
