@@ -15,10 +15,12 @@ from urllib import request as urlrequest
 import psycopg
 import redis as redis_lib
 
+from .secret_redaction import redact, is_secret_file
 from .command_runner import run_bounded
 from .deletion_queue import RedisDeletionQueue
 from .resource_status import full_context_status, impaired_context_status
 from .storage_context import StorageContext
+from .plugin_manager import PluginManager
 
 
 class StagedWriteError(PermissionError):
@@ -69,6 +71,8 @@ class FileToolExecutor:
         shell_timeout_seconds: int = 120,
         shell_max_output_chars: int = 20000,
         verbatim_helper: str | None = None,
+        plugin_root: str | None = None,
+        plugin_registry_file: str | None = None,
     ) -> None:
         if not allowed_roots:
             raise ValueError("at least one file-tool root is required")
@@ -96,6 +100,7 @@ class FileToolExecutor:
         self.shell_timeout_seconds = max(1, int(shell_timeout_seconds))
         self.shell_max_output_chars = max(1000, int(shell_max_output_chars))
         self.verbatim_helper = Path(verbatim_helper).resolve() if verbatim_helper else None
+        self.plugin_manager = PluginManager(plugin_root, plugin_registry_file) if plugin_root else None
         self._storage_context_for_call: dict[str, Any] | None = None
         defaults = {
             "light": {"target_seconds": 300, "max_seconds": 480},
@@ -140,6 +145,8 @@ class FileToolExecutor:
             "You have direct file tools inside these allowed roots only: " + roots + ".\n"
             + ("Relative local-file paths use the configured primary Samba storage when responsive and automatically fall back to the KHzz backup when needed. Writes go only to the selected responsive location and are never mirrored. Storage connections are queried only when the requested file path requires them. If a required connection is unresponsive, the tool result carries resource_status JSON with the connection, reason, and 'generating with impaired context'.\n" if self.storage else "")
             + "Use the supplied native tools whenever a file operation is needed. "
+            "Tool results here preserve execution values. Terminal/audit/checkpoint copies may contain [REDACTED]; that marker is never a real credential or path. Re-read ordinary configuration when needed; never reuse a redacted placeholder.\n"
+            "Never dump .env or credential files. Load credentials internally and pass them through process environment variables; never echo literal secrets.\n"
             "Available tools:\n"
             "- list_directory(path): bounded directory listing.\n"
             "- read_file(path, start_line?, end_line?): returns text and sha256.\n"
@@ -150,6 +157,7 @@ class FileToolExecutor:
             "- delete_file(path, expected_sha256, reason): move a file into the deletion queue; permanent purge waits for graceful shutdown.\n"
             + (("- run_command(command, cwd?, timeout_seconds?, stdin_text?): execute a PowerShell command for running/tests/inspection; returns exit_code, stdout, and stderr. Prefer native file tools for file edits/deletes.\n" + (f"- For multiline or quote-heavy command work, use the operator helper at {self.verbatim_helper} with stdin_text containing the complete script (stdin is otherwise closed), then run that script and verify its result; do not build large nested PowerShell quoting expressions.\n" if self.verbatim_helper else "")) if self.shell_enabled else "")
             + image_help
+            + (("\n" + self.plugin_manager.instructions()) if self.plugin_manager else "")
             + "\nDeletion is available only inside allowed roots and is reversible until graceful shutdown. Never claim a file changed unless a tool result says ok=true. "
             "If a write reports staged=true, the target was NOT changed: do not retry that write again in the same step. "
             "Report the staged_path and note_path so the blocked edit can be recovered. "
@@ -265,6 +273,8 @@ class FileToolExecutor:
                     ["paths", "prompt"],
                 ),
             ])
+        if self.plugin_manager is not None:
+            schemas.extend(self.plugin_manager.schemas())
         return schemas
 
     def _require_authority(self) -> None:
@@ -286,10 +296,13 @@ class FileToolExecutor:
         result: dict[str, Any]
         try:
             self._require_authority()
-            if name not in self.TOOL_NAMES:
+            if name in self.TOOL_NAMES:
+                method = getattr(self, f"_{name}")
+                result = method(arguments)
+            elif self.plugin_manager is not None and self.plugin_manager.has_tool(name):
+                result = self.plugin_manager.execute(name, arguments)
+            else:
                 raise ValueError(f"unsupported tool: {name}; deletion is not available")
-            method = getattr(self, f"_{name}")
-            result = method(arguments)
             result.update({"ok": True, "tool": name})
         except StagedWriteError as exc:
             result = {
@@ -316,7 +329,8 @@ class FileToolExecutor:
             result["resource_status"] = impaired_context_status(
                 str(result.get("target") or "unknown"), str(result.get("error") or result.get("note") or "unresponsive")
             )
-        self._audit(name, arguments, result, started)
+        # Execution/model data stays intact; audit receives a separate safe copy.
+        self._audit(name, redact(arguments), redact(result), started)
         return result
 
     def _resolve(self, raw_path: Any) -> Path:
@@ -442,6 +456,8 @@ class FileToolExecutor:
 
     def _read_file(self, arguments: dict[str, Any]) -> dict[str, Any]:
         path = self._resolve(arguments.get("path"))
+        if is_secret_file(path):
+            raise PermissionError("Secret files must be loaded internally; raw reads are disabled")
         if not path.is_file():
             raise FileNotFoundError(path)
         size = path.stat().st_size

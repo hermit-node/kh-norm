@@ -70,7 +70,7 @@ def _doc_digest(path: Path, keywords: tuple[str, ...], *, section_chars: int = 1
 
 def _recent_files(root: Path, limit: int = 24) -> list[dict]:
     candidates: list[Path] = []
-    for base in (root / "app", root / "config", root / "docs", root / "tools"):
+    for base in (root / "core", root / "config", root / "docs", root / "tools"):
         if not base.exists():
             continue
         for path in base.rglob("*"):
@@ -85,12 +85,12 @@ def _recent_files(root: Path, limit: int = 24) -> list[dict]:
     return [{"path": str(p.relative_to(root)), "modified_at": _iso_mtime(p), "size": p.stat().st_size} for p in ordered]
 
 def _source_newer_than_exe(root: Path) -> list[dict]:
-    exe = root / "app" / "norm.exe"
+    exe = root / "core" / "norm.exe"
     if not exe.is_file():
         return []
     exe_mtime = exe.stat().st_mtime
     rows = []
-    for path in (root / "app").rglob("*.py"):
+    for path in (root / "core").rglob("*.py"):
         if "__pycache__" in path.parts or not path.is_file():
             continue
         if path.stat().st_mtime > exe_mtime + 1.0:
@@ -323,9 +323,9 @@ def collect_context_snapshot(
             "source_newer_than_exe": _source_newer_than_exe(root),
         },
         "runtime": {
-            "exe": str(root / "app" / "norm.exe"),
-            "exe_sha256": _sha256(root / "app" / "norm.exe") if (root / "app" / "norm.exe").is_file() else None,
-            "exe_modified_at": _iso_mtime(root / "app" / "norm.exe") if (root / "app" / "norm.exe").is_file() else None,
+            "exe": str(root / "core" / "norm.exe"),
+            "exe_sha256": _sha256(root / "core" / "norm.exe") if (root / "core" / "norm.exe").is_file() else None,
+            "exe_modified_at": _iso_mtime(root / "core" / "norm.exe") if (root / "core" / "norm.exe").is_file() else None,
         },
     }
     full_handoff = _build_markdown(snapshot).rstrip() + _provenance_footer()

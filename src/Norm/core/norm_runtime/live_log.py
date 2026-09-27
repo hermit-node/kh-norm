@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from .secret_redaction import redact
 from datetime import datetime, timezone
 from typing import Any
 
@@ -33,7 +34,7 @@ class RedisTaskLog:
 
     def _emit(self, task_id: str, event: str, **fields: Any) -> str:
         payload = {"event": event, "at": _now()}
-        payload.update({k: json.dumps(v) if isinstance(v, (dict, list, tuple)) else str(v) for k, v in fields.items()})
+        payload.update({k: json.dumps(v) if isinstance(v, (dict, list, tuple)) else str(v) for k, v in redact(fields).items()})
         return self.client.xadd(self._stream_key(task_id), payload, maxlen=5000, approximate=True)
 
     def start_task(self, task_id: str, title: str, plan: dict[str, Any]) -> None:

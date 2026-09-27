@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .secret_redaction import redact
+
 import json
 import logging
 import re
@@ -161,6 +163,79 @@ class ConversationService:
                 return None, "Okay. I left the suppressed task parked and unchanged.", full_context_status()
         if "resume" not in lowered or "task" not in lowered:
             return None
+        # Explicit operator form:
+        #   resume task 0
+        #   /resume-task 0
+        #   resume task <task-id-or-unique-prefix>
+        #
+        # Numeric selectors use the same zero-based convention as /resume-queue.
+        # Do not run a fuzzy match when the operator supplied an explicit index.
+        explicit_resume = re.fullmatch(
+            r"/?resume(?:-|\s+)task(?:\s+(.+))?",
+            message.strip(),
+            flags=re.IGNORECASE,
+        )
+        if explicit_resume:
+            selector = str(explicit_resume.group(1) or "").strip()
+            candidates = self.durable.suppressed_tasks(limit=200)
+
+            if not candidates:
+                return (
+                    None,
+                    "There are no suppressed tasks to resume.",
+                    full_context_status(),
+                )
+
+            if not selector:
+                lines = ["Suppressed tasks (newest first; indexes are zero-based):"]
+                for index, item in enumerate(candidates[:25]):
+                    task_id = str(item.get("task_id") or "")
+                    title = str(item.get("title") or "").strip() or "[untitled]"
+                    lines.append(f"  {index}: {title}  ({task_id})")
+                return None, "\n".join(lines), full_context_status()
+
+            selected = None
+
+            if selector.isdigit():
+                index = int(selector)
+                if index < 0 or index >= len(candidates):
+                    return (
+                        None,
+                        f"Suppressed task index {index} is out of range "
+                        f"0..{len(candidates) - 1}.",
+                        full_context_status(),
+                    )
+                selected = candidates[index]
+            else:
+                exact = [
+                    item for item in candidates
+                    if str(item.get("task_id") or "") == selector
+                ]
+                if len(exact) == 1:
+                    selected = exact[0]
+                else:
+                    prefix = [
+                        item for item in candidates
+                        if str(item.get("task_id") or "").startswith(selector)
+                    ]
+                    if len(prefix) == 1:
+                        selected = prefix[0]
+                    elif len(prefix) > 1:
+                        return (
+                            None,
+                            f"Task-id prefix {selector!r} matches multiple "
+                            "suppressed tasks; use a longer prefix.",
+                            full_context_status(),
+                        )
+
+            if selected is not None:
+                return self._resume_suppressed_and_wait(
+                    str(selected["task_id"]),
+                    thread_ids=thread_ids,
+                    primary_thread_id=primary_thread_id,
+                    user_message_id=user_message_id,
+                )
+
         candidate, score = self._best_suppressed_match(message)
         if not candidate:
             return None
@@ -229,6 +304,8 @@ class ConversationService:
             task_id, reply, task_resource_status = special
         resource_status = merge_resource_status(resource_status, task_resource_status)
 
+        from .secret_redaction import redact
+        reply = redact(reply)
         assistant_id = None
         try:
             assistant_id = self.store.add_message("assistant", reply, thread_ids, route.primary_thread_id)
@@ -1085,7 +1162,7 @@ class ConversationService:
                     results.append({"ok": False, "error": "invalid tool call shape"})
                     continue
                 results.append(self.file_tools.execute(name, arguments))
-            history.append({"assistant_tool_calls": calls, "tool_results": results})
+            history.append(redact({"assistant_tool_calls": calls, "tool_results": results}))
         return "I stopped after the safe tool-call limit. No deletion was performed. Review the latest tool results before continuing."
 
     @staticmethod

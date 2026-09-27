@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .secret_redaction import redact, RedactingFormatter
+
 import ipaddress
 import json
 import logging
@@ -19,7 +21,7 @@ class ActivityHub:
         self._lock = threading.Lock()
 
     def publish(self, event: dict) -> None:
-        item = dict(event)
+        item = redact(dict(event))
         item.setdefault("timestamp", time.time())
         with self._lock:
             self._history.append(item)
@@ -55,7 +57,7 @@ class ActivityLogHandler(logging.Handler):
     def __init__(self, hub: ActivityHub) -> None:
         super().__init__(logging.INFO)
         self.hub = hub
-        self.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        self.setFormatter(RedactingFormatter("%(asctime)s %(levelname)s %(message)s"))
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
@@ -82,6 +84,7 @@ class ActivityHTTPServer(ThreadingHTTPServer):
         flush_suppressed: Callable[[], dict] | None = None,
         busy_status: Callable[[], dict] | None = None,
         context_status: Callable[[], dict] | None = None,
+        inject_context: Callable | None = None,
     ) -> None:
         super().__init__(address, ActivityRequestHandler)
         self.hub = hub
@@ -93,6 +96,7 @@ class ActivityHTTPServer(ThreadingHTTPServer):
         self.flush_suppressed = flush_suppressed
         self.busy_status = busy_status
         self.context_status = context_status
+        self.inject_context = inject_context
 
 
 class ActivityRequestHandler(BaseHTTPRequestHandler):
@@ -200,6 +204,19 @@ class ActivityRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         payload = self._read_json_body()
+        if self.path == "/control/inject-context":
+            if self.server.inject_context is None:
+                self._send_json(503, {"error": "Context injection unavailable"})
+                return
+            try:
+                result = self.server.inject_context(payload.get("task_id"), payload.get("content"), payload.get("request_id"))
+                self._send_json(200, result)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except Exception:
+                logging.exception("Context injection failed")
+                self._send_json(503, {"error": "Could not persist context; retry the same request ID"})
+            return
         if self.path == "/control/cancel-ollama":
             count = self.server.cancel_ollama()
             self._send_json(200, {"status": "ok", "cancelled": count})
@@ -254,6 +271,7 @@ def start_activity_server(
     flush_suppressed: Callable[[], dict] | None = None,
     busy_status: Callable[[], dict] | None = None,
     context_status: Callable[[], dict] | None = None,
+    inject_context: Callable | None = None,
 ):
     try:
         ip = ipaddress.ip_address(host)
@@ -262,7 +280,7 @@ def start_activity_server(
     if not (ip.is_loopback or ip in ipaddress.ip_network("100.64.0.0/10")):
         raise ValueError("service bind host must remain loopback or Tailscale-only")
     server = ActivityHTTPServer(
-        (host, port), hub, cancel_ollama, shutdown_ollama, shutdown_norm, stop_all, suppress_task, flush_suppressed, busy_status, context_status
+        (host, port), hub, cancel_ollama, shutdown_ollama, shutdown_norm, stop_all, suppress_task, flush_suppressed, busy_status, context_status, inject_context
     )
     thread = threading.Thread(
         target=server.serve_forever,

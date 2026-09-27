@@ -12,8 +12,8 @@ import time
 import uuid
 from pathlib import Path
 
-ROOT = Path(r"C:\Norm")
-APP = ROOT / "app"
+ROOT = Path(__file__).resolve().parents[1]
+APP = ROOT / "core"
 SETTINGS = ROOT / "config" / "settings.ini"
 NAS_ROOT = Path(r"\\KH-CA8D\Local1675\Docker\ca8d-tailnet-host\e2e\norm")
 REMOTE_ROOT = "/share/Local1675/Docker/ca8d-tailnet-host/e2e/norm"
@@ -64,7 +64,7 @@ def sha256(path: Path) -> str:
 
 def copy_runtime(run_dir: Path) -> Path:
     runtime = run_dir / "runtime"
-    app_dst = runtime / "app"
+    app_dst = runtime / "core"
     if runtime.exists():
         shutil.rmtree(runtime)
     ignore = shutil.ignore_patterns("*.exe", "*.pyc", "__pycache__", ".pytest_cache")

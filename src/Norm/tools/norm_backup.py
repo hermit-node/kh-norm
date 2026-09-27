@@ -4,6 +4,7 @@ import argparse
 import configparser
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -15,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SETTINGS = ROOT / "config" / "settings.ini"
-APP = ROOT / "app"
+APP = ROOT / "core"
 if str(APP) not in sys.path:
     sys.path.insert(0, str(APP))
 
@@ -28,6 +29,11 @@ def load_settings() -> configparser.ConfigParser:
     with SETTINGS.open("r", encoding="utf-8-sig") as handle:
         cfg.read_file(handle)
     return cfg
+
+
+def resolve_runtime_setting_path(raw: str) -> Path:
+    value = Path(os.path.expandvars(os.path.expanduser(str(raw).strip())))
+    return value.resolve() if value.is_absolute() else (ROOT / value).resolve()
 
 
 def split_dirs(value: str) -> set[str]:
@@ -94,9 +100,9 @@ def main() -> int:
     resolved_cfg = load_config(ROOT)
     runtime_root = path_cfg["runtime_root"]
     workspace_root = path_cfg["workspace_root"]
-    backup_root = Path(cfg.get("backup", "backup_root")).resolve()
-    pg_dump = Path(cfg.get("backup", "postgres_dump_executable")).resolve()
-    pg_restore = Path(cfg.get("backup", "postgres_restore_executable")).resolve()
+    backup_root = resolve_runtime_setting_path(cfg.get("backup", "backup_root"))
+    pg_dump = resolve_runtime_setting_path(cfg.get("backup", "postgres_dump_executable"))
+    pg_restore = resolve_runtime_setting_path(cfg.get("backup", "postgres_restore_executable"))
     schema = cfg.get("backup", "postgres_schema", fallback="norm_runtime").strip()
     runtime_excludes = split_dirs(cfg.get("backup_policy", "runtime_exclude_dirs", fallback=""))
     workspace_excludes = split_dirs(cfg.get("backup_policy", "workspace_exclude_dirs", fallback=""))
@@ -152,7 +158,12 @@ def main() -> int:
                 "dump": f"postgres/{dump_path.name}",
                 "pg_restore": str(pg_restore),
             },
-            "environment": dict(cfg.items("environment")),
+            "environment": {
+                **dict(cfg.items("environment")),
+                "venv_path": str(resolve_runtime_setting_path(cfg.get("environment", "venv_path"))),
+                "requirements_file": str(resolve_runtime_setting_path(cfg.get("environment", "requirements_file"))),
+                "secrets_file": str(resolve_runtime_setting_path(cfg.get("environment", "secrets_file"))),
+            },
             "runtime_exclude_dirs": sorted(runtime_excludes),
             "workspace_exclude_dirs": sorted(workspace_excludes),
             "project": dict(cfg.items("project")),

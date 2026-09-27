@@ -10,7 +10,7 @@ from urllib import request
 
 ROOT = Path(__file__).resolve().parents[1]
 EMERGENCY_SNAPSHOT_ROOT = ROOT / "state" / "emergency-stop"
-APP = ROOT / "app"
+APP = ROOT / "core"
 if str(APP) not in sys.path:
     sys.path.insert(0, str(APP))
 
@@ -97,7 +97,7 @@ def _wait_for_redis_flush(timeout: float = 5.0) -> str:
 
 
 def _snapshot() -> Path:
-    # The running norm.exe also writes C:\Norm\SOS.md while handling /stop-all-now.
+    # The running norm.exe also writes the runtime root SOS.md while handling /stop-all-now.
     # Writing the helper snapshot to the same pathname creates a cross-process write race.
     # Keep the emergency helper copy separate; both snapshots can coexist and be compared.
     EMERGENCY_SNAPSHOT_ROOT.mkdir(parents=True, exist_ok=True)

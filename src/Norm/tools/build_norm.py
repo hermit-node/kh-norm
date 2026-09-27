@@ -55,10 +55,10 @@ def main() -> int:
     version_file=out/"version_info.txt"
     version_resource(meta,version_file)
     python=ROOT/".venv"/"Scripts"/"python.exe"
-    cmd=[str(python),"-m","PyInstaller","--noconfirm","--clean","--onefile","--name","norm","--paths",str(ROOT/"app"),"--version-file",str(version_file),"--distpath",str(out/"dist"),"--workpath",str(out/"work"),"--specpath",str(out/"spec"),str(ROOT/"app"/"norm_main.py")]
+    cmd=[str(python),"-m","PyInstaller","--noconfirm","--clean","--onefile","--name","norm","--paths",str(ROOT/"core"),"--version-file",str(version_file),"--distpath",str(out/"dist"),"--workpath",str(out/"work"),"--specpath",str(out/"spec"),str(ROOT/"core"/"norm_main.py")]
     cp=subprocess.run(cmd,cwd=str(ROOT))
     if cp.returncode: return cp.returncode
-    candidate=Path(args.candidate) if args.candidate else ROOT/"app"/f"norm-{meta['version']}-candidate.exe"
+    candidate=Path(args.candidate) if args.candidate else ROOT/"core"/f"norm-{meta['version']}-candidate.exe"
     shutil.copy2(out/"dist"/"norm.exe",candidate)
     digest=hashlib.sha256(candidate.read_bytes()).hexdigest()
     print(f"candidate={candidate}")

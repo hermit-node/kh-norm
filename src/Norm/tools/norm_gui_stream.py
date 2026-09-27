@@ -60,24 +60,35 @@ def _render(console: Console, event: dict) -> None:
             style = "bold red"
         elif " WARNING " in upper or upper.startswith("WARNING"):
             style = "yellow"
+        if getattr(console, "_norm_model_line_open", False):
+            console.print()
+            console._norm_model_line_open = False
         console.print(Text(text, style=style), soft_wrap=True)
         return
 
     if kind == "model_start":
+        console._norm_model_line_open = False
         thinking = "on" if event.get("thinking") else "off"
         console.print()
         console.print(Rule(f"Ollama · {source or 'unknown'} · thinking {thinking}", style="cyan"))
     elif kind == "thinking":
         console.print(Text(text, style="dim cyan"), end="", soft_wrap=True)
+        if text:
+            console._norm_model_line_open = not text.endswith("\n")
     elif kind == "answer":
         console.print(Text(text, style="green"), end="", soft_wrap=True)
+        if text:
+            console._norm_model_line_open = not text.endswith("\n")
     elif kind == "tool_call":
+        console._norm_model_line_open = False
         console.print()
         console.print(Text(f"Tool call: {text}", style="bold yellow"), soft_wrap=True)
     elif kind == "model_end":
+        console._norm_model_line_open = False
         console.print()
         console.print(Rule("Ollama complete", style="dim"))
     elif kind == "model_error":
+        console._norm_model_line_open = False
         console.print()
         console.print(Text(f"Ollama error: {text}", style="bold red"), soft_wrap=True)
 

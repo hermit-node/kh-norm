@@ -1,0 +1,30 @@
+{
+  "package_schema": 1,
+  "name": "Norm",
+  "version": "0.52.0",
+  "package_type": "portable-source",
+  "source_dir": "core",
+  "entrypoint": "core/norm_main.py",
+  "compiled_executable": "core/norm.exe",
+  "settings": "config/settings.ini",
+  "runtime_config": "config/runtime.json",
+  "requirements_lock": "tools/requirements-lock.txt",
+  "build_script": "tools/build_norm.py",
+  "excluded_generated_paths": [
+    ".venv",
+    "staging",
+    "build",
+    "dist",
+    "__pycache__",
+    "*.pyc",
+    "core/norm.exe"
+  ],
+  "dynamic_plugins": {
+    "root": "settings.ini:[plugins].root relative to documents_root",
+    "registry": "settings.ini:[plugins].registry_file relative to plugin root",
+    "hydration": "native-hot-reload",
+    "exposure": "public functions in non-underscore Python files",
+    "private_convention": "prefix files or functions with _",
+    "failure_mode": "last-known-good remains active until a valid refresh loads"
+  }
+}
