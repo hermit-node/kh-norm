@@ -1,4 +1,4 @@
-# Norm 0.52.0 portable source package
+# Norm 0.52.3 portable source package
 
 This archive is the clean source baseline for installing or rebuilding Norm.
 
@@ -33,3 +33,13 @@ The first-party `plugins\backup` capability creates a **sensitive** installer-co
 Package-managed built-in plugin subtrees are `plugins\backup`, `plugins\verbatim_lines`, `plugins\stegosplit_key`, and `plugins\stegosplit_message`. Unrelated user plugins remain persistent across normal installer updates. The two StegoSplit plugins bundle their implementation rather than depending on an editable external checkout.
 
 `/backup` creates portable/source installer media; `/backup full` creates the sensitive private-state format; `/backup-zip` is the legacy full-backup alias. `/condense-memories` is intentionally absent until the complete fail-closed curated-memory housekeeping policy is implemented.
+
+
+## 0.52.3 Windows service mode
+
+`Run-Norm.bat` starts the packaged runtime with `--service`. In that mode Ctrl+C/Ctrl-Break console events are ignored and logged; explicit control endpoints own shutdown. This isolates the minimized service process from accidental control events generated while using or closing companion console windows. Manual `norm.exe` invocation without `--service` keeps the prior KeyboardInterrupt behavior.
+
+## 0.52.2 console/startup behavior
+
+The activity/control API is reachable while PostgreSQL/schema initialization is still running, but advertises `initializing` rather than `ok` until chat/worker activation. GUI and Rich consoles support queue-ordered `/new [name]`, `/thread-list`, and `/thread-resume <name|id>` thread navigation. Legacy command aliases remain accepted but are omitted from current help text.
+Suppressed operator cleanup is two-layer: `/flush-suppressed` removes suppressed task rows plus matching parked GUI delivery records, while preserving only any in-flight retry tombstone required to prevent a late socket failure from requeuing the prompt.

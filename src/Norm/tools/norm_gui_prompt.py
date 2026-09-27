@@ -8,6 +8,7 @@ import time
 import uuid
 from datetime import datetime
 from urllib import request
+from urllib.parse import quote
 
 import psycopg
 from psycopg import sql
@@ -161,6 +162,63 @@ def get_json(url: str, timeout: float = 5) -> dict:
     with request.urlopen(url, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
+def _chat_api_base(ep: dict[str, str]) -> str:
+    chat = str(ep["chat"])
+    suffix = "/api/chat"
+    return chat[:-len(suffix)] if chat.endswith(suffix) else chat.rsplit("/", 1)[0]
+
+
+def list_threads(ep: dict[str, str], project_id: str = PROJECT_ID, limit: int = 100) -> list[dict]:
+    url = f"{_chat_api_base(ep)}/api/threads?project_id={quote(project_id)}&limit={max(1, min(int(limit), 200))}"
+    payload = get_json(url, timeout=10)
+    rows = payload.get("threads")
+    return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+
+def create_named_thread(ep: dict[str, str], title: str, project_id: str = PROJECT_ID) -> dict:
+    return post_json(
+        f"{_chat_api_base(ep)}/api/threads/new",
+        payload={"project_id": project_id, "title": title},
+        timeout=10,
+    )
+
+
+def resolve_thread_selector(rows: list[dict], selector: str) -> tuple[dict | None, list[dict]]:
+    selector = str(selector or "").strip()
+    if not selector:
+        return None, []
+    folded = selector.casefold()
+    exact_id = [row for row in rows if str(row.get("thread_id") or "").casefold() == folded]
+    if len(exact_id) == 1:
+        return exact_id[0], exact_id
+    exact_title = [row for row in rows if str(row.get("title") or "").strip().casefold() == folded]
+    if len(exact_title) == 1:
+        return exact_title[0], exact_title
+    id_prefix = [row for row in rows if str(row.get("thread_id") or "").casefold().startswith(folded)]
+    if len(id_prefix) == 1:
+        return id_prefix[0], id_prefix
+    title_prefix = [row for row in rows if str(row.get("title") or "").strip().casefold().startswith(folded)]
+    if len(title_prefix) == 1:
+        return title_prefix[0], title_prefix
+    candidates = exact_title or id_prefix or title_prefix
+    return None, candidates
+
+
+def print_thread_list(ep: dict[str, str], dispatcher) -> None:
+    rows = list_threads(ep)
+    current = dispatcher.redis.get(dispatcher.thread_key) or ""
+    if not rows:
+        print("No active conversation threads found.")
+        return
+    print("Conversation threads (newest first):")
+    for index, row in enumerate(rows):
+        thread_id = str(row.get("thread_id") or "")
+        title = str(row.get("title") or "[untitled]")
+        marker = "*" if thread_id == current else " "
+        updated = str(row.get("updated_at") or "")
+        print(f" {marker} [{index}] {title}  ({thread_id})  {updated}")
+
+
 def health_ok(url: str) -> bool:
     try:
         return str(get_json(url, timeout=2).get("status", "")) == "ok"
@@ -198,36 +256,30 @@ def ensure_norm_running(ep: dict[str, str]) -> None:
 
 def show_help() -> None:
     print("Norm GUI commands:")
-    print("  /inject-context [--task ID] TEXT  Save context for the current task tree; no new task")
-    print("  /inject-context                  Enter multiline context, ending with ::send")
-    print("  help or /help       List every operator command and its description")
+    print("  help or /help       List current operator commands")
     print("  /status             Show runtime and queue state")
-    print("  /status/busy        Show runtime and queue state")
+    print("  /status/busy        Show authoritative runtime busy state")
     print("  /queue [N]          Show queued GUI prompts with stable snapshot indexes")
-    print("  /queue-full         Show full prompts and status for live + parked/uncertain entries")
-    print("  /resume-queue       Resume after the blocked front item(s); wrap deferred work to the tail")
-    print("  /resume-queue N     Start from snapshot index N, then wrap around to earlier items")
-    print("  /backup             Create a portable installer/source backup (no secrets/private state)")
-    print("  /backup full        Create a sensitive full backup with .ssh, secrets, workspace, plugins, and PostgreSQL")
-    print("  /backup-zip         Legacy alias for /backup full")
-    print("  /new                Start a fresh GUI conversation thread")
-    print("  /multi              Start multiline prompt entry")
-    print("    ::send             Submit the multiline prompt")
-    print("    ::cancel           Cancel the multiline prompt without sending it")
+    print("  /queue-full         Show full prompts and live + parked/uncertain state")
+    print("  /resume-queue [N]   Resume/rotate the GUI queue, optionally from snapshot index N")
+    print("  /new [name]         Start a fresh conversation thread, optionally with a title")
+    print("  /thread-list        List active conversation threads; * marks the current thread")
+    print("  /thread-resume NAME Switch back to a thread by exact title, unique prefix, ID, or ID prefix")
+    print("  /multi              Start multiline prompt entry; finish with ::send or cancel with ::cancel")
+    print("  /inject-context [--task ID] TEXT  Save context for the current task tree without creating a new task")
     print("  /repeat-submission  Requeue the last submitted prompt verbatim")
     print("  /repeat-answer      Redisplay the last completed Norm answer verbatim")
-    print("  /suppress-task      Park the active task, or oldest next queued task, in PostgreSQL")
+    print("  /suppress-task      Park the active task tree, or oldest next queued task tree")
     print("  /resume-task [N]    List suppressed tasks, or resume an index/task-id/prefix directly")
-    print("  /flush-suppressed   Permanently delete all suppressed task records")
-    print("  /exit               Close only this prompt console; Norm keeps running")
+    print("  /flush-suppressed   Permanently delete suppressed tasks and parked delivery records")
+    print("  /backup             Create a portable installer/source backup")
+    print("  /backup full        Create a sensitive full backup with private state and PostgreSQL")
     print("  /stop-all           Finish the current step, then stop Norm/Ollama")
-    print("  /stop-all now       Emergency: snapshot progress to temp\\recovery\\SOS.md, then force-stop Norm and Ollama")
-    print("  /stop               Alias for /stop-all now")
-    print("  /stop all           Legacy alias for /stop-all")
-    print("  /stop all -now      Legacy alias for /stop-all now")
+    print("  /stop-all now       Emergency snapshot to temp\\recovery\\SOS.md, then force-stop Norm/Ollama")
     print("  /shutdown           Request Norm's graceful shutdown and close this console")
     print("  /shutdown now       Immediately request Norm shutdown and close this console")
-    print("  Esc / Ctrl+C        Cancel entry and go back one level; Norm keeps running")
+    print("  /exit               Close only this prompt console; Norm keeps running")
+    print("  Esc / Ctrl+C        Cancel entry and return one level; Norm keeps running")
 
 
 def run_backup(*, full: bool) -> None:
@@ -461,9 +513,49 @@ def main() -> int:
                 else:
                     print("GUI Redis queue is empty; nothing to resume.")
                 continue
-            if lowered == "/new":
+            if lowered == "/new" or lowered.startswith("/new "):
+                name = text[len("/new"):].strip()
+                if name:
+                    try:
+                        created = create_named_thread(ep, name)
+                        thread_id = str(created.get("thread_id") or "")
+                        title = str(created.get("title") or name)
+                        entry_id = dispatcher.enqueue_thread_switch(thread_id, title)
+                        print(f"Created thread '{title}' ({thread_id}) and queued the switch as {entry_id}.")
+                    except Exception as exc:
+                        print(f"Could not create named thread: {exc}")
+                    continue
                 entry_id = dispatcher.enqueue_thread_reset()
-                print(f"Queued conversation-thread reset as {entry_id}.")
+                print(f"Queued a fresh auto-titled conversation thread as {entry_id}.")
+                continue
+            if lowered == "/thread-list":
+                try:
+                    print_thread_list(ep, dispatcher)
+                except Exception as exc:
+                    print(f"Could not list threads: {exc}")
+                continue
+            if lowered == "/thread-resume" or lowered.startswith("/thread-resume "):
+                selector = text[len("/thread-resume"):].strip()
+                if not selector:
+                    print("Usage: /thread-resume <thread name|thread id>")
+                    continue
+                try:
+                    rows = list_threads(ep)
+                    selected, candidates = resolve_thread_selector(rows, selector)
+                    if selected is None:
+                        if candidates:
+                            print("Thread name/id is ambiguous. Matching threads:")
+                            for row in candidates:
+                                print(f"  {row.get('title') or '[untitled]'}  ({row.get('thread_id')})")
+                        else:
+                            print(f"No active thread matched: {selector}")
+                        continue
+                    thread_id = str(selected.get("thread_id") or "")
+                    title = str(selected.get("title") or "[untitled]")
+                    entry_id = dispatcher.enqueue_thread_switch(thread_id, title)
+                    print(f"Queued switch to '{title}' ({thread_id}) as {entry_id}.")
+                except Exception as exc:
+                    print(f"Could not resume thread: {exc}")
                 continue
             if lowered == "/multi":
                 text = read_multiline()
@@ -493,14 +585,13 @@ def main() -> int:
 
                 if result.get("suppressed"):
                     dispatcher.suppress_prompt_retries(retry_guard_ids)
-                if result.get("suppressed"):
                     print(f"Suppressed: {result.get('title') or result.get('task_id')}.")
                 else:
                     print(f"Nothing suppressed: {result.get('reason') or result.get('task_status') or 'no eligible task'}.")
                 continue
             elif lowered == "/flush-suppressed":
                 result = post_json(ep["flush_suppressed"], timeout=10)
-                print(f"Flushed {int(result.get('deleted') or 0)} suppressed task(s).")
+                print(f"Flushed {int(result.get('deleted') or 0)} suppressed task(s) and {int(result.get('delivery_deleted') or 0)} suppressed delivery record(s).")
                 continue
             elif lowered == "/exit":
                 print("Closing GUI prompt console; queued Redis input is preserved.")

@@ -53,7 +53,7 @@ if not errorlevel 1 goto ready
 
 :start_service
 echo Starting Norm service and Ollama...
-start "Norm Service" /min "%NORM_EXE%"
+start "Norm Service" /min "%NORM_EXE%" --service
 for /L %%I in (1,1,90) do (
   curl.exe -fsS "%CHAT_HEALTH%" >NUL 2>&1 && curl.exe -fsS "%ACTIVITY_HEALTH%" >NUL 2>&1 && goto ready
   ping.exe -n 2 127.0.0.1 >NUL

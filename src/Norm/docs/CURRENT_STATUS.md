@@ -1,10 +1,10 @@
 # Norm current status
 
-Updated 2026-09-27 for the clean **0.52.0** portable source line.
+Updated 2026-09-27 for the clean **0.52.3** portable source line.
 
 ## Source/layout
 
-- Version: **0.52.0**.
+- Version: **0.52.3**.
 - Runtime root: `C:\Norm` (relocatable by installer); the installed absolute path is written to `config\settings.ini` `[paths].runtime_root`.
 - Runtime source/executable directory: `core\`; compiled executable target is `core\norm.exe`.
 - Maintained docs: `C:\Norm\docs`.
@@ -24,7 +24,7 @@ Plugins are first-class native tools. Norm rescans the plugin tree before schema
 
 ## Task/memory integrity
 
-0.52.0 includes defensive task-lineage repair around UUID/dependency migration and referentially safe pruning. Surviving children are reparented to a defensible surviving ancestor or detached rather than left with dangling task UUIDs. Memory-thread recovery preserves intact links first, then source-message mapping, then conservative grouping of genuinely orphaned memories. `tools\repair_norm_state.py` provides an offline repair path when an older executable cannot start.
+0.52.2 includes defensive task-lineage repair around UUID/dependency migration and referentially safe pruning. Surviving children are reparented to a defensible surviving ancestor or detached rather than left with dangling task UUIDs. Memory-thread recovery preserves intact links first, then source-message mapping, then conservative grouping of genuinely orphaned memories. `tools\repair_norm_state.py` provides an offline repair path when an older executable cannot start.
 
 ## Temporary workspace cleanup
 
@@ -46,8 +46,21 @@ Source-level syntax/config/package validation is part of release packaging. Actu
 
 ## 0.51.5 compatibility corrections in this source
 
-The 0.52.0 compatibility pass retained the intentional 0.51.5 DB3 durable ingress, quiet-driven busy probing, secret redaction, protocol-v2/UUID lineage, PostgreSQL-before-Redis terminal cleanup, bounded recovery, Tailscale authority, model-buffer/SOS recovery, and task-tree suppression/resume behavior. The prior audit's remaining GUI suppression gap was closed by checking suppressed prompt IDs before primary HTTP dispatch; duplicate suppression helpers/checks were removed.
+The 0.52.x compatibility pass retained the intentional 0.51.5 DB3 durable ingress, quiet-driven busy probing, secret redaction, protocol-v2/UUID lineage, PostgreSQL-before-Redis terminal cleanup, bounded recovery, Tailscale authority, model-buffer/SOS recovery, and task-tree suppression/resume behavior. The prior audit's remaining GUI suppression gap was closed by checking suppressed prompt IDs before primary HTTP dispatch; duplicate suppression helpers/checks were removed.
 
 Queued workers now obtain `runtime.json` through the same resolved `runtime_bootstrap.load_config()` path as the host, so `{runtime_root}` and other placeholders cannot remain literal. Image analyzer Python/script validation is lazy: missing image-specific dependencies fail an image-analysis call, not ordinary text work.
 
 Emergency stop now passes the real runtime root into the SOS writer and supplies its emergency output directory separately. This prevents `state\emergency-stop` from being mistaken for a second Norm runtime root.
+
+
+## 0.52.3 service signal isolation
+
+The Windows launcher now starts `norm.exe --service`. Service mode ignores and logs Ctrl+C/Ctrl-Break console events so a control event originating from a helper/console cannot silently terminate an otherwise healthy runtime. Explicit control endpoints remain authoritative for operator shutdown. A manually-invoked `norm.exe` without `--service` retains normal KeyboardInterrupt handling.
+
+## 0.52.2 startup/control and thread navigation
+
+- Activity/control port `8766` is started before schema migration and reports `status=initializing` with a startup phase until chat/worker activation. `/status/busy` stays busy during this interval so GUI dispatch does not mistake initialization for idle time.
+- Chat/API readiness still requires durable initialization; port `12543` is not exposed as healthy until the runtime is ready.
+- `/new [name]`, `/thread-list`, and `/thread-resume <name|id>` are queue-ordered console controls. Named threads are created durably in PostgreSQL; the switch itself is queued so older queued prompts remain attached to the thread they preceded.
+- `/flush-suppressed` reconciles the durable task ledger with GUI delivery state: suppressed/parked uncertain records are discarded as well as suppressed task rows, while an in-flight prompt keeps a temporary retry-block tombstone until its socket dispatch finishes.
+- Visible help lists only current canonical commands. Legacy aliases remain accepted silently for compatibility.

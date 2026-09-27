@@ -505,3 +505,14 @@ No PostgreSQL memory write, task creation or service start was performed.
 - Bundled the uploaded StegoSplit key-pair prototype and MessageCodec as self-contained private-source plugins. Unicode message embed/extract and deterministic key create/recover round trips passed through both native hydration and the legacy plugin broker. The stale prototype key CLI was intentionally not bundled because its call signature omitted the current required map key.
 - Backup tooling now supports `source` and `full` package modes. `/backup` produces source/docs/built-in-plugin installer media without private state; `/backup full` includes all plugins, `.ssh`, secrets, workspace/recovery/log/state and PostgreSQL while still omitting `.venv`; `/backup-zip` remains the legacy full-backup alias.
 - `/condense-memories` was deliberately not added. The documented intended command is stronger than rebuilding the global snapshot: it must non-recursively traverse curated/current memories, reconcile real duplicates/contradictions/superseded state, preserve reusable lessons, never delete by age alone, and fail safely. Current primitives do not yet implement that full operator action.
+
+
+## 2026-09-27 - 0.52.2 startup visibility and named thread navigation
+- Activity/control now binds before PostgreSQL/schema migration and reports an explicit initializing phase until the runtime is fully ready; chat remains gated until durable initialization succeeds.
+- Busy status is forced busy during startup initialization so the durable GUI dispatcher cannot interpret a migration wait as an idle dispatch window.
+- Added PostgreSQL-backed thread listing/creation API support plus queue-ordered GUI/Rich-console controls `/new [name]`, `/thread-list`, and `/thread-resume <name|id>`. Thread switch/reset controls remain in the same Redis ingress order as prompts.
+
+- Follow-up operator regression: `/flush-suppressed` previously deleted only PostgreSQL `task_runs(status=suppressed)` rows, leaving GUI DB3 uncertain records visible after a `ConnectionResetError`. 0.52.2 now flushes the matching suppressed delivery records/stream entries too, but retains a prompt-ID retry tombstone while an HTTP dispatch with that ID is still active.
+- Installer 1.3.4 changed pip maintenance from an exact pin to `pip>=26.1` with `--upgrade`, allowing newer pip releases without changing Norm's runtime requirements lock.
+- Cleaned visible help to canonical command forms while retaining historical aliases in parsers for compatibility.
+- Installer 1.3.4 skips a pip reinstall when the requested pip is already present and keeps `.ssh`, `.venv`, user plugins, logs, and state protected during normal in-place updates.

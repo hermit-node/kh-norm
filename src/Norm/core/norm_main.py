@@ -7,6 +7,7 @@ import ipaddress
 import json
 import logging
 import os
+import signal
 from pathlib import Path
 import subprocess
 import sys
@@ -32,6 +33,27 @@ from norm_runtime.settings import load_ports, load_project_metadata, load_path_s
 
 MODEL_NAME = "norm"
 MODEL_STORE = r"G:\Ollama\models"
+
+
+def _install_service_signal_guard() -> None:
+    """Keep helper-console Ctrl+C/Ctrl+Break events from terminating the service.
+
+    Run-Norm.bat launches norm.exe with --service. Operator shutdown in service mode
+    is intentionally controlled through the activity/control API (/shutdown or
+    /stop-all), while a directly-invoked norm.exe keeps normal KeyboardInterrupt
+    behavior for debugging.
+    """
+    def _ignore(signum, _frame) -> None:
+        logging.warning(
+            "Ignored console interrupt signal=%s in service mode; use /shutdown or /stop-all",
+            signum,
+        )
+
+    signal.signal(signal.SIGINT, _ignore)
+    sigbreak = getattr(signal, "SIGBREAK", None)
+    if sigbreak is not None:
+        signal.signal(sigbreak, _ignore)
+    logging.info("Service console-control guard active")
 
 
 def norm_root() -> Path:
@@ -189,6 +211,102 @@ def clear_runtime_redis(root: Path) -> dict[str, int]:
     return cleared
 
 
+
+def _flush_console_suppressed_state(config: dict, section: str, *, default_prefix: str, client_factory=redis.Redis) -> dict:
+    """Remove user-facing suppressed delivery records without making them runnable again.
+
+    Task suppression lives in PostgreSQL, but GUI/Rich ingress has an independent
+    Redis delivery layer.  A ConnectionResetError can therefore leave a parked
+    uncertain record after its task tree was suppressed.  Flush both layers so
+    /flush-suppressed means what the operator sees in /queue-full as well as what
+    PostgreSQL reports.  Prompt-ID tombstones are retained while an HTTP dispatch
+    with that ID is still active, preventing a late socket failure from resurrecting
+    the submission after the visible record was flushed.
+    """
+    cfg = dict(config.get(section, {}) or {})
+    client = client_factory(
+        host=str(cfg.get("host", "127.0.0.1")),
+        port=int(cfg.get("port", 6379)),
+        db=int(cfg.get("db", 3)),
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=10,
+        socket_keepalive=True,
+        health_check_interval=30,
+    )
+    stream = str(cfg.get("console_ingress_stream", f"{default_prefix}:ingress"))
+    group = str(cfg.get("console_ingress_group", f"{default_prefix.split(':')[-1]}-dispatchers"))
+    uncertain_key = str(cfg.get("console_uncertain_key", f"{default_prefix}:uncertain"))
+    dispatching_key = str(cfg.get("console_dispatching_key", f"{default_prefix}:dispatching"))
+    suppressed_key = str(cfg.get("console_suppressed_prompt_ids_key", f"{default_prefix}:suppressed-prompt-ids"))
+
+    blocked = {str(value) for value in client.smembers(suppressed_key)}
+    suppressed_records: dict[str, str] = {}
+    for entry_id, raw in client.hgetall(uncertain_key).items():
+        try:
+            record = json.loads(raw)
+        except Exception:
+            continue
+        if not isinstance(record, dict):
+            continue
+        prompt_id = str(record.get("prompt_id") or "").strip()
+        if bool(record.get("suppressed")) or (prompt_id and prompt_id in blocked):
+            suppressed_records[str(entry_id)] = prompt_id
+            if prompt_id:
+                blocked.add(prompt_id)
+
+    if blocked:
+        client.sadd(suppressed_key, *sorted(blocked))
+    if suppressed_records:
+        client.hdel(uncertain_key, *sorted(suppressed_records))
+
+    dispatching = client.hgetall(dispatching_key)
+    active_entry_ids = {str(entry_id) for entry_id in dispatching}
+    active_prompt_ids: set[str] = set()
+    for raw in dispatching.values():
+        try:
+            record = json.loads(raw)
+        except Exception:
+            continue
+        if isinstance(record, dict):
+            prompt_id = str(record.get("prompt_id") or "").strip()
+            if prompt_id:
+                active_prompt_ids.add(prompt_id)
+
+    stream_deleted = 0
+    try:
+        rows = client.xrange(stream, min="-", max="+")
+    except Exception:
+        rows = []
+    for entry_id, fields in rows:
+        entry_id = str(entry_id)
+        prompt_id = str(dict(fields).get("prompt_id") or "").strip()
+        if not prompt_id or prompt_id not in blocked or entry_id in active_entry_ids:
+            continue
+        try:
+            client.xack(stream, group, entry_id)
+        except Exception:
+            pass
+        try:
+            stream_deleted += int(client.xdel(stream, entry_id) or 0)
+        except Exception:
+            pass
+
+    # Keep only tombstones that still guard an in-flight HTTP dispatch.  Everything
+    # else has been durably discarded and should disappear from future queue views.
+    retained = blocked & active_prompt_ids
+    clear_ids = blocked - retained
+    if clear_ids:
+        client.srem(suppressed_key, *sorted(clear_ids))
+
+    return {
+        "uncertain_deleted": len(suppressed_records),
+        "stream_deleted": stream_deleted,
+        "prompt_tombstones_cleared": len(clear_ids),
+        "prompt_tombstones_retained": len(retained),
+    }
+
+
 def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: str, model_name: str) -> None:
     config = load_config(root)
     ports = load_ports(root)
@@ -196,7 +314,12 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
     shutdown_now = Event()
     stop_all_requested = Event()
     stop_all_now = Event()
-    resources: dict[str, object] = {}
+    resources: dict[str, object] = {"startup_phase": "initializing", "startup_ready": False}
+
+    def request_activity_health() -> dict:
+        if bool(resources.get("startup_ready")):
+            return {"status": "ok", "phase": "ready"}
+        return {"status": "initializing", "phase": str(resources.get("startup_phase") or "initializing")}
 
     def request_ollama_shutdown() -> dict:
         OllamaClient.cancel_active()
@@ -219,13 +342,19 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         return {"status": "ok", "shutdown": "now" if immediate else "graceful"}
 
     def request_busy_status() -> dict:
-        return collect_busy_status(
+        payload = collect_busy_status(
             chat_server=resources.get("chat_server"),
             worker=resources.get("worker"),
             prompt_queue=resources.get("prompt_queue"),
             durable=resources.get("durable"),
             ollama_active_calls=OllamaClient.active_count(),
         )
+        if not bool(resources.get("startup_ready")):
+            payload["status"] = "initializing"
+            payload["busy"] = True
+            payload["phase"] = str(resources.get("startup_phase") or "initializing")
+            payload["confidence"] = 1.0
+        return payload
 
     def generate_context_summary(raw_markdown: str, raw_path: str, raw_hash: str, generated_at: str) -> str:
         client = resources.get("context_client")
@@ -291,9 +420,30 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         if worker_obj is None:
             durable = resources.get("durable")
             if durable is None:
-                return {"status": "unavailable", "deleted": 0}
-            return {"status": "ok", "deleted": durable.flush_suppressed()}
-        return worker_obj.flush_suppressed()
+                task_result = {"status": "unavailable", "deleted": 0}
+            else:
+                task_result = {"status": "ok", "deleted": durable.flush_suppressed()}
+        else:
+            task_result = worker_obj.flush_suppressed()
+
+        delivery = {}
+        errors = []
+        for section, prefix in (("console_queue", "norm:gui"), ("rich_console_queue", "norm:rich-console")):
+            try:
+                delivery[section] = _flush_console_suppressed_state(config, section, default_prefix=prefix)
+            except Exception as exc:
+                errors.append(f"{section}: {type(exc).__name__}: {exc}")
+                logging.warning("Could not flush suppressed %s delivery state: %s", section, exc)
+
+        result = dict(task_result)
+        result["delivery"] = delivery
+        result["delivery_deleted"] = sum(
+            int(item.get("uncertain_deleted") or 0) + int(item.get("stream_deleted") or 0)
+            for item in delivery.values()
+        )
+        if errors:
+            result["delivery_errors"] = errors
+        return result
 
     activity_cfg = config.get("activity", {})
     activity_host = resolve_bind_host(str(activity_cfg.get("host", "127.0.0.1")))
@@ -308,20 +458,6 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         activity_sink=activity_hub.publish,
         activity_source="context-snapshot",
     )
-    statuses = healthcheck(root)
-    coordinator, live, durable = build_runtime(root, ensure_schema=True)
-    durable.set_runtime_state("deployed_version", load_project_metadata(root)["version"])
-    prompt_queue = build_prompt_queue(root, durable=durable)
-    resources["prompt_queue"] = prompt_queue
-    resources["durable"] = durable
-    service = build_conversation_service(
-        root,
-        ensure_schema=True,
-        activity_sink=activity_hub.publish,
-        prompt_queue=prompt_queue,
-        coordinator=coordinator,
-        durable=durable,
-    )
     activity_server, _ = start_activity_server(
         activity_hub,
         host=activity_host,
@@ -334,8 +470,28 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         flush_suppressed=request_flush_suppressed,
         busy_status=request_busy_status,
         context_status=request_context_status,
+        health_status=request_activity_health,
     )
     logging.getLogger().addHandler(ActivityLogHandler(activity_hub))
+    logging.info("Activity/control API available during startup: http://%s:%s", activity_host, activity_port)
+    resources["startup_phase"] = "service-healthcheck"
+    statuses = healthcheck(root)
+    resources["startup_phase"] = "postgres-schema-migration"
+    coordinator, live, durable = build_runtime(root, ensure_schema=True)
+    durable.set_runtime_state("deployed_version", load_project_metadata(root)["version"])
+    resources["startup_phase"] = "prompt-queue-initialization"
+    prompt_queue = build_prompt_queue(root, durable=durable)
+    resources["prompt_queue"] = prompt_queue
+    resources["durable"] = durable
+    resources["startup_phase"] = "conversation-store-initialization"
+    service = build_conversation_service(
+        root,
+        ensure_schema=True,
+        activity_sink=activity_hub.publish,
+        prompt_queue=prompt_queue,
+        coordinator=coordinator,
+        durable=durable,
+    )
     http_cfg = config.get("http", {})
     worker_cfg = config.get("worker", {})
     queue_cfg = config.get("prompt_queue", {})
@@ -343,10 +499,17 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
     port = int(ports['norm_http'])
     worker = None
 
+    if shutdown_requested.is_set():
+        logging.info("Shutdown requested during startup; stopping before worker/chat activation")
+        activity_server.shutdown()
+        activity_server.server_close()
+        return
+
     logging.info("Runtime connected: %s", statuses)
     logging.info("Coordinator ready; heartbeat interval=%ss", coordinator.heartbeat_seconds)
     logging.info("Prompt queue ready: %s", prompt_queue.stats())
     logging.info("Activity stream ready: http://%s:%s/events", activity_host, activity_port)
+    resources["startup_phase"] = "worker-initialization"
     if bool(worker_cfg.get("enabled", True)):
         ollama_cfg = config.get("ollama", {})
         ollama_host = str(ollama_cfg.get('host', '127.0.0.1'))
@@ -372,8 +535,11 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         resources["worker"] = worker
         logging.info("Prompt worker started consumer=%s", worker.consumer)
 
+    resources["startup_phase"] = "chat-api-initialization"
     chat_server, chat_thread = start_chat_api(service, host=host, port=port)
     resources["chat_server"] = chat_server
+    resources["startup_phase"] = "ready"
+    resources["startup_ready"] = True
     logging.info("Conversation persistence ready")
     try:
         shutdown_requested.wait()
@@ -442,6 +608,7 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="Verify Ollama, Redis, and PostgreSQL, then exit")
     parser.add_argument("--version", action="store_true", help="Print Norm project/version metadata, then exit")
     parser.add_argument("--console", action="store_true", help="Open the interactive Rich console")
+    parser.add_argument("--service", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     root = norm_root()
     path_cfg = load_path_settings(root)
@@ -462,6 +629,8 @@ def main() -> int:
             queue_config=config.get("rich_console_queue", {}),
         )
     setup_logging(root)
+    if args.service:
+        _install_service_signal_guard()
     logging.info("Norm startup begin")
     logging.info("Resolved paths: app_root=%s runtime_root=%s documents_root=%s workspace_root=%s verbatim_writer=%s", path_cfg["app_root"], path_cfg["runtime_root"], path_cfg["documents_root"], path_cfg["workspace_root"], path_cfg["verbatim_writer"])
     config = load_config(root)

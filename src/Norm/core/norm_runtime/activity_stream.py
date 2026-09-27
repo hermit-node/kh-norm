@@ -85,6 +85,7 @@ class ActivityHTTPServer(ThreadingHTTPServer):
         busy_status: Callable[[], dict] | None = None,
         context_status: Callable[[], dict] | None = None,
         inject_context: Callable | None = None,
+        health_status: Callable[[], dict] | None = None,
     ) -> None:
         super().__init__(address, ActivityRequestHandler)
         self.hub = hub
@@ -97,6 +98,7 @@ class ActivityHTTPServer(ThreadingHTTPServer):
         self.busy_status = busy_status
         self.context_status = context_status
         self.inject_context = inject_context
+        self.health_status = health_status
 
 
 class ActivityRequestHandler(BaseHTTPRequestHandler):
@@ -123,7 +125,14 @@ class ActivityRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/health":
-            self._send_json(200, {"status": "ok"})
+            if self.server.health_status is None:
+                self._send_json(200, {"status": "ok"})
+            else:
+                try:
+                    self._send_json(200, self.server.health_status())
+                except Exception:
+                    logging.exception("Activity health probe failed")
+                    self._send_json(500, {"status": "error", "error": "activity health probe failed"})
             return
         if self.path == "/status/busy":
             if self.server.busy_status is None:
@@ -272,6 +281,7 @@ def start_activity_server(
     busy_status: Callable[[], dict] | None = None,
     context_status: Callable[[], dict] | None = None,
     inject_context: Callable | None = None,
+    health_status: Callable[[], dict] | None = None,
 ):
     try:
         ip = ipaddress.ip_address(host)
@@ -280,7 +290,7 @@ def start_activity_server(
     if not (ip.is_loopback or ip in ipaddress.ip_network("100.64.0.0/10")):
         raise ValueError("service bind host must remain loopback or Tailscale-only")
     server = ActivityHTTPServer(
-        (host, port), hub, cancel_ollama, shutdown_ollama, shutdown_norm, stop_all, suppress_task, flush_suppressed, busy_status, context_status, inject_context
+        (host, port), hub, cancel_ollama, shutdown_ollama, shutdown_norm, stop_all, suppress_task, flush_suppressed, busy_status, context_status, inject_context, health_status
     )
     thread = threading.Thread(
         target=server.serve_forever,
