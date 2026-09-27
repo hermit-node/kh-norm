@@ -185,7 +185,6 @@ def runtime_config() -> dict:
             "Use native read/write tools when the task requests file work and verify observed results before answering.",
         ],
         "console_queue": {"db": 3},
-        "rich_console_queue": {"db": 3},
     }
 
 

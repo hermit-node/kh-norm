@@ -397,7 +397,7 @@ def main() -> int:
         return 1
 
     last_submission, last_answer, thread_id, history_source = load_last_turn()
-    dispatcher = GuiPromptDispatcher(ep, load_console_queue_config(), on_result=completed_turn)
+    dispatcher = GuiPromptDispatcher(ep, load_console_queue_config(), on_result=completed_turn, source_name="ssh-gui")
     dispatcher.seed_history(last_submission, last_answer, thread_id)
     dispatcher.start()
     print("=== Norm Prompt Console ===")

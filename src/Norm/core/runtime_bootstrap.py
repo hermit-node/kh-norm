@@ -56,7 +56,7 @@ def load_config(root: Path) -> dict[str, Any]:
     tools_cfg["image_output_root"] = str(path_cfg["workspace_root"] / "images" / "analysis")
     tools_cfg.setdefault("storage_context", {})["backup_root"] = str(path_cfg["workspace_root"])
     redis_host = resolve_network_host(network, "redis_host")
-    for section in ("redis", "prompt_queue", "deletion_queue", "console_queue", "rich_console_queue"):
+    for section in ("redis", "prompt_queue", "deletion_queue", "console_queue"):
         config.setdefault(section, {})["host"] = redis_host
         config[section]["port"] = ports["redis"]
     config.setdefault("ollama", {})["host"] = resolve_network_host(network, "ollama_host")
@@ -68,10 +68,10 @@ def load_config(root: Path) -> dict[str, Any]:
     pg_db = secrets.get("NORM_POSTGRES_DB", "postgres").strip() or "postgres"
     if not pg_user or not pg_password:
         raise ValueError("NORM_POSTGRES_USER and NORM_POSTGRES_PASSWORD are required")
-    config.setdefault("postgres", {})["conninfo"] = psycopg.conninfo.make_conninfo(host=pg_host, port=ports["postgres"], dbname=pg_db, user=pg_user, password=pg_password)
+    config.setdefault("postgres", {})["conninfo"] = psycopg.conninfo.make_conninfo(host=pg_host, port=ports["postgres"], dbname=pg_db, user=pg_user, password=pg_password, connect_timeout=5)
     config["postgres"]["schema"] = secrets.get("NORM_POSTGRES_SCHEMA", "norm_runtime").strip() or "norm_runtime"
     stocks_db = secrets.get("NORM_STOCKS_DB", "stocks_api").strip() or "stocks_api"
-    config["stocks_postgres"] = {"conninfo": psycopg.conninfo.make_conninfo(host=pg_host, port=ports["postgres"], dbname=stocks_db, user=pg_user, password=pg_password)}
+    config["stocks_postgres"] = {"conninfo": psycopg.conninfo.make_conninfo(host=pg_host, port=ports["postgres"], dbname=stocks_db, user=pg_user, password=pg_password, connect_timeout=5)}
     config["_authority"] = {"host": redis_host, "port": ports["redis"], "required": bool(network.get("require_tailscale", True))}
     return config
 

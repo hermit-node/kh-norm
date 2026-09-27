@@ -604,11 +604,18 @@ class ConversationService:
     def _check_plan(self, original_user_prompt: str, plan: dict) -> tuple[bool, list[str]]:
         prompt = (
             f"PERSISTENT OPERATING PRINCIPLES:\n{self._persistent_instruction_text()}\n\n"
-            "Independently verify this proposed task plan before execution. Reject it if it drops or changes "
-            "a user constraint, combines a multi-part job into an opaque catch-all step, permits unauthorized "
-            "actions, lacks concrete verification, has redundant steps, or, for a MULTI-STEP plan, lacks a final synthesis step that "
-            "can answer the user from prior results. Each action should be small enough for a bounded worker "
-            "slice. Reject a plan that asks one step to generate more than about 8 rich repeated items when the work can be safely batched and merged. Return strict JSON only: {\"accepted\":true|false,\"issues\":[...]}.\n\n"
+            "Independently verify this proposed task plan before execution. Reject only for BLOCKING defects: a dropped or changed "
+            "user constraint; unauthorized or unsafe action; a materially contradictory or impossible design; missing concrete verification "
+            "for a material output; an action too large for a bounded worker slice; or, for a MULTI-STEP plan, no final synthesis step capable "
+            "of answering the user from prior results. Do NOT reject for advisory style, naming, organization, or merely because a step contains "
+            "multiple tightly coupled subcomponents. A multi-part step is an opaque catch-all only when it is vague/generic or hides materially "
+            "distinct phases that cannot reasonably complete in one bounded slice. Explicitly named related modules/functions may share one step "
+            "when their roles are clear and the verification independently covers them. Redundant mechanisms are not a blocking defect unless they "
+            "create a contradiction, ambiguity that prevents implementation, or violate the user's request. Do not invent hypothetical implementation "
+            "defects or boundary-value failures when the plan explicitly inspects/reuses existing code or includes execution tests that will verify the "
+            "relevant invariant; those details belong to execution and step verification unless the plan itself mandates unsafe behavior. Reject a plan "
+            "that asks one step to generate more than about 8 rich repeated items when the work can be safely batched and merged. If only advisory "
+            "concerns remain, accept the plan with an empty issues list. Return strict JSON only: {\"accepted\":true|false,\"issues\":[...]}.\n\n"
             f"AUTHORITATIVE ORIGINAL USER REQUEST:\n{original_user_prompt}\n\n"
             f"PROPOSED PLAN:\n{json.dumps(plan, ensure_ascii=False)}"
         )
@@ -633,9 +640,14 @@ class ConversationService:
         raise RuntimeError(f"plan verification protocol failed: {last_error}")
     def _repair_plan(self, original_user_prompt: str, plan: dict, issues: list[str]) -> dict:
         prompt = (
-            "Repair this execution plan so every verifier issue is resolved while preserving the authoritative "
-            "user request. Return strict JSON only in the same schema. Use exactly ONE action when the request is a single bounded operation; otherwise aim for about 6 actionable steps, with fewer or more when warranted and a hard maximum of 25. Do not create a redundant preparation step before synthesis. For multi-step work, the final step "
-            "must synthesize prior results into the direct user-facing answer. Batch any phase that would otherwise require one response to generate more than about 8 rich repeated items, then merge/verify the batches in a later step.\n\n"
+            "Repair this execution plan so every BLOCKING verifier issue is materially resolved while preserving the authoritative "
+            "user request. Make the smallest changes necessary and do not merely restate the same rejected plan. Return strict JSON only in the same schema. "
+            "Use exactly ONE action when the request is a single bounded operation; otherwise aim for about 6 actionable steps, with fewer or more when warranted "
+            "and a hard maximum of 25. Preserve cohesive bounded steps: do not split an explicit step solely because it contains multiple tightly coupled "
+            "subcomponents with distinct verification criteria. Do not add speculative fixes for implementation details that an inspection or test step is already "
+            "responsible for resolving. Do not create a redundant preparation step before synthesis. For multi-step work, the final step must synthesize prior results "
+            "into the direct user-facing answer. Batch any phase that would otherwise require one response to generate more than about 8 rich repeated items, then "
+            "merge/verify the batches in a later step.\n\n"
             f"AUTHORITATIVE ORIGINAL USER REQUEST:\n{original_user_prompt}\n\n"
             f"CURRENT PLAN:\n{json.dumps(plan, ensure_ascii=False)}\n\n"
             f"VERIFIER ISSUES:\n{json.dumps(issues, ensure_ascii=False)}"

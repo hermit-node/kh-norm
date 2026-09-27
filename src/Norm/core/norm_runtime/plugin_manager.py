@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import functools
 import hashlib
 import importlib.util
 import inspect
@@ -9,6 +10,7 @@ import io
 import json
 import re
 import sys
+import threading
 import types
 import uuid
 from dataclasses import dataclass
@@ -19,6 +21,16 @@ from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 PLUGIN_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://github.com/hermit-node/norm/plugins/v2")
 _MANIFEST_KEYS = {"NAME", "VERSION", "ENTRYPOINT", "CAPABILITIES", "DESCRIPTION"}
 _RESERVED_FILES = {"init.py", "__init__.py"}
+_PLUGIN_GLOBAL_LOCK = threading.RLock()
+
+
+def _synchronized(method):
+    """Serialize plugin hydration and execution around process-global import/stdio state."""
+    @functools.wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapped
 
 
 def _sha256(path: Path) -> str:
@@ -191,6 +203,7 @@ class PluginManager:
         self._loaded: dict[str, _LoadedPlugin] = {}
         self._errors: dict[str, str] = {}
         self._generation = 0
+        self._lock = _PLUGIN_GLOBAL_LOCK
         self.plugin_root.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
@@ -383,6 +396,7 @@ class PluginManager:
             scripts=scripts,
         )
 
+    @_synchronized
     def refresh(self) -> dict[str, Any]:
         self.plugin_root.mkdir(parents=True, exist_ok=True)
         current_folders = {
@@ -414,6 +428,7 @@ class PluginManager:
         self._write_registry(registry)
         return registry
 
+    @_synchronized
     def snapshot(self) -> dict[str, Any]:
         plugins = []
         for folder, loaded in sorted(self._loaded.items()):
@@ -446,6 +461,7 @@ class PluginManager:
         temp.write_text(json.dumps(registry, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
         temp.replace(self.registry_file)
 
+    @_synchronized
     def schemas(self) -> list[dict[str, Any]]:
         self.refresh()
         result: list[dict[str, Any]] = []
@@ -453,14 +469,17 @@ class PluginManager:
             result.extend(loaded.schemas)
         return result
 
+    @_synchronized
     def tool_names(self) -> set[str]:
         self.refresh()
         return {name for loaded in self._loaded.values() for name in loaded.functions}
 
+    @_synchronized
     def has_tool(self, name: str) -> bool:
         self.refresh()
         return any(name in loaded.functions for loaded in self._loaded.values())
 
+    @_synchronized
     def execute(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         self.refresh()
         for loaded in self._loaded.values():
@@ -493,6 +512,7 @@ class PluginManager:
             }
         raise ValueError(f"unknown hydrated plugin tool: {name}")
 
+    @_synchronized
     def instructions(self) -> str:
         registry = self.refresh()
         active = [item for item in registry["plugins"] if item.get("tools")]
