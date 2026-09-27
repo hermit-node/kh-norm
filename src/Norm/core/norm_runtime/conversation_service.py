@@ -1009,10 +1009,20 @@ class ConversationService:
             time.sleep(0.1)
         raise TimeoutError(f"queued task did not finish within {self.wait_timeout_seconds:g} seconds")
 
+    def list_threads(self, project_id: str = "default", limit: int = 50) -> list[dict]:
+        self.store.ensure_project(project_id)
+        return self.store.list_threads(project_id, limit=max(1, min(int(limit), 200)))
+
+    def create_named_thread(self, project_id: str = "default", title: str | None = None) -> dict:
+        self.store.ensure_project(project_id)
+        clean_title = (title or "New thread").strip()[:120] or "New thread"
+        thread_id = self.store.create_thread(project_id, clean_title)
+        return {"thread_id": thread_id, "title": clean_title, "project_id": project_id}
+
     def _route(self, project_id: str, message: str, explicit_thread_id: str | None = None) -> RouteDecision:
         candidates = self.store.list_threads(project_id, limit=self.candidate_threads)
         if explicit_thread_id is not None:
-            if explicit_thread_id not in [c['thread_id'] for c in candidates]:
+            if not self.store.thread_exists(project_id, explicit_thread_id):
                 raise ValueError(f'Unknown thread_id: {explicit_thread_id}')
             return RouteDecision((explicit_thread_id,), explicit_thread_id, 1.0)
         if not candidates:

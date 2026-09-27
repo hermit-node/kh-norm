@@ -1,6 +1,6 @@
 # Norm
 
-**Norm 0.52.0** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
+**Norm 0.52.3** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
 
 ## Canonical layout
 
@@ -37,7 +37,7 @@ The installer treats `.venv`, `.ssh`, `plugins`, `logs`, and `state` as persiste
 
 First-party plugins currently ship under `plugins\backup`, `plugins\verbatim_lines`, `plugins\stegosplit_key`, and `plugins\stegosplit_message`. The two StegoSplit plugins bundle their Python implementation so a `.venv` rebuild no longer depends on an external editable checkout. The message codec is a two-image text carrier rather than encryption; the key-pair plugin is the password/map-key protected 256-bit key prototype.
 
-The backup plugin supports two package types. `/backup` creates a portable installer/source ZIP without private state. `/backup full` creates a sensitive full-state ZIP containing source/runtime, docs, all plugins, `.ssh`, configured secrets, external workspace, selected recovery/log/state, PostgreSQL, and environment rebuild metadata. `.venv` itself is intentionally omitted. `/backup-zip` remains a legacy alias for `/backup full`.
+The backup plugin supports two package types. `/backup` creates a portable installer/source ZIP without private state. `/backup full` creates a sensitive full-state ZIP containing source/runtime, docs, all plugins, `.ssh`, configured secrets, external workspace, selected recovery/log/state, PostgreSQL, and environment rebuild metadata. `.venv` itself is intentionally omitted. Older backup aliases remain accepted for compatibility but are not advertised in help.
 
 ## External workspace and temp policy
 
@@ -47,7 +47,7 @@ Use `%USERPROFILE%\Documents\Norm\workspace` for artifacts or working files that
 
 ## Operator controls
 
-The GUI recognizes `help`/`/help`, `/status`, `/status/busy`, `/queue-full`, `/new`, `/multi`, `/repeat-submission`, `/repeat-answer`, suppression/resume controls, `/backup`, `/backup full` (`/backup-zip` legacy alias), graceful shutdown, and emergency stop aliases. `GET /status/busy` is the authoritative live busy probe; `/status-context` builds a fresh handoff from maintained docs plus live runtime/Redis/PostgreSQL evidence.
+The GUI recognizes `help`/`/help`, `/status`, `/status/busy`, `/queue-full`, `/multi`, `/repeat-submission`, `/repeat-answer`, suppression/resume controls, `/backup`, `/backup full`, `/new [name]`, `/thread-list`, `/thread-resume <name>`, graceful shutdown, and emergency stop controls. Legacy aliases remain accepted but are intentionally omitted from visible help. `GET /status/busy` is the authoritative live busy probe; `/status-context` builds a fresh handoff from maintained docs plus live runtime/Redis/PostgreSQL evidence.
 
 ## Build/update
 
@@ -62,3 +62,13 @@ The GUI recognizes `help`/`/help`, `/status`, `/status/busy`, `/queue-full`, `/n
 - `docs\FUTURE_IMPLEMENTATION_NOTES.md` — active backlog/design notebook only.
 
 Historical notes may mention earlier `app\` and Documents-root layouts. Those are historical records, not current paths.
+
+
+## 0.52.3 service-start stability
+
+`Run-Norm.bat` launches `norm.exe --service`. In service mode, stray Windows Ctrl+C/Ctrl-Break events are logged and ignored instead of being interpreted as operator shutdown. Canonical shutdown remains `/shutdown`, `/shutdown now`, `/stop-all`, or `/stop-all now` through the control API. Directly running `norm.exe` without `--service` retains normal KeyboardInterrupt behavior for debugging.
+
+## 0.52.2 operator/startup refinements
+
+The activity/control API starts before PostgreSQL schema initialization and reports an explicit `initializing` phase until the worker/chat runtime is ready. This keeps `/status/busy` and shutdown/stop controls reachable during bounded schema waits without treating a half-started runtime as healthy. Conversation consoles support queue-ordered thread controls: `/new [name]`, `/thread-list`, and `/thread-resume <name-or-id>`.
+`/flush-suppressed` removes suppressed task records and their parked GUI delivery records together; active socket dispatches retain only the hidden retry-block tombstone needed to prevent a late connection reset from recreating the prompt.

@@ -97,6 +97,16 @@ class ConversationStore:
                 sql.Identifier(self.schema)), (thread_id, project_id, parent_thread_id, title))
         return thread_id
 
+    def thread_exists(self, project_id: str, thread_id: str) -> bool:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                sql.SQL("SELECT 1 FROM {}.threads WHERE project_id=%s AND thread_id=%s AND status='active'").format(
+                    sql.Identifier(self.schema)
+                ),
+                (project_id, thread_id),
+            )
+            return cur.fetchone() is not None
+
     def list_threads(self, project_id: str, limit: int = 12) -> list[dict]:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(sql.SQL("""SELECT t.thread_id,t.title,t.parent_thread_id,t.updated_at,

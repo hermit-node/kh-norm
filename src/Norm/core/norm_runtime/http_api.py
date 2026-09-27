@@ -6,6 +6,7 @@ import logging
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from .conversation_service import ConversationService
 
@@ -52,12 +53,63 @@ class NormRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:
-        if self.path == "/health":
+        parsed = urlparse(self.path)
+        if parsed.path == "/health":
             self._send_json(200, {"status": "ok"})
-        else:
-            self._send_json(404, {"error": "not found"})
+            return
+        if parsed.path == "/api/threads":
+            query = parse_qs(parsed.query)
+            project_id = str((query.get("project_id") or ["default"])[0] or "default")
+            try:
+                limit = int((query.get("limit") or ["50"])[0])
+            except (TypeError, ValueError):
+                limit = 50
+            try:
+                threads = self.server.service.list_threads(project_id=project_id, limit=limit)
+            except Exception:
+                logging.exception("Thread list failed")
+                self._send_json(500, {"error": "thread list failed"})
+                return
+            self._send_json(200, {"project_id": project_id, "threads": threads})
+            return
+        self._send_json(404, {"error": "not found"})
 
     def do_POST(self) -> None:
+        if self.path == "/api/threads/new":
+            length_header = self.headers.get("Content-Length")
+            try:
+                length = int(length_header or 0)
+            except (TypeError, ValueError):
+                length = 0
+            payload: dict = {}
+            if length > 0:
+                if length > MAX_BODY_BYTES:
+                    self._send_json(413, {"error": "request body too large"})
+                    return
+                try:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                except Exception:
+                    self._send_json(400, {"error": "invalid JSON"})
+                    return
+                if not isinstance(payload, dict):
+                    self._send_json(400, {"error": "invalid JSON"})
+                    return
+            project_id = payload.get("project_id", "default")
+            title = payload.get("title")
+            if not isinstance(project_id, str) or not project_id.strip():
+                self._send_json(400, {"error": "project_id must be a non-empty string"})
+                return
+            if title is not None and not isinstance(title, str):
+                self._send_json(400, {"error": "title must be a string or null"})
+                return
+            try:
+                result = self.server.service.create_named_thread(project_id=project_id, title=title)
+            except Exception:
+                logging.exception("Thread creation failed")
+                self._send_json(500, {"error": "thread creation failed"})
+                return
+            self._send_json(200, result)
+            return
         if self.path != "/api/chat":
             self._send_json(404, {"error": "not found"})
             return

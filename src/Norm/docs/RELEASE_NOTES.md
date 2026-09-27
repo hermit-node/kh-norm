@@ -10,6 +10,29 @@ Rules:
 - Detailed incidents, experiments, lessons, and superseded implementation paths remain in `DEVELOPMENT_NOTES.md`.
 - Internal staging labels that were never promoted are not separate releases here.
 
+## 0.52.3 — 2026-09-27 — Windows service signal isolation
+
+- `Run-Norm.bat` now launches `norm.exe --service`.
+- Service mode installs explicit SIGINT/SIGBREAK handlers that log and ignore stray Ctrl+C/Ctrl-Break events instead of treating them as shutdown requests.
+- Canonical operator shutdown remains routed through the activity/control API; direct manual `norm.exe` launches retain normal KeyboardInterrupt behavior.
+- This addresses a live 0.52.2 failure where the runtime reached ready state and then exited on unsolicited `KeyboardInterrupt` without any logged `/shutdown` or `/stop-all` request.
+
+## 0.52.2 — 2026-09-27 — startup controls, thread navigation, help cleanup
+
+- Activity/control API now starts before bounded PostgreSQL/schema initialization and reports an explicit initializing phase until chat/worker readiness.
+- `/status/busy` remains reachable and reports busy during initialization, preventing GUI dispatch from treating schema startup as idle.
+- Added queue-ordered `/new [name]`, `/thread-list`, and `/thread-resume <name|id>` controls to GUI and Rich consoles.
+- Named threads are created in PostgreSQL while the switch itself remains ordered in Redis ingress, preserving the thread assignment of older queued prompts.
+- Visible help now lists canonical commands only; legacy aliases continue to be accepted for backward compatibility.
+- Installer 1.3.4 reuses a compatible `.venv`, allows pip to upgrade to any available release satisfying `pip>=26.1`, retains `.ssh` as protected persistent state, and tightens the GUI layout.
+- `/flush-suppressed` now clears both suppressed PostgreSQL task records and the matching parked/suppressed GUI delivery records; in-flight prompt-ID tombstones remain until the HTTP dispatch is no longer active so a late connection reset cannot resurrect the submission.
+
+## 0.52.1 — 2026-09-27 — bounded startup/schema hardening
+
+- Added PostgreSQL schema-migration lock and statement timeouts plus serialized advisory migration locking.
+- Hardened startup failure logging and retry behavior so stale PostgreSQL transactions cannot wait indefinitely.
+- This release retained the 0.52.0 portable layout, plugin, queue, recovery, and installer contract.
+
 ## 0.52.0 — 2026-09-27 — portable source, native plugins, integrity recovery, reusable installation
 
 - Standardized the source/executable directory on `core\` and removed stale `app\` assumptions from the portable package/build path.

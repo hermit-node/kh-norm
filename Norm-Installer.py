@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import hashlib
 import json
 import os
 import queue
@@ -17,7 +18,9 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable
 
-INSTALLER_VERSION = "1.0.0"
+INSTALLER_VERSION = "1.3.6"
+PIP_MIN_VERSION = "26.1"
+PIP_SPEC = f"pip>={PIP_MIN_VERSION}"
 SUPPORTED_PACKAGE_SCHEMA = {1}
 
 
@@ -53,6 +56,7 @@ class InstallOptions:
     compile_exe: bool = True
     install_torch: bool = True
     replace_existing: bool = False
+    recreate_venv: bool = False
 
 
 @dataclass
@@ -96,12 +100,40 @@ def _safe_zip_member(member: str) -> PurePosixPath:
     return p
 
 
+def _verify_companion_sha256(source_zip: Path) -> None:
+    """Verify <archive>.sha256 when it is present beside the selected package."""
+    companion = source_zip.with_name(source_zip.name + ".sha256")
+    if not companion.is_file():
+        return
+    try:
+        first_line = companion.read_text(encoding="utf-8-sig").splitlines()[0].strip()
+        expected = first_line.split()[0].lower()
+    except Exception as exc:
+        raise InstallerError(f"Could not read companion SHA-256 file {companion.name}: {exc}") from exc
+    if not re.fullmatch(r"[0-9a-f]{64}", expected):
+        raise InstallerError(
+            f"Invalid SHA-256 value in {companion.name}. "
+            "Rebuild the source ZIP and regenerate its companion checksum."
+        )
+    digest = hashlib.sha256()
+    with source_zip.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    actual = digest.hexdigest()
+    if actual != expected:
+        raise InstallerError(
+            f"SHA-256 mismatch for {source_zip.name}. Expected {expected}, got {actual}. "
+            "If you intentionally rebuilt this source ZIP, regenerate its .sha256 companion first."
+        )
+
+
 def inspect_package(source_zip: Path) -> PackageInfo:
     source_zip = Path(source_zip).expanduser().resolve()
     if not source_zip.is_file():
         raise InstallerError(f"Source ZIP does not exist: {source_zip}")
     if source_zip.suffix.lower() != ".zip":
         raise InstallerError("Source package must be a .zip file")
+    _verify_companion_sha256(source_zip)
 
     try:
         with zipfile.ZipFile(source_zip, "r") as zf:
@@ -130,10 +162,13 @@ def inspect_package(source_zip: Path) -> PackageInfo:
         raise InstallerError(
             f"Unsupported package schema {schema!r}; installer supports {sorted(SUPPORTED_PACKAGE_SCHEMA)}"
         )
-    if manifest.get("package_type") != "portable-source":
+    package_type = str(manifest.get("package_type") or "")
+    if package_type not in {"portable-source", "full-backup"}:
         raise InstallerError(
-            f"Unsupported package_type {manifest.get('package_type')!r}; expected 'portable-source'"
+            f"Unsupported package_type {package_type!r}; expected 'portable-source' or 'full-backup'"
         )
+    if package_type == "full-backup" and not str(manifest.get("backup_payload") or "").strip():
+        raise InstallerError("full-backup package is missing backup_payload")
 
     required_keys = (
         "name",
@@ -245,6 +280,51 @@ def _read_settings(package_root: Path, manifest: dict) -> configparser.ConfigPar
     return parser
 
 
+def _set_ini_value(path: Path, section: str, key: str, value: str) -> None:
+    """Set one INI value without reformatting the rest of the human-edited file."""
+    text = path.read_text(encoding="utf-8-sig")
+    lines = text.splitlines(keepends=True)
+    section_l = section.strip().lower()
+    key_l = key.strip().lower()
+    in_section = False
+    section_found = False
+    key_done = False
+    insert_at = len(lines)
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            name = stripped[1:-1].strip().lower()
+            if in_section and not key_done:
+                insert_at = i
+                break
+            in_section = name == section_l
+            if in_section:
+                section_found = True
+            continue
+        if in_section and "=" in line and not stripped.startswith((";", "#")):
+            lhs = line.split("=", 1)[0].strip().lower()
+            if lhs == key_l:
+                newline = "\r\n" if line.endswith("\r\n") else "\n"
+                lines[i] = f"{key} = {value}{newline}"
+                key_done = True
+                break
+    if not section_found:
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            lines[-1] += "\n"
+        lines.extend([f"\n[{section}]\n", f"{key} = {value}\n"])
+    elif not key_done:
+        lines.insert(insert_at, f"{key} = {value}\n")
+    path.write_text("".join(lines), encoding="utf-8", newline="")
+
+
+def _bind_installed_runtime_root(target: Path, manifest: dict, log: LogFn) -> None:
+    settings_path = target / str(manifest["settings"])
+    if not settings_path.is_file():
+        raise InstallerError(f"Installed settings file is missing: {settings_path}")
+    _set_ini_value(settings_path, "paths", "runtime_root", str(target))
+    log(f"Bound settings paths.runtime_root to installed location: {target}")
+
+
 def _expected_python(settings: configparser.ConfigParser) -> tuple[int, int] | None:
     raw = settings.get("environment", "python_version", fallback="").strip()
     match = re.match(r"^(\d+)\.(\d+)", raw)
@@ -272,38 +352,176 @@ def _expand_windows_vars(value: str) -> str:
     return expanded
 
 
-def _clear_target(target: Path) -> None:
-    if not target.exists():
-        target.mkdir(parents=True)
-        return
-    for child in target.iterdir():
-        if child.is_dir() and not child.is_symlink():
-            shutil.rmtree(child)
-        else:
-            child.unlink()
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
-def _copy_tree_contents(source_root: Path, target: Path) -> None:
+def _norm_rel(path: Path) -> str:
+    return path.as_posix().strip("/")
+
+
+def _is_protected(rel: str, protected: set[str]) -> bool:
+    rel_l = rel.lower() if os.name == "nt" else rel
+    for item in protected:
+        item_l = item.lower() if os.name == "nt" else item
+        if rel_l == item_l or rel_l.startswith(item_l + "/"):
+            return True
+    return False
+
+
+def _has_protected_descendant(rel: str, protected: set[str]) -> bool:
+    rel_l = rel.lower() if os.name == "nt" else rel
+    prefix = rel_l + "/" if rel_l else ""
+    for item in protected:
+        item_l = item.lower() if os.name == "nt" else item
+        if item_l.startswith(prefix):
+            return True
+    return False
+
+
+def _sync_tree_contents(
+    source_root: Path,
+    target: Path,
+    *,
+    protected: set[str],
+    log: LogFn,
+    ignore_source_roots: set[str] | None = None,
+) -> dict[str, int]:
+    """Mirror package-owned content while preserving generated/persistent paths."""
     target.mkdir(parents=True, exist_ok=True)
-    for child in source_root.iterdir():
-        dest = target / child.name
-        if child.is_dir():
-            shutil.copytree(child, dest, dirs_exist_ok=True)
+
+    ignored = {_norm_rel(Path(x)) for x in (ignore_source_roots or set())}
+    def ignored_rel(rel: str) -> bool:
+        return any(rel == item or rel.startswith(item + "/") for item in ignored)
+
+    source_files: set[str] = set()
+    source_dirs: set[str] = set()
+    for item in source_root.rglob("*"):
+        rel = _norm_rel(item.relative_to(source_root))
+        if ignored_rel(rel):
+            continue
+        if item.is_dir():
+            source_dirs.add(rel)
         else:
-            shutil.copy2(child, dest)
+            source_files.add(rel)
+
+    stats = {"added": 0, "updated": 0, "unchanged": 0, "removed": 0, "preserved": 0}
+
+    # Remove target content that is no longer present in the source package.
+    # Walk bottom-up so now-empty directories can be removed safely.
+    if target.exists():
+        all_target = sorted(target.rglob("*"), key=lambda x: len(x.parts), reverse=True)
+        for item in all_target:
+            rel = _norm_rel(item.relative_to(target))
+            if _is_protected(rel, protected):
+                stats["preserved"] += 1
+                continue
+            if item.is_dir() and not item.is_symlink():
+                if rel in source_dirs or _has_protected_descendant(rel, protected):
+                    continue
+                try:
+                    item.rmdir()
+                    stats["removed"] += 1
+                    log(f"REMOVE dir  {rel}")
+                except OSError:
+                    # Non-empty means it contains a source/protected descendant or
+                    # an item that will be handled separately.
+                    pass
+            else:
+                if rel not in source_files:
+                    item.unlink(missing_ok=True)
+                    stats["removed"] += 1
+                    log(f"REMOVE file {rel}")
+
+    # Create directories first, resolving file/dir shape changes.
+    for rel in sorted(source_dirs, key=lambda x: len(PurePosixPath(x).parts)):
+        dest = target.joinpath(*PurePosixPath(rel).parts)
+        if dest.exists() and not dest.is_dir():
+            if _is_protected(rel, protected):
+                raise InstallerError(f"Protected path conflicts with package directory: {rel}")
+            dest.unlink()
+            stats["removed"] += 1
+        dest.mkdir(parents=True, exist_ok=True)
+
+    # Copy only new or changed files.
+    for rel in sorted(source_files):
+        src = source_root.joinpath(*PurePosixPath(rel).parts)
+        dest = target.joinpath(*PurePosixPath(rel).parts)
+        if dest.exists() and dest.is_dir():
+            if _is_protected(rel, protected):
+                raise InstallerError(f"Protected path conflicts with package file: {rel}")
+            shutil.rmtree(dest)
+            stats["removed"] += 1
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.is_file():
+            same = src.stat().st_size == dest.stat().st_size and _sha256(src) == _sha256(dest)
+            if same:
+                stats["unchanged"] += 1
+                continue
+            shutil.copy2(src, dest)
+            stats["updated"] += 1
+            log(f"UPDATE      {rel}")
+        else:
+            shutil.copy2(src, dest)
+            stats["added"] += 1
+            log(f"ADD         {rel}")
+
+    return stats
+
+
+def _installed_version(python_exe: Path, distribution: str, log: LogFn) -> str | None:
+    code = (
+        "import importlib.metadata as m; "
+        f"print(m.version({distribution!r}))"
+    )
+    try:
+        cp = subprocess.run(
+            [str(python_exe), "-c", code],
+            cwd=None,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+        )
+    except Exception:
+        return None
+    if cp.returncode != 0:
+        return None
+    value = (cp.stdout or "").strip().splitlines()
+    return value[-1].strip() if value else None
+
+
+def _external_path(settings: configparser.ConfigParser, key: str, default: str) -> Path:
+    raw_docs = settings.get("paths", "documents_root", fallback="").strip()
+    docs = Path(_expand_windows_vars(raw_docs)).expanduser() if raw_docs else (Path.home() / "Documents" / "Norm")
+    raw = settings.get("paths", key, fallback=default).strip() or default
+    value = Path(_expand_windows_vars(raw)).expanduser()
+    return value if value.is_absolute() else docs / value
 
 
 def _post_install_workspace(settings: configparser.ConfigParser, target: Path, warnings: list[str], log: LogFn) -> None:
     raw_docs = settings.get("paths", "documents_root", fallback="").strip()
-    if raw_docs:
-        docs = Path(_expand_windows_vars(raw_docs)).expanduser()
-        try:
-            docs.mkdir(parents=True, exist_ok=True)
-            plugin_rel = settings.get("plugins", "root", fallback="plugins").strip() or "plugins"
-            (docs / plugin_rel).mkdir(parents=True, exist_ok=True)
-            log(f"Persistent workspace: {docs}")
-        except Exception as exc:
-            warnings.append(f"Could not create persistent workspace {docs}: {exc}")
+    docs = Path(_expand_windows_vars(raw_docs)).expanduser() if raw_docs else (Path.home() / "Documents" / "Norm")
+    try:
+        docs.mkdir(parents=True, exist_ok=True)
+        workspace = _external_path(settings, "workspace_root", "workspace")
+        temp_root = _external_path(settings, "temp_root", "temp")
+        workspace.mkdir(parents=True, exist_ok=True)
+        for child in (temp_root, temp_root / "tasks", temp_root / "scratch", temp_root / "recovery"):
+            child.mkdir(parents=True, exist_ok=True)
+        (target / "plugins").mkdir(parents=True, exist_ok=True)
+        (target / ".ssh").mkdir(parents=True, exist_ok=True)
+        log(f"Documents root: {docs}")
+        log(f"Durable workspace: {workspace}")
+        log(f"Disposable temp: {temp_root}")
+    except Exception as exc:
+        warnings.append(f"Could not create Norm workspace/temp directories: {exc}")
 
     raw_secret = settings.get("environment", "secrets_file", fallback="").strip()
     if raw_secret:
@@ -313,6 +531,119 @@ def _post_install_workspace(settings: configparser.ConfigParser, target: Path, w
 
     (target / "logs").mkdir(exist_ok=True)
     (target / "state").mkdir(exist_ok=True)
+
+
+def _find_pg_restore(settings: configparser.ConfigParser, preferred: str) -> Path | None:
+    candidates: list[Path] = []
+    if preferred:
+        candidates.append(Path(_expand_windows_vars(preferred)).expanduser())
+    raw = settings.get("backup", "postgres_restore_executable", fallback="").strip()
+    if raw:
+        candidates.append(Path(_expand_windows_vars(raw)).expanduser())
+    if os.name == "nt":
+        base = Path(r"C:\Program Files\PostgreSQL")
+        if base.is_dir():
+            candidates.extend(sorted(base.glob(r"*\bin\pg_restore.exe"), reverse=True))
+    for path in candidates:
+        if path.is_file():
+            return path.resolve()
+    return None
+
+
+def _ensure_norm_not_running() -> None:
+    if os.name != "nt":
+        return
+    try:
+        cp = subprocess.run(["tasklist", "/FI", "IMAGENAME eq norm.exe"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if "norm.exe" in (cp.stdout or "").lower():
+            raise InstallerError("norm.exe is running. Stop Norm before restoring a full backup.")
+    except InstallerError:
+        raise
+    except Exception:
+        pass
+
+
+def _restore_full_backup_state(package_root: Path, target: Path, settings: configparser.ConfigParser, manifest: dict, *, log: LogFn) -> None:
+    payload_rel = str(manifest.get("backup_payload") or "").strip()
+    payload_path = package_root / payload_rel
+    if not payload_path.is_file():
+        raise InstallerError(f"Full-backup payload manifest is missing: {payload_rel}")
+    backup = json.loads(payload_path.read_text(encoding="utf-8-sig"))
+    if not backup.get("sensitive"):
+        log("WARNING: full-backup manifest did not mark itself sensitive")
+    restore = dict(backup.get("restore") or {})
+    state_root = package_root / "backup-state"
+    _ensure_norm_not_running()
+
+    # Restore persistent runtime trees exactly as captured.
+    for key, dest in (
+        ("plugins_member", target / "plugins"),
+        ("ssh_member", target / ".ssh"),
+        ("logs_member", target / "logs"),
+        ("state_member", target / "state"),
+    ):
+        rel = str(restore.get(key) or "").strip()
+        if not rel:
+            continue
+        src = package_root / rel
+        if src.is_dir():
+            log(f"Restoring {dest.name} from backup payload")
+            _sync_tree_contents(src, dest, protected=set(), log=log)
+
+    workspace_rel = str(restore.get("workspace_member") or "").strip()
+    if workspace_rel:
+        src = package_root / workspace_rel
+        if src.is_dir():
+            workspace = _external_path(settings, "workspace_root", "workspace")
+            log(f"Restoring workspace: {workspace}")
+            _sync_tree_contents(src, workspace, protected=set(), log=log)
+
+    recovery_rel = str(restore.get("temp_recovery_member") or "").strip()
+    if recovery_rel:
+        src = package_root / recovery_rel
+        if src.is_dir():
+            recovery = _external_path(settings, "temp_root", "temp") / "recovery"
+            log(f"Restoring recovery material: {recovery}")
+            _sync_tree_contents(src, recovery, protected=set(), log=log)
+
+    secret_rel = str(restore.get("secrets_member") or "").strip()
+    if secret_rel:
+        src = package_root / secret_rel
+        raw_secret = settings.get("environment", "secrets_file", fallback="").strip()
+        if not raw_secret:
+            raise InstallerError("Backup contains secrets but installed settings do not define environment.secrets_file")
+        dest = Path(_expand_windows_vars(raw_secret)).expanduser()
+        if not src.is_file():
+            raise InstallerError(f"Backup secrets payload is missing: {secret_rel}")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+        log(f"Restored configured secrets file: {dest}")
+
+    dump_rel = str(restore.get("postgres_member") or "").strip()
+    pg_conn = dict(restore.get("postgres_connection") or {})
+    if dump_rel and pg_conn:
+        dump = package_root / dump_rel
+        if not dump.is_file():
+            raise InstallerError(f"PostgreSQL backup payload is missing: {dump_rel}")
+        pg_restore = _find_pg_restore(settings, str(restore.get("pg_restore") or ""))
+        if pg_restore is None:
+            raise InstallerError("pg_restore.exe could not be found for full-backup restore")
+        host = str(pg_conn.get("host") or "").strip()
+        port = str(pg_conn.get("port") or "").strip()
+        dbname = str(pg_conn.get("dbname") or "").strip()
+        user = str(pg_conn.get("user") or "").strip()
+        password = str(pg_conn.get("password") or "")
+        cmd = [str(pg_restore), "--clean", "--if-exists", "--no-owner"]
+        if host: cmd.extend(["--host", host])
+        if port: cmd.extend(["--port", port])
+        if user: cmd.extend(["--username", user])
+        if dbname: cmd.extend(["--dbname", dbname])
+        cmd.append(str(dump))
+        env = os.environ.copy()
+        if password:
+            env["PGPASSWORD"] = password
+        log(f"Restoring PostgreSQL schema {restore.get('postgres_schema') or 'norm_runtime'}")
+        _run(cmd, cwd=target, log=log, env=env)
 
 
 def install_norm(
@@ -354,14 +685,54 @@ def install_norm(
                 f"but the selected interpreter is {actual_py[0]}.{actual_py[1]}.{actual_py[2]}"
             )
 
-        if target.exists() and any(target.iterdir()) and not options.replace_existing:
+        target_nonempty = target.exists() and any(target.iterdir())
+        if target_nonempty and not options.replace_existing:
             raise InstallerError(
-                f"Target directory is not empty: {target}. Enable clean replacement to continue."
+                f"Target directory is not empty: {target}. Enable in-place update to continue."
             )
 
-        progress(20, "Writing clean source tree")
-        _clear_target(target)
-        _copy_tree_contents(extracted_root, target)
+        # The new package defines the environment location and compiled output.
+        # These generated/persistent paths survive the source mirror.
+        venv_rel = settings.get("environment", "venv_path", fallback=".venv").strip() or ".venv"
+        compiled_rel = str(staged_info.manifest.get("compiled_executable", "core/norm.exe"))
+        protected = {
+            _norm_rel(Path(venv_rel)),
+            _norm_rel(Path(compiled_rel)),
+            "logs",
+            "state",
+            "plugins",
+            ".ssh",
+            "backup",
+            "backups",
+            ".env",
+            ".norm-install-state.json",
+        }
+
+        progress(20, "Synchronizing Norm files")
+        ignore_source = {"backup-state", "SENSITIVE_BACKUP.txt"} if staged_info.manifest.get("package_type") == "full-backup" else set()
+        stats = _sync_tree_contents(extracted_root, target, protected=protected, log=log, ignore_source_roots=ignore_source)
+        for subtree in staged_info.manifest.get("managed_persistent_subtrees", []) or []:
+            rel = _norm_rel(Path(str(subtree)))
+            src_subtree = extracted_root.joinpath(*PurePosixPath(rel).parts)
+            if src_subtree.is_dir():
+                dst_subtree = target.joinpath(*PurePosixPath(rel).parts)
+                substats = _sync_tree_contents(src_subtree, dst_subtree, protected=set(), log=log)
+                log(f"Managed persistent subtree {rel}: {substats}")
+        log(
+            "Sync summary: "
+            f"{stats['added']} added, {stats['updated']} updated, "
+            f"{stats['unchanged']} unchanged, {stats['removed']} removed"
+        )
+        _bind_installed_runtime_root(target, staged_info.manifest, log)
+        if staged_info.manifest.get("package_type") == "full-backup":
+            progress(23, "Restoring full-backup private state")
+            installed_settings = _read_settings(target, staged_info.manifest)
+            _restore_full_backup_state(extracted_root, target, installed_settings, staged_info.manifest, log=log)
+            normalized_manifest = dict(staged_info.manifest)
+            normalized_manifest["package_type"] = "portable-source"
+            normalized_manifest.pop("backup_payload", None)
+            (target / "package-manifest.json").write_text(json.dumps(normalized_manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+            log("Normalized installed package manifest back to portable-source after full-backup restore.")
 
     # From here onward the install operates only on the target copy.
     manifest_path = target / "package-manifest.json"
@@ -370,22 +741,58 @@ def install_norm(
 
     venv_rel = settings.get("environment", "venv_path", fallback=".venv").strip() or ".venv"
     venv_dir = target / venv_rel
-    progress(28, "Creating virtual environment")
-    _run([str(python_exe), "-m", "venv", str(venv_dir)], cwd=target, log=log)
-
     venv_python = venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+    if options.recreate_venv and venv_dir.exists():
+        progress(25, "Recreating virtual environment")
+        log(f"Removing existing virtual environment: {venv_dir}")
+        shutil.rmtree(venv_dir)
+
+    if venv_python.is_file():
+        progress(28, "Reusing virtual environment")
+        venv_ver = _python_version(venv_python, log)
+        expected_py = _expected_python(settings)
+        if expected_py and venv_ver[:2] != expected_py:
+            raise InstallerError(
+                f"Existing venv uses Python {venv_ver[0]}.{venv_ver[1]}.{venv_ver[2]}, "
+                f"but this package expects Python {expected_py[0]}.{expected_py[1]}.x. "
+                "Enable 'Recreate .venv' for this update."
+            )
+        log(f"Reusing existing virtual environment: {venv_dir}")
+    else:
+        progress(28, "Creating virtual environment")
+        _run([str(python_exe), "-m", "venv", str(venv_dir)], cwd=target, log=log)
+
     if not venv_python.is_file():
-        raise InstallerError(f"Virtual environment did not create Python at {venv_python}")
+        raise InstallerError(f"Virtual environment does not contain Python at {venv_python}")
+
+    # pip is installer infrastructure, not a Norm runtime dependency. Keep it
+    # out of requirements-lock.txt so changing pip never mutates the portable
+    # source package or invalidates the source ZIP's companion SHA-256.
+    installed_pip = _installed_version(venv_python, "pip", log)
+    progress(32, f"Updating pip ({PIP_SPEC})")
+    if installed_pip:
+        log(f"Current pip version: {installed_pip}; allowing any newer release satisfying {PIP_SPEC}.")
+    _run(
+        [str(venv_python), "-m", "pip", "install", "--upgrade", PIP_SPEC],
+        cwd=target,
+        log=log,
+    )
 
     if options.install_torch:
         torch_cfg = _configured_torch(settings)
         if torch_cfg:
             version, index_url = torch_cfg
-            progress(38, f"Installing PyTorch {version}")
-            cmd = [str(venv_python), "-m", "pip", "install", f"torch=={version}"]
-            if index_url:
-                cmd.extend(["--index-url", index_url])
-            _run(cmd, cwd=target, log=log)
+            installed_torch = _installed_version(venv_python, "torch", log)
+            if installed_torch == version:
+                progress(38, f"PyTorch {version} already installed")
+                log(f"PyTorch {version} already satisfies the package; skipping reinstall.")
+            else:
+                progress(38, f"Installing PyTorch {version}")
+                cmd = [str(venv_python), "-m", "pip", "install", f"torch=={version}"]
+                if index_url:
+                    cmd.extend(["--index-url", index_url])
+                _run(cmd, cwd=target, log=log)
 
     progress(52, "Installing pinned dependencies")
     requirements = target / str(manifest["requirements_lock"])
@@ -605,8 +1012,8 @@ def launch_gui(initial_source: Path | None = None) -> int:
 
     root = tk.Tk()
     root.title(f"Norm Installer {INSTALLER_VERSION}")
-    root.geometry("820x620")
-    root.minsize(720, 540)
+    root.geometry("800x570")
+    root.minsize(720, 520)
 
     source_default = initial_source or find_default_source()
     python_default = choose_default_python(source_default)
@@ -617,13 +1024,14 @@ def launch_gui(initial_source: Path | None = None) -> int:
     package_var = tk.StringVar(value="Select a Norm source ZIP")
     compile_var = tk.BooleanVar(value=True)
     torch_var = tk.BooleanVar(value=True)
+    recreate_venv_var = tk.BooleanVar(value=False)
     progress_var = tk.DoubleVar(value=0)
     status_var = tk.StringVar(value="Ready")
 
-    outer = ttk.Frame(root, padding=14)
+    outer = ttk.Frame(root, padding=(14, 12))
     outer.pack(fill="both", expand=True)
     outer.columnconfigure(1, weight=1)
-    outer.rowconfigure(8, weight=1)
+    outer.rowconfigure(9, weight=1)
 
     ttk.Label(outer, text="Norm Installer", font=("Segoe UI", 16, "bold")).grid(
         row=0, column=0, columnspan=3, sticky="w", pady=(0, 4)
@@ -638,7 +1046,7 @@ def launch_gui(initial_source: Path | None = None) -> int:
 
     def browse_source() -> None:
         path = filedialog.askopenfilename(
-            title="Select Norm portable source package",
+            title="Select Norm source or full-backup package",
             filetypes=[("ZIP packages", "*.zip"), ("All files", "*.*")],
         )
         if path:
@@ -674,21 +1082,25 @@ def launch_gui(initial_source: Path | None = None) -> int:
 
     ttk.Button(outer, text="Browse…", command=browse_python).grid(row=4, column=2, padx=(8, 0), pady=4)
 
-    options_frame = ttk.Frame(outer)
-    options_frame.grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 8))
-    ttk.Checkbutton(options_frame, text="Compile norm.exe", variable=compile_var).pack(side="left", padx=(0, 18))
-    ttk.Checkbutton(options_frame, text="Install configured PyTorch/CUDA", variable=torch_var).pack(side="left")
+    options_frame = ttk.LabelFrame(outer, text="Install behavior", padding=(10, 6))
+    options_frame.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(8, 6))
+    ttk.Checkbutton(options_frame, text="Compile norm.exe", variable=compile_var).grid(row=0, column=0, sticky="w", padx=(0, 18))
+    ttk.Checkbutton(options_frame, text="Ensure configured PyTorch/CUDA", variable=torch_var).grid(row=0, column=1, sticky="w", padx=(0, 18))
+    ttk.Checkbutton(options_frame, text="Recreate .venv", variable=recreate_venv_var).grid(row=0, column=2, sticky="w")
+    ttk.Label(options_frame, text="Existing compatible .venv, .ssh, user plugins, logs, and state are preserved during normal updates.").grid(
+        row=1, column=0, columnspan=3, sticky="w", pady=(5, 0)
+    )
 
     progress = ttk.Progressbar(outer, maximum=100, variable=progress_var)
-    progress.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(4, 2))
-    ttk.Label(outer, textvariable=status_var).grid(row=7, column=0, columnspan=3, sticky="w", pady=(0, 6))
+    progress.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(6, 2))
+    ttk.Label(outer, textvariable=status_var).grid(row=8, column=0, columnspan=3, sticky="w", pady=(0, 5))
 
-    log_box = ScrolledText(outer, height=18, wrap="word", font=("Consolas", 9))
-    log_box.grid(row=8, column=0, columnspan=3, sticky="nsew")
+    log_box = ScrolledText(outer, height=14, wrap="word", font=("Consolas", 9))
+    log_box.grid(row=9, column=0, columnspan=3, sticky="nsew")
     log_box.configure(state="disabled")
 
     actions = ttk.Frame(outer)
-    actions.grid(row=9, column=0, columnspan=3, sticky="e", pady=(12, 0))
+    actions.grid(row=10, column=0, columnspan=3, sticky="e", pady=(10, 0))
     validate_btn = ttk.Button(actions, text="Validate Package")
     validate_btn.pack(side="left", padx=(0, 8))
     install_btn = ttk.Button(actions, text="Install Norm")
@@ -710,7 +1122,7 @@ def launch_gui(initial_source: Path | None = None) -> int:
             return False
         try:
             info = inspect_package(Path(raw))
-            package_var.set(f"{info.label}  •  package schema {info.manifest.get('package_schema')}")
+            package_var.set(f"{info.label}  •  {info.manifest.get('package_type')}  •  package schema {info.manifest.get('package_schema')}")
             return True
         except Exception as exc:
             package_var.set(f"Invalid source package: {exc}")
@@ -719,7 +1131,7 @@ def launch_gui(initial_source: Path | None = None) -> int:
     def validate_clicked() -> None:
         try:
             info = inspect_package(Path(source_var.get().strip()))
-            package_var.set(f"{info.label}  •  package schema {info.manifest.get('package_schema')}")
+            package_var.set(f"{info.label}  •  {info.manifest.get('package_type')}  •  package schema {info.manifest.get('package_schema')}")
             messagebox.showinfo(
                 "Valid Norm package",
                 f"{info.label}\n\nEntrypoint: {info.manifest['entrypoint']}\n"
@@ -773,12 +1185,13 @@ def launch_gui(initial_source: Path | None = None) -> int:
                 return
             if nonempty:
                 replace = messagebox.askyesno(
-                    "Replace existing target?",
+                    "Update existing Norm installation?",
                     f"{target} is not empty.\n\n"
-                    "A clean install will remove its current contents before installing "
-                    f"{info.label}. Persistent workspace/plugins and the configured secrets file are normally outside this folder.\n\n"
-                    "Continue?",
-                    icon="warning",
+                    f"The installer will synchronize package-owned files to {info.label}: changed files are replaced and files removed from the new base are deleted.\n\n"
+                    "For a normal source update, the existing .venv, .ssh, plugins, logs/state, local secrets, and compiled norm.exe are preserved. If Compile norm.exe is checked, the executable is rebuilt after the sync.\n\n"
+                    + ("THIS IS A FULL BACKUP: its saved .ssh, plugins, secrets, workspace, runtime state, and PostgreSQL snapshot will be restored.\n\n" if info.manifest.get("package_type") == "full-backup" else "")
+                    + "Continue?",
+                    icon="question",
                 )
                 if not replace:
                     return
@@ -796,6 +1209,7 @@ def launch_gui(initial_source: Path | None = None) -> int:
             compile_exe=compile_var.get(),
             install_torch=torch_var.get(),
             replace_existing=replace,
+            recreate_venv=recreate_venv_var.get(),
         )
         threading.Thread(target=worker, args=(opts,), daemon=True).start()
 
@@ -845,16 +1259,34 @@ def launch_gui(initial_source: Path | None = None) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Reusable Norm portable-source installer")
-    parser.add_argument("--source", help="Norm portable-source ZIP")
+    parser = argparse.ArgumentParser(description="Reusable Norm source/full-backup installer")
+    parser.add_argument("--source", help="Norm portable-source or full-backup ZIP")
     parser.add_argument("--target", help="Installation directory")
     parser.add_argument("--python", dest="python_exe", help="Python executable used to create the Norm venv")
     parser.add_argument("--validate-only", action="store_true", help="Validate the source package and exit")
     parser.add_argument("--install", action="store_true", help="Run headless installation instead of the GUI")
-    parser.add_argument("--replace", action="store_true", help="Allow clean replacement of a non-empty target")
+    parser.add_argument("--replace", action="store_true", help="Allow in-place synchronization of a non-empty target")
+    parser.add_argument("--recreate-venv", action="store_true", help="Discard and recreate the existing virtual environment")
     parser.add_argument("--no-build", action="store_true", help="Do not compile norm.exe")
     parser.add_argument("--no-torch", action="store_true", help="Do not install configured PyTorch/CUDA package")
+    parser.add_argument("--print-pip-spec", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--print-pip-version", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--self-test-file", help=argparse.SUPPRESS)
     args = parser.parse_args()
+
+    if args.self_test_file:
+        target = Path(args.self_test_file).expanduser()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"ok {INSTALLER_VERSION}\n", encoding="utf-8")
+        return 0
+
+    if args.print_pip_spec:
+        print(PIP_SPEC)
+        return 0
+    if args.print_pip_version:
+        # Backward-compatible internal helper for older build BATs.
+        print(PIP_MIN_VERSION)
+        return 0
 
     source = Path(args.source).expanduser() if args.source else find_default_source()
 
@@ -885,6 +1317,7 @@ def main() -> int:
                 compile_exe=not args.no_build,
                 install_torch=not args.no_torch,
                 replace_existing=args.replace,
+                recreate_venv=args.recreate_venv,
             ),
             log=print,
             progress=lambda value, text: print(f"[{value:3d}%] {text}"),

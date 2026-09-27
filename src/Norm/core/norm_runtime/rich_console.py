@@ -12,6 +12,7 @@ from pathlib import Path
 from contextlib import nullcontext
 from datetime import datetime, timezone
 from urllib import request
+from urllib.parse import quote
 
 import redis
 
@@ -77,10 +78,59 @@ class NormConsole:
     def _now_iso() -> str:
         return datetime.now(timezone.utc).isoformat()
 
+    def _api_base(self) -> str:
+        suffix = "/api/chat"
+        return self.chat_url[:-len(suffix)] if self.chat_url.endswith(suffix) else self.chat_url.rsplit("/", 1)[0]
+
+    def _thread_rows(self, limit: int = 100) -> list[dict]:
+        project_id = "norm-console"
+        url = f"{self._api_base()}/api/threads?project_id={quote(project_id)}&limit={max(1, min(int(limit), 200))}"
+        with request.urlopen(url, timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        rows = payload.get("threads")
+        return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+    def _create_named_thread(self, title: str) -> dict:
+        req = request.Request(
+            f"{self._api_base()}/api/threads/new",
+            data=json.dumps({"project_id": "norm-console", "title": title}, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json; charset=utf-8"},
+            method="POST",
+        )
+        with request.urlopen(req, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    @staticmethod
+    def _resolve_thread_selector(rows: list[dict], selector: str) -> tuple[dict | None, list[dict]]:
+        folded = str(selector or "").strip().casefold()
+        if not folded:
+            return None, []
+        exact_id = [row for row in rows if str(row.get("thread_id") or "").casefold() == folded]
+        if len(exact_id) == 1:
+            return exact_id[0], exact_id
+        exact_title = [row for row in rows if str(row.get("title") or "").strip().casefold() == folded]
+        if len(exact_title) == 1:
+            return exact_title[0], exact_title
+        id_prefix = [row for row in rows if str(row.get("thread_id") or "").casefold().startswith(folded)]
+        if len(id_prefix) == 1:
+            return id_prefix[0], id_prefix
+        title_prefix = [row for row in rows if str(row.get("title") or "").strip().casefold().startswith(folded)]
+        if len(title_prefix) == 1:
+            return title_prefix[0], title_prefix
+        return None, exact_title or id_prefix or title_prefix
+
+    def _enqueue_thread_control(self, kind: str, *, thread_id: str = "", title: str = "") -> str:
+        fields = {"kind": kind, "enqueued_at": self._now_iso()}
+        if thread_id:
+            fields["thread_id"] = thread_id
+        if title:
+            fields["title"] = title
+        return str(self.redis.xadd(self.ingress_stream, fields, maxlen=5000, approximate=True))
+
     def _enqueue_prompt(self, message: str) -> tuple[str, str]:
         prompt_id = str(uuid.uuid4())
         entry_id = self.redis.xadd(self.ingress_stream, {
-            "prompt_id": prompt_id, "message": message, "project_id": "norm-console",
+            "kind": "prompt", "prompt_id": prompt_id, "message": message, "project_id": "norm-console",
             "enqueued_at": self._now_iso(),
         }, maxlen=5000, approximate=True)
         return str(entry_id), prompt_id
@@ -181,6 +231,22 @@ class NormConsole:
         return False
 
     def _dispatch_ingress(self, entry_id: str, fields: dict) -> None:
+        kind = str(fields.get("kind") or "prompt")
+        if kind == "thread_reset":
+            self.redis.delete(self.thread_key)
+            self.thread_id = None
+            self.redis.xack(self.ingress_stream, self.ingress_group, entry_id)
+            return
+        if kind == "thread_switch":
+            thread_id = str(fields.get("thread_id") or "").strip()
+            if thread_id:
+                self.thread_id = thread_id
+                self.redis.set(self.thread_key, thread_id)
+            else:
+                self.thread_id = None
+                self.redis.delete(self.thread_key)
+            self.redis.xack(self.ingress_stream, self.ingress_group, entry_id)
+            return
         if not self._wait_until_idle():
             return
         dispatch_state = json.dumps({
@@ -301,7 +367,7 @@ class NormConsole:
         try:
             with request.urlopen(req, timeout=10) as response:
                 result = json.loads(response.read().decode("utf-8"))
-            self.console.print(f"[yellow]Flushed {int(result.get('deleted') or 0)} suppressed task(s).[/]")
+            self.console.print(f"[yellow]Flushed {int(result.get('deleted') or 0)} suppressed task(s) and {int(result.get('delivery_deleted') or 0)} suppressed delivery record(s).[/]")
         except Exception as exc:
             self.console.print(f"[red]Could not flush suppressed tasks: {exc}[/]")
 
@@ -336,31 +402,34 @@ class NormConsole:
     def _show_help(self) -> None:
         self.console.print(
             "[bold]Commands[/]\n"
-            "  /mute ollama    Hide Ollama thinking/answer output; work continues.\n"
-            "  /unmute ollama  Show Ollama output again.\n"
-            "  /mute norm      Hide Norm runtime messages; work continues.\n"
-            "  /unmute norm    Show Norm runtime messages again.\n"
-            "  /stop ollama    Cancel active Ollama generation.\n"
-            "  /shutdown ollama  Unload the model and gracefully stop the Ollama server.\n"
-            "  /stop norm      Pause sending queued console prompts after the current one.\n"
-            "  /start norm     Resume sending queued console prompts.\n"
-            "  /shutdown norm  Stop new work, finish the current slice, persist state, and exit.\n"
-            "  /shutdown norm now  Cancel active Ollama work, persist cancellation, and exit promptly.\n"
-            "  /stop all       Finish the current step, write SOS.md, unload the model, then stop Ollama and Norm.\n"
-            "  /stop all -now  Stop the current generation now, preserve it for resume, write SOS.md, unload/stop all.\n"
-            "  /suppress-task  Park the active root task tree, or oldest next queued task tree, in PostgreSQL.\n"
-            "  /flush-suppressed  Permanently delete all suppressed task records.\n"
-            "  /backup         Create a portable installer/source backup without private state.\n"
-            "  /backup full    Create a sensitive full backup with .ssh, secrets, workspace, plugins, and PostgreSQL.\n"
-            "  /backup-zip     Legacy alias for /backup full.\n"
-            "  /status         Show local mute, pause, and pending-input state.\n"
-            "  /status/busy    Show authoritative runtime busy state.\n"
-            "  /help           Show these commands.\n"
-            "  /exit           Close this console only; Norm keeps running."
+            "  /mute ollama       Hide Ollama thinking/answer output; work continues.\n"
+            "  /unmute ollama     Show Ollama output again.\n"
+            "  /mute norm         Hide Norm runtime messages; work continues.\n"
+            "  /unmute norm       Show Norm runtime messages again.\n"
+            "  /stop ollama       Cancel active Ollama generation.\n"
+            "  /shutdown ollama   Unload the model and gracefully stop the Ollama server.\n"
+            "  /stop norm         Pause sending queued console prompts after the current one.\n"
+            "  /start norm        Resume sending queued console prompts.\n"
+            "  /new [name]        Start a fresh conversation thread, optionally with a title.\n"
+            "  /thread-list       List active conversation threads.\n"
+            "  /thread-resume NAME  Switch to a thread by exact title, unique prefix, ID, or ID prefix.\n"
+            "  /suppress-task     Park the active root task tree, or oldest next queued task tree.\n"
+            "  /flush-suppressed  Permanently delete suppressed tasks and parked delivery records.\n"
+            "  /backup            Create a portable installer/source backup.\n"
+            "  /backup full       Create a sensitive full backup with private state and PostgreSQL.\n"
+            "  /status            Show local mute, pause, and pending-input state.\n"
+            "  /status/busy       Show authoritative runtime busy state.\n"
+            "  /stop-all          Finish the current step, snapshot recovery state, then stop Norm/Ollama.\n"
+            "  /stop-all now      Emergency checkpoint/snapshot and stop Norm/Ollama now.\n"
+            "  /shutdown norm     Gracefully stop Norm after checkpointing current work.\n"
+            "  /shutdown norm now Cancel active work and stop Norm promptly.\n"
+            "  /help              Show these commands.\n"
+            "  /exit              Close this console only; Norm keeps running."
         )
 
     def _command(self, text: str) -> bool:
-        parts = text.lower().split()
+        stripped = text.strip()
+        parts = stripped.lower().split()
         if parts == ["/help"]:
             self._show_help()
         elif len(parts) == 2 and parts[0] in {"/mute", "/unmute"} and parts[1] in {"ollama", "norm"}:
@@ -388,14 +457,14 @@ class NormConsole:
             self.console.print("[yellow]Norm is cancelling active work and shutting down now.[/]")
             self._shutdown_norm(immediate=True)
             return False
-        elif parts == ["/stop", "all"]:
+        elif parts in (["/stop-all"], ["/stop", "all"]):
             self.norm_paused.set()
-            self.console.print("[yellow]Norm will stop after the current step, write SOS.md, unload the model, and stop Ollama.[/]")
+            self.console.print("[yellow]Norm will stop after the current step and preserve recovery state.[/]")
             self._stop_all(immediate=False)
             return False
-        elif parts == ["/stop", "all", "-now"]:
+        elif parts in (["/stop-all", "now"], ["/stop-all", "-now"], ["/stop", "all", "now"], ["/stop", "all", "-now"]):
             self.norm_paused.set()
-            self.console.print("[yellow]Norm is checkpointing the current generation, writing SOS.md, and stopping everything now.[/]")
+            self.console.print("[yellow]Norm is checkpointing the current generation and stopping everything now.[/]")
             self._stop_all(immediate=True)
             return False
         elif parts == ["/suppress-task"]:
@@ -406,6 +475,56 @@ class NormConsole:
             threading.Thread(target=self._run_backup, kwargs={"full": False}, daemon=True).start()
         elif parts in (["/backup", "full"], ["/backup-zip"]):
             threading.Thread(target=self._run_backup, kwargs={"full": True}, daemon=True).start()
+        elif parts == ["/new"] or (parts and parts[0] == "/new"):
+            name = stripped[len("/new"):].strip()
+            try:
+                if name:
+                    created = self._create_named_thread(name)
+                    thread_id = str(created.get("thread_id") or "")
+                    title = str(created.get("title") or name)
+                    entry_id = self._enqueue_thread_control("thread_switch", thread_id=thread_id, title=title)
+                    self.console.print(f"[yellow]Created '{title}' ({thread_id}); queued thread switch as {entry_id}.[/]")
+                else:
+                    entry_id = self._enqueue_thread_control("thread_reset")
+                    self.console.print(f"[yellow]Queued a fresh auto-titled thread as {entry_id}.[/]")
+            except Exception as exc:
+                self.console.print(f"[red]Could not create thread: {exc}[/]")
+        elif parts == ["/thread-list"]:
+            try:
+                rows = self._thread_rows()
+                current = self.redis.get(self.thread_key) or self.thread_id or ""
+                if not rows:
+                    self.console.print("[yellow]No active conversation threads found.[/]")
+                else:
+                    self.console.print("[bold]Conversation threads[/] (* = current)")
+                    for index, row in enumerate(rows):
+                        tid = str(row.get("thread_id") or "")
+                        marker = "*" if tid == current else " "
+                        self.console.print(f" {marker} [{index}] {row.get('title') or '[untitled]'}  ({tid})")
+            except Exception as exc:
+                self.console.print(f"[red]Could not list threads: {exc}[/]")
+        elif parts and parts[0] == "/thread-resume":
+            selector = stripped[len("/thread-resume"):].strip()
+            if not selector:
+                self.console.print("[yellow]Usage: /thread-resume <thread name|thread id>[/]")
+            else:
+                try:
+                    rows = self._thread_rows()
+                    selected, candidates = self._resolve_thread_selector(rows, selector)
+                    if selected is None:
+                        if candidates:
+                            self.console.print("[yellow]Thread selector is ambiguous:[/]")
+                            for row in candidates:
+                                self.console.print(f"  {row.get('title') or '[untitled]'}  ({row.get('thread_id')})")
+                        else:
+                            self.console.print(f"[yellow]No active thread matched: {selector}[/]")
+                    else:
+                        tid = str(selected.get("thread_id") or "")
+                        title = str(selected.get("title") or "[untitled]")
+                        entry_id = self._enqueue_thread_control("thread_switch", thread_id=tid, title=title)
+                        self.console.print(f"[yellow]Queued switch to '{title}' ({tid}) as {entry_id}.[/]")
+                except Exception as exc:
+                    self.console.print(f"[red]Could not resume thread: {exc}[/]")
         elif parts == ["/status/busy"]:
             threading.Thread(target=self._show_busy, daemon=True).start()
         elif parts == ["/status"]:

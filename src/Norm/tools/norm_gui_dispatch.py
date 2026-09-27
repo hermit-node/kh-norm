@@ -126,6 +126,25 @@ class GuiPromptDispatcher:
         self.activity_wakeup.set()
         return str(entry_id)
 
+    def enqueue_thread_switch(self, thread_id: str, title: str = "") -> str:
+        thread_id = str(thread_id or "").strip()
+        if not thread_id:
+            raise ValueError("thread_id is required")
+        entry_id = self.redis.xadd(
+            self.stream,
+            {
+                "kind": "thread_switch",
+                "thread_id": thread_id,
+                "title": str(title or ""),
+                "enqueued_at": self._now_iso(),
+            },
+            maxlen=5000,
+            approximate=True,
+        )
+        self._ensure_group()
+        self.activity_wakeup.set()
+        return str(entry_id)
+
     def queue_stats(self) -> tuple[int | None, int]:
         """Return (queued, uncertain).
 
@@ -785,6 +804,14 @@ class GuiPromptDispatcher:
             }
             if fields.get("kind") == "thread_reset":
                 self.redis.delete(self.thread_key)
+                self._finish_entry(entry_id)
+                continue
+            if fields.get("kind") == "thread_switch":
+                thread_id = str(fields.get("thread_id") or "").strip()
+                if thread_id:
+                    self.redis.set(self.thread_key, thread_id)
+                else:
+                    self.redis.delete(self.thread_key)
                 self._finish_entry(entry_id)
                 continue
             prompt_id = str(fields.get("prompt_id") or "")

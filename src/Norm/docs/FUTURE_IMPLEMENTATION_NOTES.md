@@ -2,17 +2,16 @@
 
 This is the active backlog/design notebook for behavior that is not fully implemented. `README.md` describes operation, `CURRENT_STATUS.md` describes current facts, `RELEASE_NOTES.md` records shipped/source-release deltas, and `DEVELOPMENT_NOTES.md` preserves engineering history.
 
-## Current backlog after 0.52.0 source consolidation
+## Current backlog after 0.52.2 source consolidation
 
-1. Run full Windows acceptance on a real installed 0.52.0 build: installer in-place update, venv reuse, executable build, service/API/GUI health, plugin hot-reload, and a real task.
+1. Run full Windows acceptance on a real installed 0.52.2 build: installer in-place update, venv reuse, executable build, service/API/GUI health, plugin hot-reload, and a real task.
 2. Validate the full-backup plugin and installer restore path against a disposable PostgreSQL schema and test installation before relying on it as the sole disaster-recovery mechanism.
 3. Rotate any historically exposed PostgreSQL credential and verify every consumer after rotation; old traces are not automatically scrubbed.
 4. Extend command execution guardrails so an alternate shell/plugin path cannot bypass a file-tool denial. Prefer reviewed typed operations and least-privilege execution over arbitrary shell text.
 5. Add active-call authority cancellation: if required Tailscale/Redis authority disappears during a running subprocess/tool call, terminate it and record an interrupted/uncertain result.
-6. Bound startup schema reconciliation with PostgreSQL lock/statement timeouts or a separate migration preflight so stale sessions cannot leave partial startup looking healthy.
-7. Continue normal context compaction work: bound ordinary completed-step context and preserve durable pointers rather than copying unlimited prior output.
-8. Machine-enforce the generic chart-axis calibration gate rather than relying only on prompt/document discipline.
-9. Consider a separate low-privilege capability broker/coordinator for high-impact filesystem/shell/database actions.
+6. Continue normal context compaction work: bound ordinary completed-step context and preserve durable pointers rather than copying unlimited prior output.
+7. Machine-enforce the generic chart-axis calibration gate rather than relying only on prompt/document discipline.
+8. Consider a separate low-privilege capability broker/coordinator for high-impact filesystem/shell/database actions.
 
 
 ## Manual `/condense-memories` operator action
