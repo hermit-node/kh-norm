@@ -69,6 +69,7 @@ class RedisPromptQueue:
         consumer: str = "default",
         stale_ms: int = 60_000,
         max_attempts: int = 3,
+        durable=None,
     ) -> None:
         self.r = redis_client
         self.stream = stream
@@ -79,6 +80,16 @@ class RedisPromptQueue:
         self.consumer = consumer
         self.stale_ms = stale_ms
         self.max_attempts = max_attempts
+        self.durable = durable
+
+    def _task_suppressed(self, task_id: str) -> bool:
+        """Return True if the durable log marks this task's tree as suppressed."""
+        if self.durable is None:
+            return False
+        try:
+            return bool(self.durable.is_task_tree_suppressed(task_id))
+        except Exception:
+            return False
 
     # ------------------------------------------------------------------
     # Group management
@@ -208,6 +219,14 @@ class RedisPromptQueue:
     def ack(self, message_id: str) -> None:
         self.r.xack(self.stream, self.group, message_id)
         self.r.xdel(self.stream, message_id)
+
+    def ack_preserve(self, message_id: str) -> None:
+        """Ack a message (remove from PEL) without deleting it from the stream.
+
+        The entry remains in Redis for inspection and persistence until
+        explicit /flush-queue or Redis shutdown removes it.
+        """
+        self.r.xack(self.stream, self.group, message_id)
 
     # ------------------------------------------------------------------
     # Stale reclaim
@@ -364,6 +383,8 @@ class RedisPromptQueue:
                 # Empty chain_id: restore only the oldest entry
                 oldest_entry = chain_map[oldest_chain_id][0]
                 msg_id, job = oldest_entry
+                if self._task_suppressed(job.task_id):
+                    return 0
                 self.r.xadd(self.stream, self._job_to_fields(job))
                 self.r.xdel(self.retry_stream, msg_id)
                 return 1
@@ -373,6 +394,8 @@ class RedisPromptQueue:
                 entries.sort(key=lambda x: x[1].chain_index)
                 restored = 0
                 for msg_id, job in entries:
+                    if self._task_suppressed(job.task_id):
+                        continue
                     self.r.xadd(self.stream, self._job_to_fields(job))
                     self.r.xdel(self.retry_stream, msg_id)
                     restored += 1
@@ -619,6 +642,12 @@ class RedisPromptQueue:
                 continue
             _, fields = rows[0]
             job = self._fields_to_job(msg_id, fields)
+            if self._task_suppressed(job.task_id):
+                # Preserve the entry in Redis: ack (remove from PEL) but do NOT
+                # delete from the stream.  Suppressed tasks remain in the queue
+                # until explicit /flush-queue or Redis shutdown.
+                self.ack_preserve(msg_id)
+                continue
             job.created_at = time.time()
             self.r.xack(self.stream, self.group, msg_id)
             self.r.xdel(self.stream, msg_id)

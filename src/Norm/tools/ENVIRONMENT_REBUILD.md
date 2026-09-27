@@ -1,15 +1,18 @@
-# Rebuilding the Norm Python environment
+# Norm environment rebuild
 
-Norm backup ZIPs intentionally exclude `C:\Norm\.venv` because the environment is reproducible and is dominated by the CUDA PyTorch package.
+Norm source packages intentionally exclude `.venv` and compiled executables. Both are reproducible build artifacts.
 
-The preferred recovery path is `restore_norm_backup.bat`. Its PowerShell installer reads `backup-manifest.json` and the restored `config\settings.ini`, then:
+The canonical dependency lock is `tools/requirements-lock.txt`. The configured Python and Torch versions live in `config/settings.ini`.
 
-1. Looks for a compatible Python 3.14 installation.
-2. If Python is missing, tries `winget` first.
-3. If needed, downloads the configured Python installer from `python.org`.
-4. Creates `C:\Norm\.venv`.
-5. Installs the configured CUDA PyTorch build from the configured PyTorch wheel index.
-6. Installs the pinned packages from `tools\requirements-lock.txt`.
-7. Validates the vision/runtime imports before continuing.
+A clean installation should:
 
-Current environment settings live in `config\settings.ini` under `[environment]`. Do not archive or copy an old `.venv` as the normal restore strategy.
+1. Select/install the configured Python version.
+2. Create `<NORM_ROOT>\.venv`.
+3. Upgrade pip in that virtual environment.
+4. Install the configured Torch build from the configured Torch index.
+5. Install `tools\requirements-lock.txt`.
+6. Validate imports required by Norm.
+7. Run `tools\build_norm.py` to create the executable under `core\`.
+8. Validate the configured secrets, Redis, PostgreSQL, Ollama, Tailscale, workspace, and documentation paths before starting Norm.
+
+The install script is intentionally separate from this source package so the package remains portable and does not contain machine-specific generated state.

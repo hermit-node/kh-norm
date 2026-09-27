@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from norm_runtime.secret_redaction import RedactingFormatter
+
 import argparse
 import ipaddress
 import json
@@ -50,6 +52,8 @@ def setup_logging(root: Path) -> None:
         format="%(asctime)s %(levelname)s %(message)s",
         handlers=[logging.FileHandler(log_dir / "norm-runtime.log", encoding="utf-8"), logging.StreamHandler()],
     )
+    for handler in logging.getLogger().handlers:
+        handler.setFormatter(RedactingFormatter("%(asctime)s %(levelname)s %(message)s"))
 
 
 def api_ready(base_url: str, timeout: float = 1.0) -> bool:
@@ -320,7 +324,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
     statuses = healthcheck(root)
     coordinator, live, durable = build_runtime(root, ensure_schema=True)
     durable.set_runtime_state("deployed_version", load_project_metadata(root)["version"])
-    prompt_queue = build_prompt_queue(root)
+    prompt_queue = build_prompt_queue(root, durable=durable)
     resources["prompt_queue"] = prompt_queue
     resources["durable"] = durable
     service = build_conversation_service(
@@ -377,8 +381,14 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
                 if stop_all_now.is_set():
                     worker.wait_idle(timeout=30)
                 else:
-                    while not worker.wait_idle(timeout=1):
+                    if not worker.is_idle():
                         logging.info("Stop-all waiting for current step to finish")
+                    # wait_idle is an Event wait: completion wakes this immediately.
+                    # The timeout only checks for escalation; it is not a busy probe.
+                    while not worker.wait_idle(timeout=30):
+                        if stop_all_now.is_set():
+                            worker.wait_idle(timeout=30)
+                            break
             elif shutdown_now.is_set():
                 worker.wait_idle(timeout=10)
             else:

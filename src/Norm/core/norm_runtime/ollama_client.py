@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .secret_redaction import redact
+
 import base64
 import json
 import time
@@ -39,6 +41,7 @@ class OllamaClient:
         self.activity_sink = activity_sink
         self.activity_source = activity_source
         self.crash_sink = crash_sink
+        self._display_pending = {}
         self._crash_task_id = ""
         self._crash_step_id = ""
         self._crash_pending: list[dict[str, str]] = []
@@ -46,6 +49,26 @@ class OllamaClient:
         self._crash_last_flush = time.monotonic()
 
     def _emit(self, event_type: str, **values) -> None:
+        if event_type in {"thinking", "answer"}:
+            pending = self._display_pending.get(event_type, "") + str(values.get("text") or "")
+            boundary = pending.rfind("\n") + 1
+            self._display_pending[event_type] = pending[boundary:]
+            if boundary:
+                safe = redact(pending[:boundary])
+                self._publish_safe_event(event_type, text=safe)
+                self._buffer_crash(event_type, safe)
+            return
+        if event_type in {"model_end", "model_error", "model_start"}:
+            for kind, pending in self._display_pending.items():
+                if pending:
+                    safe = redact(pending)
+                    self._publish_safe_event(kind, text=safe)
+                    self._buffer_crash(kind, safe)
+            self._display_pending.clear()
+            self._flush_crash()
+        self._publish_safe_event(event_type, **redact(values))
+
+    def _publish_safe_event(self, event_type: str, **values) -> None:
         if self.activity_sink is None:
             return
         try:
@@ -171,11 +194,9 @@ class OllamaClient:
                     answer = str(data.get("response", ""))
                     if thinking:
                         self._emit("thinking", text=thinking)
-                        self._buffer_crash("thinking", thinking)
                     if answer:
                         response_parts.append(answer)
                         self._emit("answer", text=answer)
-                        self._buffer_crash("answer", answer)
                 if cancel_event.is_set():
                     raise ModelGenerationCancelled("generation cancelled")
         except Exception as exc:
@@ -293,18 +314,17 @@ class OllamaClient:
                     if thinking:
                         thinking_parts.append(thinking)
                         self._emit("thinking", text=thinking)
-                        self._buffer_crash("thinking", thinking)
                     if content:
                         content_parts.append(content)
                         self._emit("answer", text=content)
-                        self._buffer_crash("answer", content)
                     for call in message.get("tool_calls") or []:
                         marker = json.dumps(call, sort_keys=True, ensure_ascii=False)
                         if marker not in seen_calls:
                             seen_calls.add(marker)
                             tool_calls.append(call)
-                            self._emit("tool_call", text=marker)
-                            self._buffer_crash("tool_call", marker)
+                            safe_marker = json.dumps(redact(call), sort_keys=True, ensure_ascii=False)
+                            self._emit("tool_call", text=safe_marker)
+                            self._buffer_crash("tool_call", safe_marker)
                 if cancel_event.is_set():
                     raise ModelGenerationCancelled("generation cancelled")
         except Exception as exc:
@@ -381,11 +401,9 @@ class OllamaClient:
                     content = str(message.get("content", ""))
                     if thinking_text:
                         self._emit("thinking", text=thinking_text)
-                        self._buffer_crash("thinking", thinking_text)
                     if content:
                         parts.append(content)
                         self._emit("answer", text=content)
-                        self._buffer_crash("answer", content)
         finally:
             self._flush_crash()
             with self._active_lock:

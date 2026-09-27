@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from .secret_redaction import register_secrets
 from configparser import ConfigParser
 from pathlib import Path
 
@@ -29,7 +30,7 @@ def load_path_settings(root: Path) -> dict[str, Path]:
     parser = load_settings(root)
     if not parser.has_section("paths"):
         raise ValueError("settings.ini requires a [paths] section")
-    app_root = Path(os.environ.get("NORM_APP_ROOT") or (root / "app")).resolve()
+    app_root = Path(os.environ.get("NORM_APP_ROOT") or (root / "core")).resolve()
     result: dict[str, Path] = {"runtime_root": root, "app_root": app_root}
     for key in PATH_KEYS:
         raw = parser.get("paths", key, fallback="").strip()
@@ -111,6 +112,7 @@ def load_secrets(root: Path) -> dict[str, str]:
         if not stripped or stripped.startswith("#") or "=" not in stripped: continue
         key, value = stripped.split("=", 1)
         result[key.strip()] = value.strip()
+    register_secrets(result, path)
     return result
 
 def load_ssh_settings(root: Path) -> dict[str, object]:
@@ -140,6 +142,19 @@ def load_ssh_settings(root: Path) -> dict[str, object]:
         "ca8d_user": parser.get("ssh", "ca8d_user", fallback="").strip(),
         "ca8d_identity_file": child("ca8d_identity_file", "ca8d_norm_ed25519"),
     }
+
+
+def load_plugin_settings(root: Path) -> dict[str, Path]:
+    root = Path(root).resolve()
+    parser = load_settings(root)
+    documents = load_path_settings(root)["documents_root"]
+    raw_root = parser.get("plugins", "root", fallback="plugins").strip() or "plugins"
+    plugin_candidate = Path(os.path.expandvars(os.path.expanduser(raw_root)))
+    plugin_root = plugin_candidate.resolve() if plugin_candidate.is_absolute() else (documents / plugin_candidate).resolve()
+    raw_registry = parser.get("plugins", "registry_file", fallback=".registry.json").strip() or ".registry.json"
+    registry_candidate = Path(os.path.expandvars(os.path.expanduser(raw_registry)))
+    registry_file = registry_candidate.resolve() if registry_candidate.is_absolute() else (plugin_root / registry_candidate).resolve()
+    return {"plugin_root": plugin_root, "registry_file": registry_file}
 
 
 def load_document_paths(root: Path) -> dict[str, Path]:

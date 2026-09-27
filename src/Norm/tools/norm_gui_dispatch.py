@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import threading
@@ -10,6 +11,8 @@ from datetime import datetime, timezone
 from urllib import request
 
 import redis
+
+logger = logging.getLogger(__name__)
 
 
 class GuiPromptDispatcher:
@@ -35,10 +38,17 @@ class GuiPromptDispatcher:
         self.dispatching_key = str(config.get("console_dispatching_key", "norm:gui:dispatching"))
         self.uncertain_key = str(config.get("console_uncertain_key", "norm:gui:uncertain"))
         self.resume_key = str(config.get("console_resume_key", "norm:gui:resume-request"))
+        self.suppressed_prompt_ids_key = str(
+            config.get("console_suppressed_prompt_ids_key", "norm:gui:suppressed-prompt-ids")
+        )
         self.uncertain_continue_seconds = max(0.0, float(config.get("uncertain_continue_seconds", 10)))
         self.consumer = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         self.stop_event = threading.Event()
         self.activity_wakeup = threading.Event()
+        self._activity_lock = threading.Lock()
+        self._last_activity = time.monotonic()
+        self._last_busy_probe = time.monotonic()
+        self._probed_activity = -1.0
         self.pause_dispatch = threading.Event()
         self.dispatch_active = threading.Event()
         self._admin_lock = threading.RLock()
@@ -49,9 +59,15 @@ class GuiPromptDispatcher:
     def _now_iso() -> str:
         return datetime.now(timezone.utc).isoformat()
 
-    def _ensure_group(self) -> None:
+    def _ensure_group(self, start_id: str = "0") -> None:
+        """Create the consumer group if it does not already exist.
+
+        start_id controls where the group begins reading:
+          "0"  — from the beginning (initial setup, rotation)
+          "$"  — from the tail (NOGROUP recovery: only new entries)
+        """
         try:
-            self.redis.xgroup_create(self.stream, self.group, id="0", mkstream=True)
+            self.redis.xgroup_create(self.stream, self.group, id=start_id, mkstream=True)
         except redis.ResponseError as exc:
             if "BUSYGROUP" not in str(exc):
                 raise
@@ -79,6 +95,8 @@ class GuiPromptDispatcher:
         ))
 
     def enqueue_prompt(self, message: str) -> tuple[str, str]:
+        if message.lstrip().startswith("/"):
+            raise ValueError("Slash commands must be handled by the prompt console; nothing queued.")
         prompt_id = str(uuid.uuid4())
         self.redis.set(self.last_submission_key, message)
         entry_id = self.redis.xadd(
@@ -108,8 +126,17 @@ class GuiPromptDispatcher:
         self.activity_wakeup.set()
         return str(entry_id)
 
-    def queue_stats(self) -> tuple[int, int]:
-        queued = 0
+    def queue_stats(self) -> tuple[int | None, int]:
+        """Return (queued, uncertain).
+
+        queued is an int when the queue depth is known (from group statistics,
+        or from the XLEN fallback), or None when the depth is genuinely unknown
+        (group stats unavailable AND the stream key cannot be read). A known 0
+        means the queue is confirmed empty; None means the count could not be
+        determined and must not be reported as empty.
+        """
+        queued: int | None = None
+        # Primary: group statistics (pending + lag) for our consumer group.
         try:
             self._ensure_group()
             for info in self.redis.xinfo_groups(self.stream):
@@ -117,15 +144,55 @@ class GuiPromptDispatcher:
                     queued = int(info.get("pending") or 0) + int(info.get("lag") or 0)
                     break
         except Exception:
+            queued = None  # group stats unavailable; fall through to XLEN
+        # Fallback: XLEN on the stream key. Only a confirmed 0 (or absent key)
+        # means "empty"; a read failure means "unknown", never "empty".
+        if queued is None:
             try:
                 queued = int(self.redis.xlen(self.stream))
             except Exception:
-                pass
-        return queued, int(self.redis.hlen(self.uncertain_key))
+                queued = None  # stream key unreadable -> unknown, NOT empty
+        try:
+            uncertain = int(self.redis.hlen(self.uncertain_key))
+        except Exception:
+            uncertain = 0
+        return queued, uncertain
 
-    def queue_snapshot(self, limit: int = 1000) -> list[dict]:
+    def uncertain_snapshot(self) -> list[dict]:
+        """Read uncertain submissions without consuming, retrying, or modifying them."""
+        rows = self.redis.hgetall(self.uncertain_key)
+        blocked = set(self.redis.smembers(self.suppressed_prompt_ids_key))
+        snapshot = []
+        for entry_id, raw in sorted(rows.items()):
+            try:
+                record = json.loads(raw)
+                if not isinstance(record, dict):
+                    raise ValueError("expected a JSON object")
+            except (ValueError, TypeError) as exc:
+                snapshot.append({"entry_id": entry_id, "state": "unreadable", "message": "", "error": str(exc)})
+                continue
+            prompt_id = str(record.get("prompt_id") or "")
+            suppressed = bool(record.get("suppressed")) or prompt_id in blocked
+            auto_retry = record.get("auto_retry") is True and not suppressed
+            snapshot.append({
+                "entry_id": entry_id,
+                "prompt_id": prompt_id,
+                "state": "suppressed" if suppressed else "retry-enabled" if auto_retry else "parked",
+                "auto_retry": auto_retry,
+                "suppressed": suppressed,
+                "message": str(record.get("message") or ""),
+                "enqueued_at": record.get("enqueued_at"),
+                "failed_at": record.get("failed_at"),
+                "retry_count": record.get("retry_count", 0),
+                "reason": str(record.get("reason") or ""),
+                "error": str(record.get("error") or ""),
+            })
+        return snapshot
+
+    def queue_snapshot(self, limit: int | None = 1000) -> list[dict]:
         """Return a stable, human-facing snapshot of the GUI ingress queue."""
-        rows = self.redis.xrange(self.stream, min="-", max="+", count=max(1, int(limit)))
+        options = {} if limit is None else {"count": max(1, int(limit))}
+        rows = self.redis.xrange(self.stream, min="-", max="+", **options)
         dispatching = set(str(k) for k in self.redis.hkeys(self.dispatching_key))
         snapshot: list[dict] = []
         for index, (raw_id, raw_fields) in enumerate(rows):
@@ -135,17 +202,152 @@ class GuiPromptDispatcher:
                 (v.decode("utf-8") if isinstance(v, bytes) else v)
                 for k, v in dict(raw_fields).items()
             }
-            state = "dispatching" if entry_id in dispatching else "queued"
+            prompt_id = str(fields.get("prompt_id") or "")
+            if self._prompt_retry_suppressed(prompt_id):
+                state = "suppressed"
+            elif entry_id in dispatching:
+                state = "dispatching"
+            else:
+                state = "queued"
             snapshot.append({
                 "index": index,
                 "entry_id": entry_id,
                 "state": state,
-                "prompt_id": str(fields.get("prompt_id") or ""),
+                "prompt_id": prompt_id,
                 "kind": str(fields.get("kind") or "prompt"),
                 "message": str(fields.get("message") or ""),
                 "enqueued_at": str(fields.get("enqueued_at") or ""),
             })
         return snapshot
+
+    def _prompt_retry_suppressed(self, prompt_id: str) -> bool:
+        """Return True when this GUI prompt was explicitly suppressed."""
+        prompt_id = str(prompt_id or "").strip()
+        if not prompt_id:
+            return False
+        return bool(self.redis.sismember(self.suppressed_prompt_ids_key, prompt_id))
+
+    def suppress_active_retry(self) -> dict:
+        """Prevent the currently dispatched GUI prompt from being resurrected.
+
+        Norm's PostgreSQL task status remains the authoritative worker-side gate.
+        This second gate covers the GUI's independent uncertain/HTTP retry layer.
+        """
+        prompt_ids: set[str] = set()
+
+        for raw in self.redis.hgetall(self.dispatching_key).values():
+            try:
+                record = json.loads(raw)
+            except Exception:
+                continue
+            prompt_id = str(record.get("prompt_id") or "").strip()
+            if prompt_id:
+                prompt_ids.add(prompt_id)
+
+        if prompt_ids:
+            self.redis.sadd(self.suppressed_prompt_ids_key, *sorted(prompt_ids))
+
+        uncertain_disabled = 0
+        for uncertain_id, raw in self.redis.hgetall(self.uncertain_key).items():
+            try:
+                record = json.loads(raw)
+            except Exception:
+                continue
+            prompt_id = str(record.get("prompt_id") or "").strip()
+            if prompt_id not in prompt_ids:
+                continue
+            if bool(record.get("auto_retry")):
+                uncertain_disabled += 1
+            record["auto_retry"] = False
+            record["suppressed"] = True
+            self.redis.hset(
+                self.uncertain_key,
+                uncertain_id,
+                json.dumps(record, ensure_ascii=False),
+            )
+
+        return {
+            "suppressed_prompt_ids": sorted(prompt_ids),
+            "uncertain_disabled": uncertain_disabled,
+        }
+
+    def active_prompt_ids(self) -> list[str]:
+        """Capture prompt IDs whose HTTP dispatch is currently active."""
+        prompt_ids: set[str] = set()
+
+        for raw in self.redis.hgetall(self.dispatching_key).values():
+            try:
+                record = json.loads(raw)
+            except Exception:
+                continue
+
+            prompt_id = str(record.get("prompt_id") or "").strip()
+            if prompt_id:
+                prompt_ids.add(prompt_id)
+
+        return sorted(prompt_ids)
+
+    def _prompt_retry_suppressed(self, prompt_id: str) -> bool:
+        """True when this GUI submission must not be automatically recreated."""
+        prompt_id = str(prompt_id or "").strip()
+
+        if not prompt_id:
+            return False
+
+        return bool(
+            self.redis.sismember(
+                self.suppressed_prompt_ids_key,
+                prompt_id,
+            )
+        )
+
+    def suppress_prompt_retries(self, prompt_ids) -> dict:
+        """Durably disable GUI uncertain recovery for these submissions."""
+        ids = sorted(
+            {
+                str(value or "").strip()
+                for value in prompt_ids
+                if str(value or "").strip()
+            }
+        )
+
+        if ids:
+            self.redis.sadd(
+                self.suppressed_prompt_ids_key,
+                *ids,
+            )
+
+        disabled = 0
+
+        for uncertain_id, raw in self.redis.hgetall(
+            self.uncertain_key
+        ).items():
+            try:
+                record = json.loads(raw)
+            except Exception:
+                continue
+
+            prompt_id = str(record.get("prompt_id") or "").strip()
+
+            if prompt_id not in ids:
+                continue
+
+            if bool(record.get("auto_retry")):
+                disabled += 1
+
+            record["auto_retry"] = False
+            record["suppressed"] = True
+
+            self.redis.hset(
+                self.uncertain_key,
+                uncertain_id,
+                json.dumps(record, ensure_ascii=False),
+            )
+
+        return {
+            "suppressed_prompt_ids": ids,
+            "uncertain_disabled": disabled,
+        }
 
     def _normalize_fields(self, raw_fields: dict) -> dict[str, str]:
         return {
@@ -155,6 +357,35 @@ class GuiPromptDispatcher:
         }
 
     def _requeue_uncertain_record(self, uncertain_id: str, record: dict) -> str | None:
+        # Suppressed GUI prompt IDs are a hard retry gate. The uncertain queue
+        # must never recreate a new Norm task behind PostgreSQL suppression.
+        if self._prompt_retry_suppressed(str(record.get("prompt_id") or "")):
+            parked = dict(record)
+            parked["auto_retry"] = False
+            parked["suppressed"] = True
+            self.redis.hset(
+                self.uncertain_key,
+                uncertain_id,
+                json.dumps(parked, ensure_ascii=False),
+            )
+            return None
+        # Explicit suppression is a hard GUI retry gate.
+        # This prevents the GUI layer from recreating a NEW Norm task
+        # after the original task/tree was suppressed in PostgreSQL.
+        if self._prompt_retry_suppressed(
+            str(record.get("prompt_id") or "")
+        ):
+            parked = dict(record)
+            parked["auto_retry"] = False
+            parked["suppressed"] = True
+
+            self.redis.hset(
+                self.uncertain_key,
+                uncertain_id,
+                json.dumps(parked, ensure_ascii=False),
+            )
+
+            return None
         if not bool(record.get("auto_retry")):
             return None
         fields = dict(record.get("fields") or {})
@@ -222,6 +453,17 @@ class GuiPromptDispatcher:
             "auto_retry": True,
             "retry_after_epoch": time.time() + self.uncertain_continue_seconds,
         }
+        # A request suppressed while HTTP was active stays parked rather than
+        # becoming eligible for the GUI's delayed automatic retry.
+        if self._prompt_retry_suppressed(str(record.get("prompt_id") or "")):
+            record["auto_retry"] = False
+            record["suppressed"] = True
+        # A submission already suppressed while HTTP was active stays parked.
+        if self._prompt_retry_suppressed(
+            str(record.get("prompt_id") or "")
+        ):
+            record["auto_retry"] = False
+            record["suppressed"] = True
         self.redis.hset(self.uncertain_key, entry_id, json.dumps(record, ensure_ascii=False))
         self._finish_entry(entry_id)
         self._schedule_uncertain_retry(entry_id, record)
@@ -251,9 +493,25 @@ class GuiPromptDispatcher:
             if pivot < 0 or pivot >= count:
                 raise IndexError(f"queue index {pivot} is out of range 0..{count - 1}")
         ordered = entries[pivot:] + entries[:pivot]
+        # Filter out entries whose prompt_id is in the suppressed set.
+        # Suppressed prompts must not become runnable again via rotation.
+        actionable = [
+            (old_id, fields) for old_id, fields in ordered
+            if not self._prompt_retry_suppressed(str(fields.get("prompt_id") or ""))
+        ]
+        suppressed_count = len(ordered) - len(actionable)
+        if not actionable:
+            return {
+                "status": "ok",
+                "rotated": False,
+                "count": 0,
+                "start_index": 0,
+                "suppressed_skipped": suppressed_count,
+                "reason": "all entries are suppressed; nothing to rotate",
+            }
         temp_stream = f"{self.stream}:resume:{uuid.uuid4().hex}"
         try:
-            for old_id, fields in ordered:
+            for old_id, fields in actionable:
                 copied = dict(fields)
                 copied["resumed_from_entry"] = old_id
                 copied["resume_count"] = str(int(copied.get("resume_count") or 0) + 1)
@@ -267,10 +525,11 @@ class GuiPromptDispatcher:
             return {
                 "status": "ok",
                 "rotated": True,
-                "count": count,
+                "count": len(actionable),
                 "start_index": pivot,
-                "first_prompt_id": str(ordered[0][1].get("prompt_id") or ""),
-                "first_message": str(ordered[0][1].get("message") or ""),
+                "suppressed_skipped": suppressed_count,
+                "first_prompt_id": str(actionable[0][1].get("prompt_id") or ""),
+                "first_message": str(actionable[0][1].get("message") or ""),
             }
         finally:
             if self.redis.exists(temp_stream):
@@ -318,7 +577,16 @@ class GuiPromptDispatcher:
                     for raw in response:
                         if self.stop_event.is_set():
                             return
-                        if raw.decode("utf-8", errors="replace").startswith("data: "):
+                        line = raw.decode("utf-8", errors="replace")
+                        if line.startswith("data: "):
+                            # The busy endpoint logs its own GET; do not let that
+                            # response trigger a fresh quiet check indefinitely.
+                            event = json.loads(line[6:])
+                            text = str(event.get("text") or "")
+                            if event.get("type") == "log" and "Activity HTTP " in text and "/status/busy" in text:
+                                continue
+                            with self._activity_lock:
+                                self._last_activity = time.monotonic()
                             self.activity_wakeup.set()
             except Exception:
                 if not self.stop_event.is_set():
@@ -368,10 +636,28 @@ class GuiPromptDispatcher:
                 return rows[0][1][0]
             except redis.ResponseError as exc:
                 if attempt == 0 and "NOGROUP" in str(exc):
-                    self._ensure_group()
+                    logger.warning("NOGROUP detected on stream %s; re-creating group %s at tail", self.stream, self.group)
+                    # Use "$" so only NEW entries are delivered; historical
+                    # (already-acknowledged or suppressed) entries are NOT
+                    # re-dispatched as "new" work.
+                    self._ensure_group(start_id="$")
                     continue
                 raise
         return None
+
+    def _busy_probe_due(self) -> bool:
+        """One probe per quiet transition, plus a 30-second watchdog."""
+        now = time.monotonic()
+        with self._activity_lock:
+            quiet = now - self._last_activity >= 1.0
+            new_quiet = quiet and self._last_activity > self._probed_activity
+            fallback = now - self._last_busy_probe >= 30.0
+            if not (new_quiet or fallback):
+                return False
+            self._last_busy_probe = now
+            if quiet:
+                self._probed_activity = self._last_activity
+            return True
 
     def _busy_payload(self) -> dict | None:
         try:
@@ -390,9 +676,10 @@ class GuiPromptDispatcher:
             if self.pause_dispatch.is_set():
                 return False
             self.activity_wakeup.clear()
-            if not self._busy():
+            if self._busy_probe_due() and not self._busy():
                 return True
-            self.activity_wakeup.wait(300)
+            # Activity wakes the scheduler only to postpone the quiet check.
+            self.activity_wakeup.wait(0.1)
         return False
 
     def _finish_entry(self, entry_id: str) -> None:
@@ -409,6 +696,10 @@ class GuiPromptDispatcher:
 
     def _dispatch_prompt(self, entry_id: str, fields: dict) -> None:
         self.dispatch_active.set()
+        with self._activity_lock:
+            self._last_activity = time.monotonic()
+            self._last_busy_probe = time.monotonic()
+            self._probed_activity = -1.0
         if not self._wait_until_idle():
             self.dispatch_active.clear()
             return
@@ -453,6 +744,11 @@ class GuiPromptDispatcher:
             while not finished.wait(monitor_interval):
                 if self.stop_event.is_set():
                     return
+                with self._activity_lock:
+                    if idle_since is not None and self._last_activity > idle_since:
+                        idle_since = None
+                if not self._busy_probe_due():
+                    continue
                 status = self._busy_payload()
                 if status is None:
                     idle_since = None
@@ -533,4 +829,3 @@ class GuiPromptDispatcher:
     def stop(self) -> None:
         self.stop_event.set()
         self.activity_wakeup.set()
-

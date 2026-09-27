@@ -8,7 +8,7 @@ if not exist "%SETTINGS_FILE%" (
     exit /b 1
 )
 
-for /f "tokens=1,2" %%A in ('powershell.exe -NoLogo -NoProfile -Command "$s=@{};$section='';foreach($raw in [IO.File]::ReadAllLines('%SETTINGS_FILE%')){$l=$raw.Trim();if($l -match '^\[(.+)\]$'){$section=$matches[1].Trim()}elseif($section -eq 'ports' -and $l -match '^([^=]+)=(.*)$'){$s[$matches[1].Trim()]=$matches[2].Trim()}};'{0} {1}' -f $s['activity'],$s['norm_http']"') do (
+for /f "tokens=1,2" %%A in ('powershell.exe -NoLogo -NoProfile -Command "$s=@{};$section='';foreach($raw in [IO.File]::ReadAllLines('%SETTINGS_FILE%')){$l=$raw.Trim();if($l -match '^\[(.+)\]$'){$section=$matches[1].Trim()}elseif($section -eq 'network' -and $l -match '^([^=]+)=(.*)$'){$s[$matches[1].Trim()]=$matches[2].Trim()}};'{0} {1}' -f $s['activity_port'],$s['norm_port']"') do (
     set "ACTIVITY_PORT=%%A"
     set "NORM_PORT=%%B"
 )

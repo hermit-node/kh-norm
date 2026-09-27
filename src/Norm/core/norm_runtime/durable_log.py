@@ -511,6 +511,12 @@ class PostgresTaskLog:
             cur.execute(sql.SQL("SELECT task_id FROM {}.task_runs WHERE status='suppressed' ORDER BY updated_at DESC LIMIT %s").format(sql.Identifier(self.schema)), (max(1, int(limit)),))
             return [str(row[0]) for row in cur.fetchall()]
 
+    def suppressed_at(self, task_id: str) -> datetime | None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("SELECT suppressed_at FROM {}.task_suppressions WHERE task_id=%s").format(sql.Identifier(self.schema)), (task_id,))
+            row = cur.fetchone()
+            return row[0] if row else None
+
     def suppressed_tasks(self, limit: int = 100) -> list[dict]:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(sql.SQL("""
@@ -548,12 +554,46 @@ class PostgresTaskLog:
             cur.execute(sql.SQL("DELETE FROM {}.task_runs WHERE status='suppressed'").format(sql.Identifier(self.schema)))
             return int(cur.rowcount or 0)
 
+    def is_task_tree_suppressed(self, task_id: str) -> bool:
+        """Central tree-aware suppression predicate.
+
+        Returns True if the task itself OR any ancestor in its tree is
+        currently in 'suppressed' status.  This is the single source of
+        truth that every non-explicit-resume path must consult before
+        making a task runnable again.
+        """
+        task_id = str(task_id or "").strip()
+        if not task_id:
+            return False
+        with self._connect() as conn, conn.cursor() as cur:
+            # Walk up the parent chain and check each ancestor's status.
+            cur.execute(sql.SQL("""
+                WITH RECURSIVE ancestors(task_id, status, path) AS (
+                    SELECT task_id, status, ARRAY[task_id]
+                    FROM {}.task_runs WHERE task_id=%s
+                    UNION ALL
+                    SELECT p.task_id, p.status, a.path || p.task_id
+                    FROM {}.task_runs p
+                    JOIN ancestors a ON a.task_id = p.parent_task_id
+                    WHERE NOT p.task_id = ANY(a.path)
+                )
+                SELECT 1 FROM ancestors WHERE status = 'suppressed' LIMIT 1
+            """).format(sql.Identifier(self.schema), sql.Identifier(self.schema)), (task_id,))
+            return cur.fetchone() is not None
+
     def start_task(self, plan: TaskPlan) -> None:
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(sql.SQL("SELECT task_uuid::text FROM {}.task_runs WHERE task_id=%s").format(sql.Identifier(self.schema)), (plan.task_id,))
+            cur.execute(sql.SQL("SELECT task_uuid::text, status FROM {}.task_runs WHERE task_id=%s").format(sql.Identifier(self.schema)), (plan.task_id,))
             existing = cur.fetchone()
-            if existing and str(existing[0]) != str(plan.task_uuid):
-                raise ValueError(f"task identity changed for legacy task id {plan.task_id}: {existing[0]} != {plan.task_uuid}")
+            if existing:
+                if str(existing[0]) != str(plan.task_uuid):
+                    raise ValueError(f"task identity changed for legacy task id {plan.task_id}: {existing[0]} != {plan.task_uuid}")
+                # Central invariant: a suppressed task must never be silently
+                # made runnable by a UPSERT.  Only explicit resume may do that.
+                if str(existing[1]) == "suppressed":
+                    raise ValueError(
+                        f"task {plan.task_id} is suppressed; use explicit resume to make it runnable"
+                    )
             cur.execute(sql.SQL("""
                 INSERT INTO {}.task_runs(task_id, task_uuid, title, status, plan)
                 VALUES (%s, %s::uuid, %s, 'running', %s)
@@ -572,6 +612,14 @@ class PostgresTaskLog:
             raise ValueError("task_kind must be child or recovery")
         if not parent_task_id or not parent_step_id:
             raise ValueError("child task requires parent task and step ids")
+        # Central invariant: child/recovery tasks must not bypass suppression
+        # on their root tree.  If any ancestor (including the parent) is
+        # suppressed, refuse to create the child.
+        if self.is_task_tree_suppressed(parent_task_id):
+            raise ValueError(
+                f"parent task {parent_task_id} belongs to a suppressed tree; "
+                f"child task creation is blocked until explicit resume"
+            )
         self.start_task(plan)
         plan_data = plan.as_dict(); plan_data["original_request"] = str(original_request or "").strip()
         with self._connect() as conn, conn.cursor() as cur:

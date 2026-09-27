@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .secret_redaction import redact
+
 import json
 import logging
 import re
@@ -104,6 +106,17 @@ class PromptWorker:
         with self._state_lock:
             return task_id in self._suppress_requested
 
+    def _task_suppressed(self, task_id: str) -> bool:
+        if self._suppression_requested(task_id):
+            return True
+        if self.durable is not None:
+            try:
+                if self.durable.is_task_tree_suppressed(task_id):
+                    return True
+            except Exception:
+                pass
+        return False
+
     def _clear_suppression_request(self, task_id: str) -> None:
         with self._state_lock:
             self._suppress_requested.discard(task_id)
@@ -161,18 +174,16 @@ class PromptWorker:
                 snapshot = self.durable.suppress_task(target, reason, payload)
             else:
                 snapshot = {"task_id": target}
-            cleaned = {"work": 0, "retry": 0, "escalation": 0, "dead": 0, "round_key": 0}
-            for member_id in member_ids:
-                counts = self.queue.cleanup_task(member_id)
-                for key, value in counts.items():
-                    cleaned[key] = int(cleaned.get(key, 0)) + int(value or 0)
+            # Suppressed tasks remain in the Redis queue (work/retry/escalation/dead
+            # streams) until explicit /flush-queue or Redis shutdown.  We only mark
+            # them suppressed in PostgreSQL and cancel any active model call.
             active = self.active_task_id()
             if active in member_ids:
                 OllamaClient.cancel_active()
             return {
                 "status": "ok", "suppressed": True, "task_id": target,
                 "title": snapshot.get("title", ""), "suppressed_task_ids": member_ids,
-                "queue_cleanup": cleaned,
+                "queue_cleanup": {"work": 0, "retry": 0, "escalation": 0, "dead": 0, "round_key": 0},
             }
         finally:
             # PostgreSQL status is the durable suppression gate. This in-memory set
@@ -257,10 +268,13 @@ class PromptWorker:
         request_type = normalize_request_type(job.request_type)
         name = str(metadata.get("step_name") or job.step_id)
         logging.info("Processing queued request task=%s step=%s type=%s", job.task_id, job.step_id, request_type)
-        if self._suppression_requested(job.task_id) or (self.durable and self.durable.task_status(job.task_id) == "suppressed"):
-            self.queue.cleanup_task(job.task_id)
+        if self._task_suppressed(job.task_id):
+            # Preserve the entry in Redis: ack (remove from PEL) but do NOT delete
+            # from the stream.  Suppressed tasks remain in the queue until explicit
+            # /flush-queue or Redis shutdown.
+            self.queue.ack_preserve(redis_id)
             self._clear_suppression_request(job.task_id)
-            logging.info("Skipped suppressed queued task=%s step=%s", job.task_id, job.step_id)
+            logging.info("Skipped suppressed queued task=%s step=%s (preserved in Redis)", job.task_id, job.step_id)
             return
         if self.durable:
             command = self._command_from_job(job)
@@ -473,11 +487,14 @@ class PromptWorker:
         if self.durable and status is not None and status != "suppressed":
             payload = self.queue.snapshot_task_jobs(job.task_id)
             self.durable.suppress_task(job.task_id, reason or "Suppressed by operator.", payload)
-        self.queue.cleanup_task(job.task_id)
+        # Preserve the entry in Redis: ack (remove from PEL) but do NOT delete
+        # from the stream.  Suppressed tasks remain in the queue until explicit
+        # /flush-queue or Redis shutdown.
+        self.queue.ack_preserve(job.message_id)
         if hasattr(self.live, "cleanup"):
             self.live.cleanup(job.task_id)
         self._clear_suppression_request(job.task_id)
-        logging.info("Task suppressed task=%s step=%s reason=%s", job.task_id, job.step_id, reason)
+        logging.info("Task suppressed task=%s step=%s reason=%s (preserved in Redis)", job.task_id, job.step_id, reason)
 
     def _handle_append_dependency_terminal(self, redis_id: str, job: PromptJob, name: str, command: dict, state: dict) -> None:
         previous_task_id = str(command.get("previous_task_id") or "")
@@ -950,10 +967,18 @@ class PromptWorker:
             locations = self.queue.task_locations(task_id)
             recoverable = bool(locations["work"] or locations["retry"])
             if status == "suppressed":
-                self.queue.cleanup_task(task_id)
-                if hasattr(self.live, "cleanup"):
-                    self.live.cleanup(task_id)
-                self._clear_suppression_request(task_id)
+                suppressed_at = self.durable.suppressed_at(task_id)
+                if suppressed_at is not None and suppressed_at > datetime.now(timezone.utc) - timedelta(hours=4):
+                    held += 1
+                    continue
+                pending = self.queue.r.xpending_range(self.queue.stream, self.queue.group, min="-", max="+", count=1000)
+                for entry in pending:
+                    msg_id = entry["message_id"]
+                    entries = self.queue.r.xrange(self.queue.stream, min=msg_id, max=msg_id)
+                    for _, fields in entries:
+                        if str(fields.get("task_id") or "") == task_id:
+                            self.queue.ack_preserve(msg_id)
+                            break
                 cleaned += 1
                 continue
             if status in {"completed", "failed", "cancelled"}:
@@ -1088,8 +1113,9 @@ class PromptWorker:
             return None
         root = self._runtime_root()
         from norm_runtime.deletion_queue import RedisDeletionQueue
-        from norm_runtime.settings import load_path_settings
+        from norm_runtime.settings import load_path_settings, load_plugin_settings
         path_cfg = load_path_settings(root)
+        plugin_cfg = load_plugin_settings(root)
         workspace_root = path_cfg["workspace_root"]
         allowed_roots = [str(workspace_root), *list(tools.get("allowed_roots", []))]
         redis_cfg = self._runtime_config().get("redis", {})
@@ -1124,6 +1150,8 @@ class PromptWorker:
             shell_timeout_seconds=int(tools.get("shell_timeout_seconds", 120)),
             shell_max_output_chars=int(tools.get("shell_max_output_chars", 20000)),
             verbatim_helper=str(path_cfg["verbatim_writer"]),
+            plugin_root=str(plugin_cfg["plugin_root"]),
+            plugin_registry_file=str(plugin_cfg["registry_file"]),
             connection_config={
                 "postgres": self._runtime_config().get("postgres", {}),
                 "redis": self._runtime_config().get("redis", {}),
@@ -2213,7 +2241,7 @@ class PromptWorker:
                 }
 
             messages.append(
-                {"role": "assistant", "content": content, "tool_calls": calls}
+                redact({"role": "assistant", "content": content, "tool_calls": calls})
             )
             for call in calls:
                 function = call.get("function") if isinstance(call, dict) else None
@@ -2234,7 +2262,7 @@ class PromptWorker:
                     else:
                         result = tools.execute(name, arguments)
 
-                evidence_item = {"tool": str(name), "arguments": arguments, "result": result}
+                evidence_item = redact({"tool": str(name), "arguments": arguments, "result": result})
                 evidence.append(evidence_item)
                 self._persist_evidence_now(job, [evidence_item])
                 if self._suppression_requested(job.task_id) or (self.durable and self.durable.task_status(job.task_id) == "suppressed"):
@@ -2543,6 +2571,14 @@ class PromptWorker:
         )
 
     def _recover_or_escalate(self, redis_id: str, job: PromptJob, error: str) -> bool:
+        if self._task_suppressed(job.task_id):
+            # Preserve the entry in Redis: ack (remove from PEL) but do NOT delete
+            # from the stream.  Suppressed tasks remain in the queue until explicit
+            # /flush-queue or Redis shutdown.
+            self.queue.ack_preserve(redis_id)
+            self._clear_suppression_request(job.task_id)
+            logging.info("Skipped suppressed recovery task=%s step=%s (preserved in Redis)", job.task_id, job.step_id)
+            return True
         parked = self.queue.park_chain(job.chain_id, redis_id)
         if not parked:
             logging.error("Failed prompt was not parked task=%s step=%s", job.task_id, job.step_id)

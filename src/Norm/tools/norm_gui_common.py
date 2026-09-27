@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_DIR = ROOT / "app"
+APP_DIR = ROOT / "core"
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 from norm_runtime.settings import load_ports
@@ -77,6 +77,7 @@ def endpoints() -> dict[str, str]:
         "stop_all": f"http://{host}:{activity_port}/control/stop-all",
         "stop_all_now": f"http://{host}:{activity_port}/control/stop-all-now",
         "suppress_task": f"http://{host}:{activity_port}/control/suppress-task",
+        "inject_context": f"http://{host}:{activity_port}/control/inject-context",
         "flush_suppressed": f"http://{host}:{activity_port}/control/flush-suppressed",
     }
 
@@ -93,7 +94,7 @@ def norm_process_running() -> bool:
 
 
 def start_norm_detached() -> None:
-    exe = ROOT / "app" / "norm.exe"
+    exe = ROOT / "core" / "norm.exe"
     if not exe.is_file():
         raise RuntimeError(f"Norm executable not found: {exe}")
     flags = 0

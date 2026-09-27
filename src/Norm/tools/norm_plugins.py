@@ -4,12 +4,14 @@ import argparse
 import ast
 import contextlib
 import hashlib
+import importlib
 import importlib.util
 import inspect
 import io
 import json
 import os
 import re
+import shutil
 import sys
 import uuid
 from configparser import ConfigParser
@@ -173,6 +175,19 @@ def _match(registry: dict[str, Any], query: str, limit: int = 8) -> list[dict[st
 def _load_entry(plugin_root: Path, plugin: dict[str, Any]):
     folder = (plugin_root / str(plugin["folder"])).resolve()
     entry = (folder / str(plugin["entry_file"])).resolve()
+    for cache in folder.rglob("__pycache__"):
+        if cache.is_dir():
+            shutil.rmtree(cache, ignore_errors=True)
+    importlib.invalidate_caches()
+    for path in folder.glob("*.py"):
+        alias = path.stem
+        existing = sys.modules.get(alias)
+        existing_file = getattr(existing, "__file__", None) if existing is not None else None
+        try:
+            if existing is not None and (not existing_file or not Path(existing_file).resolve().is_relative_to(folder)):
+                sys.modules.pop(alias, None)
+        except Exception:
+            sys.modules.pop(alias, None)
     current_sha = _sha256(entry)
     record = next((item for item in plugin.get("scripts", []) if item.get("path") == plugin.get("entry_file")), None)
     if record is None or current_sha != record.get("sha256"):
@@ -183,9 +198,14 @@ def _load_entry(plugin_root: Path, plugin: dict[str, Any]):
         raise ImportError(f"cannot load plugin entry file: {entry}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
+    sys.path.insert(0, str(folder))
     try:
         spec.loader.exec_module(module)
     finally:
+        try:
+            sys.path.remove(str(folder))
+        except ValueError:
+            pass
         sys.modules.pop(module_name, None)
     fn = getattr(module, str(plugin.get("entry_function") or "run"), None)
     if not callable(fn):
@@ -199,8 +219,16 @@ def _run_plugin(registry: dict[str, Any], selector: str, payload: dict[str, Any]
     fn = _load_entry(plugin_root, plugin)
     stdout = io.StringIO()
     stderr = io.StringIO()
-    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-        result = fn() if len(inspect.signature(fn).parameters) == 0 else fn(payload)
+    folder = (plugin_root / str(plugin["folder"])).resolve()
+    sys.path.insert(0, str(folder))
+    try:
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            result = fn() if len(inspect.signature(fn).parameters) == 0 else fn(payload)
+    finally:
+        try:
+            sys.path.remove(str(folder))
+        except ValueError:
+            pass
     return {
         "ok": True,
         "plugin": {k: plugin[k] for k in ("name", "version", "uuid", "aggregate_sha256", "entrypoint")},

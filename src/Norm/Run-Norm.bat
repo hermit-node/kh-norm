@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions
 set "ROOT=%~dp0"
-set "NORM_EXE=%ROOT%app\norm.exe"
+set "NORM_EXE=%ROOT%core\norm.exe"
 set "PY=%ROOT%.venv\Scripts\python.exe"
 set "SETTINGS=%ROOT%config\settings.ini"
 
@@ -28,7 +28,7 @@ if not defined TS_IP (
   exit /b 1
 )
 
-for /f "tokens=1,2" %%A in ('%PY% -c "from pathlib import Path; import sys; root=Path(r'%SETTINGS%').parents[1]; sys.path.insert(0,str(root/'app')); from norm_runtime.settings import load_ports; p=load_ports(root); print(p['activity'],p['norm_http'])"') do (
+for /f "tokens=1,2" %%A in ('%PY% -c "from pathlib import Path; import sys; root=Path(r'%SETTINGS%').parents[1]; sys.path.insert(0,str(root/'core')); from norm_runtime.settings import load_ports; p=load_ports(root); print(p['activity'],p['norm_http'])"') do (
   set "ACTIVITY_PORT=%%A"
   set "NORM_PORT=%%B"
 )

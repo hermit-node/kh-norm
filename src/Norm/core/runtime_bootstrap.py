@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -15,8 +16,21 @@ from norm_runtime.prompt_queue import RedisPromptQueue
 from norm_runtime.conversation_store import ConversationStore
 from norm_runtime.file_tool_executor import FileToolExecutor
 from norm_runtime.ollama_client import OllamaClient
-from norm_runtime.settings import load_ports, load_path_settings, load_network_settings, resolve_network_host, load_secrets
+from norm_runtime.settings import load_ports, load_path_settings, load_plugin_settings, load_network_settings, resolve_network_host, load_secrets
 from norm_runtime.conversation_service import ConversationService
+
+
+def _expand_runtime_values(value: Any, substitutions: dict[str, str]) -> Any:
+    if isinstance(value, dict):
+        return {key: _expand_runtime_values(item, substitutions) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_expand_runtime_values(item, substitutions) for item in value]
+    if isinstance(value, str):
+        expanded = os.path.expandvars(os.path.expanduser(value))
+        for token, replacement in substitutions.items():
+            expanded = expanded.replace(token, replacement)
+        return expanded
+    return value
 
 
 def load_config(root: Path) -> dict[str, Any]:
@@ -28,6 +42,13 @@ def load_config(root: Path) -> dict[str, Any]:
     secrets = load_secrets(root)
     path_cfg = load_path_settings(root)
     documents_root = path_cfg["documents_root"]
+    substitutions = {
+        "{runtime_root}": str(path_cfg["runtime_root"]),
+        "{app_root}": str(path_cfg["app_root"]),
+        "{documents_root}": str(path_cfg["documents_root"]),
+        "{workspace_root}": str(path_cfg["workspace_root"]),
+    }
+    config = _expand_runtime_values(config, substitutions)
     config["_paths"] = {name: str(path) for name, path in path_cfg.items()}
     tools_cfg = config.setdefault("tools", {})
     tools_cfg["blocked_write_staging_root"] = str(documents_root / "docs" / "blocked-writes")
@@ -93,7 +114,7 @@ def build_runtime(root: Path, *, ensure_schema: bool = False):
     return coordinator, live, durable
 
 
-def build_prompt_queue(root: Path) -> RedisPromptQueue:
+def build_prompt_queue(root: Path, durable=None) -> RedisPromptQueue:
     config = load_config(root)
     queue_cfg = config["prompt_queue"]
     worker_cfg = config.get("worker", {})
@@ -118,6 +139,7 @@ def build_prompt_queue(root: Path) -> RedisPromptQueue:
         dead_letter_stream=queue_cfg.get("dead_letter_stream", "norm:prompt:dead"),
         stale_ms=int(queue_cfg.get("claim_idle_seconds", 900)) * 1000,
         max_attempts=int(queue_cfg.get("max_attempts", 5)),
+        durable=durable,
     )
     queue.ensure_group()
     return queue
@@ -152,6 +174,7 @@ def build_conversation_service(
     memory_cfg = config.get("memory", {})
     tools_cfg = config.get("tools", {})
     path_cfg = load_path_settings(root)
+    plugin_cfg = load_plugin_settings(root)
     workspace_root = path_cfg["workspace_root"]
     allowed_roots = [str(workspace_root), *list(tools_cfg.get("allowed_roots", []))]
     file_tools = None
@@ -180,6 +203,8 @@ def build_conversation_service(
             shell_timeout_seconds=int(tools_cfg.get("shell_timeout_seconds", 120)),
             shell_max_output_chars=int(tools_cfg.get("shell_max_output_chars", 20000)),
             verbatim_helper=str(path_cfg["verbatim_writer"]),
+            plugin_root=str(plugin_cfg["plugin_root"]),
+            plugin_registry_file=str(plugin_cfg["registry_file"]),
             connection_config={
                 "postgres": config.get("postgres", {}),
                 "redis": config.get("redis", {}),
