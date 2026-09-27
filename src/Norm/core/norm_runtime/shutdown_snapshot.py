@@ -4,6 +4,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from .settings import load_path_settings
+
 
 def _buffer_keys(live) -> list[str]:
     pattern = f"{live.prefix}:*:model-buffer:*"
@@ -50,7 +52,7 @@ def _durable_checkpoint(durable, task_id: str) -> list[str]:
     return lines
 
 
-def write_sos(root: Path, live, durable, prompt_queue, mode: str) -> Path:
+def write_sos(runtime_root: Path, live, durable, prompt_queue, mode: str, *, output_root: Path | None = None) -> Path:
     now = datetime.now(ZoneInfo("America/New_York"))
     lines = [
         "# Norm SOS / Crash Recovery Buffer",
@@ -133,7 +135,14 @@ def write_sos(root: Path, live, durable, prompt_queue, mode: str) -> Path:
         "On restart, trust PostgreSQL checkpoints first. Redis task state, working-buffer events, and raw model-buffer streams are the best-effort interrupted-step context.",
         "",
     ])
-    target = root / "SOS.md"
+    runtime_root = Path(runtime_root).resolve()
+    if output_root is None:
+        temp_root = Path(load_path_settings(runtime_root)["temp_root"])
+        recovery_root = temp_root / "recovery"
+    else:
+        recovery_root = Path(output_root).expanduser().resolve()
+    recovery_root.mkdir(parents=True, exist_ok=True)
+    target = recovery_root / "SOS.md"
     content = "\n".join(lines)
     with target.open("w", encoding="utf-8", newline="\n") as handle:
         handle.write(content)

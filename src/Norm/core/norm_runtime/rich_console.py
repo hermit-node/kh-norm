@@ -6,6 +6,9 @@ import socket
 import threading
 import ctypes
 import uuid
+import subprocess
+import sys
+from pathlib import Path
 from contextlib import nullcontext
 from datetime import datetime, timezone
 from urllib import request
@@ -302,6 +305,34 @@ class NormConsole:
         except Exception as exc:
             self.console.print(f"[red]Could not flush suppressed tasks: {exc}[/]")
 
+    def _run_backup(self, full: bool = False) -> None:
+        runtime_root = Path(__file__).resolve().parents[2]
+        helper = runtime_root / "tools" / "norm_backup.py"
+        python_exe = runtime_root / ".venv" / "Scripts" / "python.exe"
+        if not python_exe.is_file():
+            python_exe = Path(sys.executable)
+        mode = "full" if full else "source"
+        label = "sensitive full" if full else "portable source"
+        self.console.print(f"[yellow]Creating {label} Norm backup...[/]")
+        try:
+            proc = subprocess.run([str(python_exe), str(helper), "--mode", mode, "--json"], cwd=str(runtime_root),
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+            if proc.returncode != 0:
+                raise RuntimeError((proc.stderr or proc.stdout).strip() or f"exit code {proc.returncode}")
+            lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+            result = json.loads(lines[-1])
+            self.console.print(f"[green]Backup created: {result.get('backup_zip')}[/]")
+        except Exception as exc:
+            self.console.print(f"[red]Backup failed: {exc}[/]")
+
+    def _show_busy(self) -> None:
+        try:
+            with request.urlopen(self.busy_url, timeout=5) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            self.console.print_json(data=result)
+        except Exception as exc:
+            self.console.print(f"[red]Could not read busy status: {exc}[/]")
+
     def _show_help(self) -> None:
         self.console.print(
             "[bold]Commands[/]\n"
@@ -319,7 +350,11 @@ class NormConsole:
             "  /stop all -now  Stop the current generation now, preserve it for resume, write SOS.md, unload/stop all.\n"
             "  /suppress-task  Park the active root task tree, or oldest next queued task tree, in PostgreSQL.\n"
             "  /flush-suppressed  Permanently delete all suppressed task records.\n"
-            "  /status         Show mute, pause, and pending-input state.\n"
+            "  /backup         Create a portable installer/source backup without private state.\n"
+            "  /backup full    Create a sensitive full backup with .ssh, secrets, workspace, plugins, and PostgreSQL.\n"
+            "  /backup-zip     Legacy alias for /backup full.\n"
+            "  /status         Show local mute, pause, and pending-input state.\n"
+            "  /status/busy    Show authoritative runtime busy state.\n"
             "  /help           Show these commands.\n"
             "  /exit           Close this console only; Norm keeps running."
         )
@@ -367,6 +402,12 @@ class NormConsole:
             threading.Thread(target=self._suppress_task, daemon=True).start()
         elif parts == ["/flush-suppressed"]:
             threading.Thread(target=self._flush_suppressed, daemon=True).start()
+        elif parts == ["/backup"]:
+            threading.Thread(target=self._run_backup, kwargs={"full": False}, daemon=True).start()
+        elif parts in (["/backup", "full"], ["/backup-zip"]):
+            threading.Thread(target=self._run_backup, kwargs={"full": True}, daemon=True).start()
+        elif parts == ["/status/busy"]:
+            threading.Thread(target=self._show_busy, daemon=True).start()
         elif parts == ["/status"]:
             with self.muted_lock:
                 muted = ", ".join(sorted(self.muted)) or "none"

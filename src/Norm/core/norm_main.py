@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 
+import psycopg
 import redis
 from threading import Event
 from urllib import request
@@ -307,20 +308,6 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         activity_sink=activity_hub.publish,
         activity_source="context-snapshot",
     )
-    activity_server, _ = start_activity_server(
-        activity_hub,
-        host=activity_host,
-        port=activity_port,
-        cancel_ollama=OllamaClient.cancel_active,
-        shutdown_ollama=request_ollama_shutdown,
-        shutdown_norm=request_shutdown,
-        stop_all=request_stop_all,
-        suppress_task=request_suppress_task,
-        flush_suppressed=request_flush_suppressed,
-        busy_status=request_busy_status,
-        context_status=request_context_status,
-    )
-    logging.getLogger().addHandler(ActivityLogHandler(activity_hub))
     statuses = healthcheck(root)
     coordinator, live, durable = build_runtime(root, ensure_schema=True)
     durable.set_runtime_state("deployed_version", load_project_metadata(root)["version"])
@@ -335,6 +322,20 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         coordinator=coordinator,
         durable=durable,
     )
+    activity_server, _ = start_activity_server(
+        activity_hub,
+        host=activity_host,
+        port=activity_port,
+        cancel_ollama=OllamaClient.cancel_active,
+        shutdown_ollama=request_ollama_shutdown,
+        shutdown_norm=request_shutdown,
+        stop_all=request_stop_all,
+        suppress_task=request_suppress_task,
+        flush_suppressed=request_flush_suppressed,
+        busy_status=request_busy_status,
+        context_status=request_context_status,
+    )
+    logging.getLogger().addHandler(ActivityLogHandler(activity_hub))
     http_cfg = config.get("http", {})
     worker_cfg = config.get("worker", {})
     queue_cfg = config.get("prompt_queue", {})
@@ -478,9 +479,31 @@ def main() -> int:
     if args.check:
         print(json.dumps({"ollama": "ok", **statuses}))
         return 0
-    run_host(root, ollama_process, ollama_url, model_name)
-    return 0
+    startup_attempts = 3
+    for attempt in range(1, startup_attempts + 1):
+        try:
+            run_host(root, ollama_process, ollama_url, model_name)
+            return 0
+        except psycopg.Error:
+            if attempt >= startup_attempts:
+                raise
+            delay = attempt * 3
+            logging.exception(
+                "PostgreSQL startup failed on attempt %s/%s; retrying in %ss",
+                attempt,
+                startup_attempts,
+                delay,
+            )
+            time.sleep(delay)
+    return 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except SystemExit:
+        raise
+    except BaseException:
+        logging.exception("FATAL: Norm runtime terminated unexpectedly")
+        logging.shutdown()
+        raise

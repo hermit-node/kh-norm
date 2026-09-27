@@ -522,6 +522,9 @@ class RedisPromptQueue:
     # Inspect
     # ------------------------------------------------------------------
     def inspect_queue(self, count: int = 10) -> Dict[str, List[Dict[str, Any]]]:
+        # Redis XRANGE rejects COUNT 0. Queue inspection is always bounded here;
+        # callers wanting a full GUI snapshot use the dedicated unlimited path.
+        count = max(1, int(count))
         work_entries = self.r.xrange(self.stream, min="-", max="+", count=count)
         retry_entries = self.r.xrange(self.retry_stream, min="-", max="+", count=count)
         work_result = []

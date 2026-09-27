@@ -36,10 +36,9 @@ def _load_config() -> tuple[Path, Path]:
     cfg = ConfigParser(interpolation=None)
     with SETTINGS.open("r", encoding="utf-8-sig") as handle:
         cfg.read_file(handle)
-    documents = Path(cfg.get("paths", "documents_root")).expanduser().resolve()
     raw_root = cfg.get("plugins", "root", fallback="plugins").strip() or "plugins"
     candidate = Path(os.path.expandvars(os.path.expanduser(raw_root)))
-    plugin_root = candidate.resolve() if candidate.is_absolute() else (documents / candidate).resolve()
+    plugin_root = candidate.resolve() if candidate.is_absolute() else (ROOT / candidate).resolve()
     raw_registry = cfg.get("plugins", "registry_file", fallback=".registry.json").strip() or ".registry.json"
     registry_candidate = Path(os.path.expandvars(os.path.expanduser(raw_registry)))
     registry = registry_candidate.resolve() if registry_candidate.is_absolute() else (plugin_root / registry_candidate).resolve()

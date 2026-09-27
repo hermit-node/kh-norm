@@ -14,6 +14,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 
 from .models import StepResult, TaskPlan
+from .integrity_repair import prepare_task_prune_cur, repair_task_lineage_cur
 from .resource_status import merge_resource_status
 
 _SCHEMA_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -35,6 +36,10 @@ class PostgresTaskLog:
 
     def ensure_schema(self) -> None:
         with self._connect() as conn, conn.cursor() as cur:
+            # Startup migrations must never wait forever behind a stale transaction.
+            cur.execute("SET LOCAL lock_timeout = '5s'")
+            cur.execute("SET LOCAL statement_timeout = '120s'")
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"norm:schema:{self.schema}",))
             cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(self.schema)))
             cur.execute(sql.SQL("""
                 CREATE TABLE IF NOT EXISTS {}.task_runs (
@@ -350,6 +355,7 @@ class PostgresTaskLog:
             FROM {}.task_runs p
             WHERE c.parent_task_id=p.task_id AND (c.parent_task_uuid IS NULL OR c.parent_node_uuid IS NULL)
         """).format(sql.Identifier(self.schema),sql.Identifier(self.schema),sql.Identifier(self.schema)))
+        repair_task_lineage_cur(cur, self.schema)
         cur.execute(sql.SQL("SELECT task_uuid::text,parent_task_uuid::text,parent_node_uuid::text,task_kind FROM {}.task_runs WHERE parent_task_uuid IS NOT NULL").format(sql.Identifier(self.schema)))
         for child_uuid,parent_uuid,parent_node,task_kind in cur.fetchall():
             cur.execute(sql.SQL("SELECT node_id::text FROM {}.task_nodes WHERE task_uuid=%s::uuid AND active ORDER BY ordinal LIMIT 1").format(sql.Identifier(self.schema)), (child_uuid,))
@@ -1288,6 +1294,7 @@ class PostgresTaskLog:
             missing = sorted(set(task_ids) - covered)
             if missing:
                 raise RuntimeError(f"refusing to delete tasks not covered by validated task history: {missing[:5]}")
+            prepare_task_prune_cur(cur, self.schema, task_ids)
             cur.execute(sql.SQL("DELETE FROM {}.task_runs WHERE task_id=ANY(%s)").format(sql.Identifier(self.schema)), (task_ids,))
             return int(cur.rowcount)
 
@@ -1319,6 +1326,35 @@ class PostgresTaskLog:
                             WHERE ts.thread_id=mt.thread_id AND covered.created_at >= m.created_at
                           )
                       )
+                ), preserved AS (
+                    SELECT mi.memory_id,mt.thread_id,
+                           MAX(CASE WHEN mt.is_primary THEN GREATEST(mt.relevance,1.0) ELSE GREATEST(mt.relevance,0.85) END) AS relevance
+                    FROM {}.memory_items mi
+                    JOIN deletable d ON d.message_id=mi.source_message_id
+                    JOIN {}.message_threads mt ON mt.message_id=d.message_id
+                    JOIN {}.threads t ON t.thread_id=mt.thread_id AND t.project_id=mi.project_id
+                    GROUP BY mi.memory_id,mt.thread_id
+                )
+                INSERT INTO {}.memory_threads(memory_id,thread_id,relevance)
+                SELECT memory_id,thread_id,relevance FROM preserved
+                ON CONFLICT(memory_id,thread_id) DO UPDATE
+                SET relevance=GREATEST(memory_threads.relevance,EXCLUDED.relevance)
+            """).format(s, s, s, s, s, s, s, s, s), (cutoff,))
+            memory_links_preserved = int(cur.rowcount)
+            cur.execute(sql.SQL("""
+                WITH deletable AS (
+                    SELECT m.message_id FROM {}.messages m
+                    WHERE m.created_at < %s
+                      AND EXISTS(SELECT 1 FROM {}.message_threads mt0 WHERE mt0.message_id=m.message_id)
+                      AND NOT EXISTS(
+                        SELECT 1 FROM {}.message_threads mt
+                        WHERE mt.message_id=m.message_id
+                          AND NOT EXISTS(
+                            SELECT 1 FROM {}.thread_summaries ts
+                            JOIN {}.messages covered ON covered.message_id=ts.covers_through_message_id
+                            WHERE ts.thread_id=mt.thread_id AND covered.created_at >= m.created_at
+                          )
+                      )
                 )
                 DELETE FROM {}.messages WHERE message_id IN (SELECT message_id FROM deletable)
             """).format(s, s, s, s, s, s), (cutoff,))
@@ -1329,7 +1365,7 @@ class PostgresTaskLog:
                   AND EXISTS(SELECT 1 FROM {}.thread_summaries newer WHERE newer.thread_id=old.thread_id AND newer.version>old.version)
             """).format(s, s), (cutoff,))
             summaries_deleted = int(cur.rowcount)
-        return {"messages_deleted": messages_deleted, "thread_summaries_deleted": summaries_deleted}
+        return {"messages_deleted": messages_deleted, "thread_summaries_deleted": summaries_deleted, "memory_links_preserved": memory_links_preserved}
 
     def keep_latest_background_snapshot(self) -> int:
         with self._connect() as conn, conn.cursor() as cur:

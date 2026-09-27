@@ -15,6 +15,7 @@ import psycopg
 import redis
 
 from .history_maintenance import DeepHistoryMaintainer
+from .temp_cleanup import cleanup_task_temp, cleanup_temp_root
 from .models import StepResult, StepStatus, TaskPlan, TaskStep
 from .ollama_client import ModelGenerationCancelled, ModelOutputTruncated, OllamaClient
 from .prompt_queue import PromptJob, RedisPromptQueue, normalize_request_type
@@ -904,19 +905,18 @@ class PromptWorker:
         queue_counts = self.queue.cleanup_task(task_id)
         self.live.cleanup(task_id)
         self._clear_processed_sos(task_id)
+        try:
+            from norm_runtime.settings import load_path_settings
+            temp_result = cleanup_task_temp(load_path_settings(self._runtime_root())["temp_root"], task_id, self.durable)
+            if temp_result.get("removed"):
+                logging.info("Removed verified terminal task temp task=%s files=%s bytes=%s", task_id, temp_result.get("files_removed", 0), temp_result.get("bytes_removed", 0))
+        except Exception:
+            logging.exception("Terminal task temp cleanup failed task=%s; leaving temp material in place", task_id)
         logging.info("Terminal Redis cleanup task=%s queue=%s live=cleared", task_id, queue_counts)
 
     def _clear_processed_sos(self, task_id: str) -> None:
-        """Delete a matching SOS only after the originating task is durably resolved."""
-        if not self.durable:
-            return
-        status = self.durable.task_status(task_id)
-        if status not in {"completed", "failed"}:
-            return
-        if not self.durable.terminal_summary_verified(task_id):
-            return
-        summary = self.durable.latest_summary(task_id) if hasattr(self.durable, "latest_summary") else None
-        if not str(summary or "").strip():
+        """Clean only the legacy root SOS.readme; current temp/recovery SOS is handled conservatively by temp cleanup."""
+        if not self.durable or not self.durable.terminal_summary_verified(task_id):
             return
         path = self._runtime_root() / "SOS.readme"
         if not path.is_file():
@@ -924,16 +924,16 @@ class PromptWorker:
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
-            logging.exception("Could not inspect SOS before cleanup task=%s", task_id)
+            logging.exception("Could not inspect legacy SOS before cleanup task=%s", task_id)
             return
         if f"Task ID: {task_id}" not in {line.strip() for line in lines}:
             return
         try:
             path.unlink()
         except OSError:
-            logging.exception("Could not remove processed SOS task=%s", task_id)
+            logging.exception("Could not remove processed legacy SOS task=%s", task_id)
             return
-        logging.info("Processed SOS removed after durable task resolution task=%s status=%s", task_id, status)
+        logging.info("Processed legacy SOS removed after durable task resolution task=%s", task_id)
 
     def _all_redis_task_ids(self) -> set[str]:
         task_ids = set(self.queue.task_ids())
@@ -949,6 +949,11 @@ class PromptWorker:
         self._last_redis_maintenance_check = monotonic()
         self.durable.record_maintenance_note("startup", "Redis startup scan began.", details={"pending_requeued": requeued})
         self._reconcile_redis(reason="startup", finalize_unrecoverable=True, include_durable_running=True)
+        try:
+            temp_result = self._purge_temp_outputs()
+            logging.info("Startup temp cleanup result=%s", temp_result)
+        except Exception:
+            logging.exception("Startup temp cleanup failed; preserving temp material")
         logging.info("Startup Redis recovery pending_requeued=%s", requeued)
 
     def _reconcile_redis(
@@ -1090,10 +1095,12 @@ class PromptWorker:
         cached = getattr(self, "_slice_config", None)
         if cached is not None:
             return cached
-        import json
+        # Use the same resolver as the host/conversation path. Reading runtime.json
+        # directly leaves placeholders such as {runtime_root} literal and can make
+        # optional tool configuration fail even for ordinary text work.
+        from runtime_bootstrap import load_config
 
-        path = self._runtime_root() / "config" / "runtime.json"
-        self._slice_config = json.loads(path.read_text(encoding="utf-8-sig"))
+        self._slice_config = load_config(self._runtime_root())
         return self._slice_config
 
     def _slice_limits(self) -> tuple[int, int]:
@@ -1117,7 +1124,7 @@ class PromptWorker:
         path_cfg = load_path_settings(root)
         plugin_cfg = load_plugin_settings(root)
         workspace_root = path_cfg["workspace_root"]
-        allowed_roots = [str(workspace_root), *list(tools.get("allowed_roots", []))]
+        allowed_roots = [str(workspace_root), str(root / "docs"), str(plugin_cfg["plugin_root"]), *list(tools.get("allowed_roots", []))]
         redis_cfg = self._runtime_config().get("redis", {})
         dq = self._runtime_config().get("deletion_queue", {})
         deletion_queue = RedisDeletionQueue(
@@ -1133,7 +1140,7 @@ class PromptWorker:
             audit_log=str(tools.get("audit_log", root / "logs" / "tool-audit.jsonl")),
             max_read_bytes=int(tools.get("max_read_bytes", 131_072)),
             max_write_bytes=int(tools.get("max_write_bytes", 1_048_576)),
-            blocked_write_staging_root=str(tools.get("blocked_write_staging_root", workspace_root / "docs" / "blocked-writes")),
+            blocked_write_staging_root=str(tools.get("blocked_write_staging_root", root / "docs" / "blocked-writes")),
             write_retry_count=int(tools.get("write_retry_count", 3)),
             write_retry_delay_seconds=float(tools.get("write_retry_delay_seconds", 0.25)),
             image_enabled=bool(tools.get("image_enabled", False)),
@@ -2710,6 +2717,20 @@ class PromptWorker:
         workspace = Path(load_path_settings(self._runtime_root())["workspace_root"])
         return self._purge_workspace_directory(Path(output_raw), workspace)
 
+    def _purge_temp_outputs(self) -> dict:
+        from norm_runtime.settings import load_path_settings, load_settings
+
+        paths = load_path_settings(self._runtime_root())
+        settings = load_settings(self._runtime_root())
+        if not settings.getboolean("temp", "cleanup_enabled", fallback=True):
+            return {"path": str(paths["temp_root"]), "skipped": "disabled"}
+        return cleanup_temp_root(
+            paths["temp_root"],
+            durable=self.durable,
+            max_age_hours=settings.getint("temp", "max_age_hours", fallback=72),
+            recovery_max_age_hours=settings.getint("temp", "recovery_max_age_hours", fallback=168),
+        )
+
     @staticmethod
     def _runtime_state_time(value):
         if not value:
@@ -2777,6 +2798,9 @@ class PromptWorker:
         run_id = str(marker.get("run_id") or "unknown")
         mode = str(marker.get("mode") or ("deep" if deep_due else "regular"))
         try:
+            marker["phase"] = "temp_cleanup"
+            client.set(active_key, json.dumps(marker, sort_keys=True))
+            temp_cleanup = self._purge_temp_outputs()
             marker["phase"] = "image_analysis_purge"
             client.set(active_key, json.dumps(marker, sort_keys=True))
             purge = {"files_removed": 0, "bytes_removed": 0, "skipped": "disabled"}
@@ -2804,10 +2828,10 @@ class PromptWorker:
             self.durable.record_maintenance_note(
                 "weekly_cleanup", f"{mode.capitalize()} cleanup completed successfully.",
                 details={"status": "success", "mode": mode, "run_id": run_id,
-                         "resumed": resumed, "image_analysis_purge": purge, "maintenance_result": result},
+                         "resumed": resumed, "temp_cleanup": temp_cleanup, "image_analysis_purge": purge, "maintenance_result": result},
             )
             client.delete(active_key)
-            logging.info("Weekly maintenance completed run_id=%s mode=%s purge=%s result=%s", run_id, mode, purge, result)
+            logging.info("Weekly maintenance completed run_id=%s mode=%s temp=%s purge=%s result=%s", run_id, mode, temp_cleanup, purge, result)
         except Exception as exc:
             failed = {**marker, "status": "failed", "failed_at": _utc_now().isoformat(), "error": str(exc)[:2000]}
             try:

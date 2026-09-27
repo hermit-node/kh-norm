@@ -31,10 +31,8 @@ def ssh_defaults() -> dict:
     if not parser.has_section("ssh") or not parser.getboolean("ssh", "enabled", fallback=True):
         return {}
     root_raw = parser.get("ssh", "root", fallback=".ssh").strip() or ".ssh"
-    documents_raw = parser.get("paths", "documents_root", fallback="").strip()
-    documents = Path(os.path.expandvars(os.path.expanduser(documents_raw))).resolve()
     root_path = Path(os.path.expandvars(os.path.expanduser(root_raw)))
-    root = root_path.resolve() if root_path.is_absolute() else (documents / root_path).resolve()
+    root = root_path.resolve() if root_path.is_absolute() else (ROOT / root_path).resolve()
 
     def child(key: str, default: str) -> Path:
         raw = parser.get("ssh", key, fallback=default).strip() or default
@@ -69,7 +67,9 @@ def copy_runtime(run_dir: Path) -> Path:
         shutil.rmtree(runtime)
     ignore = shutil.ignore_patterns("*.exe", "*.pyc", "__pycache__", ".pytest_cache")
     shutil.copytree(APP, app_dst, ignore=ignore)
-    shutil.copy2(ROOT / "verbatim_lines.py", runtime / "verbatim_lines.py")
+    # Built-in plugins are part of the current runtime contract; user/private plugin
+    # state is not mounted into E2E.
+    shutil.copytree(ROOT / "plugins", runtime / "plugins", ignore=ignore)
     (runtime / "config").mkdir(parents=True, exist_ok=True)
     (runtime / "logs").mkdir(parents=True, exist_ok=True)
     (runtime / "state").mkdir(parents=True, exist_ok=True)
@@ -78,7 +78,11 @@ def copy_runtime(run_dir: Path) -> Path:
 
 def settings_text(version: str) -> str:
     return (f"""[paths]
+runtime_root = /sandbox/runtime
 documents_root = /workspace
+workspace_root = .
+temp_root = temp
+verbatim_writer = plugins/verbatim_lines/_cli.py
 
 [network]
 current_machine = norm-e2e
@@ -105,6 +109,10 @@ future_implementation_notes = FUTURE_IMPLEMENTATION_NOTES.md
 
 [environment]
 secrets_file = /sandbox/runtime/config/e2e.env
+
+[plugins]
+root = plugins
+registry_file = .registry.json
 
 [project]
 name = Norm

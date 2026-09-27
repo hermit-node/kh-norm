@@ -9,5 +9,27 @@ Machine-specific persistent data and secrets are external to this package. `conf
 Use `package-manifest.json` as the installer's package contract.
 ## Dynamic plugins
 
-Norm automatically hydrates local plugins from the configured `documents_root\plugins` directory. Public functions defined in non-hidden `.py` files become namespaced native tools and are rescanned/hot-reloaded without rebuilding `norm.exe`. Prefix helper files/functions with `_` to keep them private. Manifest `init.py`/`__init__.py` and `README.md` files remain supported as optional metadata. A failed plugin refresh leaves the last-known-good hydrated version active and records the error in `.registry.json`.
+Norm automatically hydrates local plugins from the configured runtime `plugins\` directory. Public functions defined in non-hidden `.py` files become namespaced native tools and are rescanned/hot-reloaded without rebuilding `norm.exe`. Prefix helper files/functions with `_` to keep them private. Manifest `init.py`/`__init__.py` and `README.md` files remain supported as optional metadata. A failed plugin refresh leaves the last-known-good hydrated version active and records the error in `.registry.json`.
 
+
+## PostgreSQL integrity recovery
+
+Startup UUID migration now repairs stale task lineage before rebuilding dependency edges. Exact surviving relationships are preferred, archived task history is used to locate the nearest surviving ancestor, and irrecoverable parents are explicitly detached instead of crashing startup. Deep-history pruning repairs surviving child lineage before deletion. Conversation pruning preserves memory-to-thread links before deleting source messages. Any remaining unthreaded memories are first remapped from surviving source-message links and then conservatively grouped into clearly labelled recovered threads; uncertain singletons remain separate.
+
+`tools\repair_norm_state.py --runtime-root C:\Norm` can run the same repair logic against an existing installation whose current EXE cannot start.
+
+
+## Current layout
+
+Maintained docs ship under `docs\`. Local plugins and Norm SSH material live under `plugins\` and `.ssh\` inside the runtime root. `%USERPROFILE%\Documents\Norm\workspace` is durable generated work; `%USERPROFILE%\Documents\Norm\temp` is disposable scratch/recovery state with conservative automated cleanup.
+
+The first-party `plugins\backup` capability creates a **sensitive** installer-compatible full backup containing runtime/source, docs, plugins, `.ssh`, configured secrets, workspace, selected recovery state, PostgreSQL, and environment rebuild metadata. `.venv` itself remains excluded.
+
+
+## 0.51.5 compatibility pass and built-in plugins
+
+`config\settings.ini` explicitly carries `paths.runtime_root`; portable media stores `.` and the installer rewrites the installed copy to its actual target (normally `C:\Norm`). Queued workers use the same resolved runtime configuration as the host, and optional image-analysis Python dependencies are validated only when image analysis is called.
+
+Package-managed built-in plugin subtrees are `plugins\backup`, `plugins\verbatim_lines`, `plugins\stegosplit_key`, and `plugins\stegosplit_message`. Unrelated user plugins remain persistent across normal installer updates. The two StegoSplit plugins bundle their implementation rather than depending on an editable external checkout.
+
+`/backup` creates portable/source installer media; `/backup full` creates the sensitive private-state format; `/backup-zip` is the legacy full-backup alias. `/condense-memories` is intentionally absent until the complete fail-closed curated-memory housekeeping policy is implemented.

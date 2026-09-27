@@ -47,13 +47,14 @@ def load_config(root: Path) -> dict[str, Any]:
         "{app_root}": str(path_cfg["app_root"]),
         "{documents_root}": str(path_cfg["documents_root"]),
         "{workspace_root}": str(path_cfg["workspace_root"]),
+        "{temp_root}": str(path_cfg["temp_root"]),
     }
     config = _expand_runtime_values(config, substitutions)
     config["_paths"] = {name: str(path) for name, path in path_cfg.items()}
     tools_cfg = config.setdefault("tools", {})
-    tools_cfg["blocked_write_staging_root"] = str(documents_root / "docs" / "blocked-writes")
-    tools_cfg["image_output_root"] = str(documents_root / "images" / "analysis")
-    tools_cfg.setdefault("storage_context", {})["backup_root"] = str(documents_root / "docs")
+    tools_cfg["blocked_write_staging_root"] = str(path_cfg["temp_root"] / "blocked-writes")
+    tools_cfg["image_output_root"] = str(path_cfg["workspace_root"] / "images" / "analysis")
+    tools_cfg.setdefault("storage_context", {})["backup_root"] = str(path_cfg["workspace_root"])
     redis_host = resolve_network_host(network, "redis_host")
     for section in ("redis", "prompt_queue", "deletion_queue", "console_queue", "rich_console_queue"):
         config.setdefault(section, {})["host"] = redis_host
@@ -176,7 +177,8 @@ def build_conversation_service(
     path_cfg = load_path_settings(root)
     plugin_cfg = load_plugin_settings(root)
     workspace_root = path_cfg["workspace_root"]
-    allowed_roots = [str(workspace_root), *list(tools_cfg.get("allowed_roots", []))]
+    temp_root = path_cfg["temp_root"]
+    allowed_roots = [str(workspace_root), str(temp_root), str(root / "docs"), str(plugin_cfg["plugin_root"]), *list(tools_cfg.get("allowed_roots", []))]
     file_tools = None
     if bool(tools_cfg.get("enabled", False)):
         deletion_queue = build_deletion_queue(root)
@@ -186,7 +188,7 @@ def build_conversation_service(
             audit_log=str(tools_cfg.get("audit_log", root / "logs" / "tool-audit.jsonl")),
             max_read_bytes=int(tools_cfg.get("max_read_bytes", 131072)),
             max_write_bytes=int(tools_cfg.get("max_write_bytes", 1048576)),
-            blocked_write_staging_root=str(tools_cfg.get("blocked_write_staging_root", workspace_root / "docs" / "blocked-writes")),
+            blocked_write_staging_root=str(tools_cfg.get("blocked_write_staging_root", temp_root / "blocked-writes")),
             write_retry_count=int(tools_cfg.get("write_retry_count", 3)),
             write_retry_delay_seconds=float(tools_cfg.get("write_retry_delay_seconds", 0.25)),
             image_enabled=bool(tools_cfg.get("image_enabled", False)),
