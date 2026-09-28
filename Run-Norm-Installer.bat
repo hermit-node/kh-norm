@@ -16,6 +16,6 @@ if not errorlevel 1 (
   exit /b %errorlevel%
 )
 
-echo Python was not found. Use the compiled Norm-Installer-1.4.2.exe or install Python.
+echo Python was not found. Use the compiled Norm-Installer-1.4.4.exe or install Python.
 pause
 exit /b 1

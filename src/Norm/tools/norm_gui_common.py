@@ -93,7 +93,7 @@ def norm_process_running() -> bool:
     return '"norm.exe"' in proc.stdout.lower()
 
 
-def start_norm_detached() -> None:
+def start_norm_detached() -> subprocess.Popen:
     exe = ROOT / "core" / "norm.exe"
     if not exe.is_file():
         raise RuntimeError(f"Norm executable not found: {exe}")
@@ -102,7 +102,7 @@ def start_norm_detached() -> None:
         flags |= subprocess.DETACHED_PROCESS
     if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
         flags |= subprocess.CREATE_NEW_PROCESS_GROUP
-    subprocess.Popen(
+    return subprocess.Popen(
         [str(exe), "--service"],
         cwd=str(ROOT),
         stdin=subprocess.DEVNULL,

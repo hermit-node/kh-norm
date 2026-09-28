@@ -1,13 +1,17 @@
-Norm Installer 1.4.2 / Norm 0.52.6
+Norm Installer Kit 1.4.4
+Norm runtime 0.52.8
 
-Runtime launch/HTTP reliability release.
+Launcher regression fix:
+- Restores direct BAT-level opening of Norm Runtime, Norm Replies, and Norm Prompt after health is ready.
+- Keeps detached --service runtime and lifecycle protections from the 1.4.3 hotpatch.
+- start_norm_detached now returns the Popen object and start_norm_service reports the owned PID.
+- Existing norm.exe before launch is an attach/wait state; the process just spawned by this helper is not classified as a duplicate.
+- Startup timeout no longer emits the misleading "Refusing to launch a second Norm instance" message.
 
-Norm 0.52.6 changes:
-- Core service is launched detached from operator consoles and always with --service.
-- Run-Norm.bat will not start a duplicate norm.exe merely because 12543/8766 are temporarily offline.
-- GUI fallback auto-start also uses --service.
-- Windows service mode adds a native SetConsoleCtrlHandler guard in addition to Python signal handlers.
-- GUI DB3 prompt dispatch catches bootstrap/HTTP races instead of letting the dispatcher thread die.
-- A later queued prompt can revive a dead dispatcher thread while preserving the DB3 queue.
+Packaging cleanup:
+- Removed obsolete 0.52.6/0.52.7 runtime payloads from this kit.
+- Added a fresh SHA-256 companion for 0.52.8.
+- The stale compiled 1.4.3 installer EXE is intentionally not carried forward; use Run-Norm-Installer.bat or rebuild the installer EXE from the included 1.4.4 source.
 
-Installer 1.4.2 keeps the 1.4.1 auto-source behavior: the installer discovers the newest valid Norm source ZIP beside itself rather than being bound to one hardcoded ZIP.
+Norm 0.52.8 portable-source SHA-256:
+67e6271d1193e5bbfb824dd67d383447e197b04e3a94e83a7744bd1017a8b142

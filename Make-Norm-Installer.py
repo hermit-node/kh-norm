@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-INSTALLER_VERSION = "1.4.2"
+INSTALLER_VERSION = "1.4.4"
 INSTALLER_TEMPLATE_FILENAME = "Norm-Installer.py"
 OUTPUT_EXE_FILENAME = f"Norm-Installer-{INSTALLER_VERSION}.exe"
 DEFAULT_PIP_VERSION = "26.2.1"
@@ -1168,10 +1168,12 @@ def self_test() -> int:
         raise BuilderError("Base requirements do not contain PyInstaller")
     template = (_app_dir() / INSTALLER_TEMPLATE_FILENAME).read_text(encoding="utf-8")
     patched = _patch_installer_template(template, pip_version=DEFAULT_PIP_VERSION)
-    if 'INSTALLER_VERSION = "1.4.2"' not in patched:
+    if 'INSTALLER_VERSION = "1.4.4"' not in patched:
         raise BuilderError("Installer version injection self-test failed")
     if 'find_latest_source()' not in patched:
         raise BuilderError("Installer auto-source discovery self-test failed")
+    if '_verify_bound_source' in patched:
+        raise BuilderError("Installer template still contains removed hard-bound source validation")
     print(json.dumps({
         "builder_version": INSTALLER_VERSION,
         "norm_version": info.version,
