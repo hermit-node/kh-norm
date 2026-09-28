@@ -1,4 +1,4 @@
-Norm Installer Kit 1.4.6
+Norm Installer Kit 1.4.8
 ========================
 
 What changed
@@ -13,7 +13,7 @@ renamed/rebound to whatever payload filename had been compiled into that install
 
 Launch behavior
 ---------------
-- Double-click Norm-Installer-1.4.6.exe.
+- Double-click Norm-Installer-1.4.8.exe.
 - It scans only the EXE's own folder for *.zip packages.
 - It ignores ZIPs that are not Norm portable-source packages.
 - It selects the highest manifest version; modification time breaks same-version ties.

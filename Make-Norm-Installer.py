@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-INSTALLER_VERSION = "1.4.6"
+INSTALLER_VERSION = "1.4.8"
 INSTALLER_TEMPLATE_FILENAME = "Norm-Installer.py"
 OUTPUT_EXE_FILENAME = f"Norm-Installer-{INSTALLER_VERSION}.exe"
 DEFAULT_PIP_VERSION = "26.2.1"
@@ -1291,7 +1291,7 @@ def self_test() -> int:
         raise BuilderError("Base requirements do not contain PyInstaller")
     template = (_app_dir() / INSTALLER_TEMPLATE_FILENAME).read_text(encoding="utf-8")
     patched = _patch_installer_template(template, pip_version=DEFAULT_PIP_VERSION)
-    if 'INSTALLER_VERSION = "1.4.6"' not in patched:
+    if 'INSTALLER_VERSION = "1.4.8"' not in patched:
         raise BuilderError("Installer version injection self-test failed")
     if 'find_latest_source()' not in patched:
         raise BuilderError("Installer auto-source discovery self-test failed")

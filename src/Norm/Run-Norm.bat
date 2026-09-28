@@ -67,6 +67,10 @@ for /L %%I in (1,1,90) do (
   ping.exe -n 2 127.0.0.1 >NUL
 )
 echo ERROR: Norm did not become healthy within the startup window.
+curl.exe -fsS "%CHAT_HEALTH%" >NUL 2>&1
+if errorlevel 1 (echo   Chat API:     NOT HEALTHY  %CHAT_HEALTH%) else (echo   Chat API:     healthy)
+curl.exe -fsS "%ACTIVITY_HEALTH%" >NUL 2>&1
+if errorlevel 1 (echo   Activity API: NOT HEALTHY  %ACTIVITY_HEALTH%) else (echo   Activity API: healthy)
 echo No second instance was launched. Check: %ROOT%logs\norm-runtime.log
 pause
 exit /b 1
