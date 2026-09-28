@@ -380,6 +380,7 @@ def stop_all(ep: dict[str, str], immediate: bool) -> None:
 
 def main() -> int:
     if not acquire_windows_mutex('NormGuiPrompt'):
+        print("Norm Prompt is already running in another process. Close the old operator console/process, then run Run-Norm.bat again.")
         return 0
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")

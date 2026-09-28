@@ -95,6 +95,7 @@ def _render(console: Console, event: dict) -> None:
 
 def main() -> int:
     if not acquire_windows_mutex("NormGuiStream"):
+        print("Norm Runtime is already running in another process. Close the old operator console/process, then run Run-Norm.bat again.")
         return 0
     _install_console_signal_handlers()
     if hasattr(sys.stdout, "reconfigure"):
