@@ -3,6 +3,7 @@ from __future__ import annotations
 from norm_runtime.secret_redaction import RedactingFormatter
 
 import argparse
+import ctypes
 import ipaddress
 import json
 import logging
@@ -33,16 +34,19 @@ from norm_runtime.settings import load_ports, load_project_metadata, load_path_s
 
 MODEL_NAME = "norm"
 MODEL_STORE = r"G:\Ollama\models"
+_WINDOWS_CTRL_HANDLER = None
 
 
 def _install_service_signal_guard() -> None:
-    """Keep helper-console Ctrl+C/Ctrl+Break events from terminating the service.
+    """Keep console Ctrl+C/Ctrl+Break events from terminating service mode.
 
-    Run-Norm.bat launches norm.exe with --service. Operator shutdown in service mode
-    is intentionally controlled through the activity/control API (/shutdown or
-    /stop-all), while a directly-invoked norm.exe keeps normal KeyboardInterrupt
-    behavior for debugging.
+    Service launches are detached from the operator consoles, so this is a second
+    line of defense.  The native Windows handler prevents console-control events
+    from being translated into KeyboardInterrupt before Python's signal layer can
+    ignore them.  Operator shutdown remains API-controlled.
     """
+    global _WINDOWS_CTRL_HANDLER
+
     def _ignore(signum, _frame) -> None:
         logging.warning(
             "Ignored console interrupt signal=%s in service mode; use /shutdown or /stop-all",
@@ -53,6 +57,21 @@ def _install_service_signal_guard() -> None:
     sigbreak = getattr(signal, "SIGBREAK", None)
     if sigbreak is not None:
         signal.signal(sigbreak, _ignore)
+
+    if os.name == "nt":
+        handler_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)
+
+        @handler_type
+        def _windows_handler(ctrl_type: int) -> bool:
+            if ctrl_type in (0, 1):  # CTRL_C_EVENT / CTRL_BREAK_EVENT
+                return True
+            return False
+
+        _WINDOWS_CTRL_HANDLER = _windows_handler
+        if not ctypes.windll.kernel32.SetConsoleCtrlHandler(_WINDOWS_CTRL_HANDLER, True):
+            raise ctypes.WinError()
+        logging.info("Native Windows service console-control guard active")
+
     logging.info("Service console-control guard active")
 
 

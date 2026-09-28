@@ -1,18 +1,13 @@
-Norm Installer 1.4.1 / Norm 0.52.5
-===================================
+Norm Installer 1.4.2 / Norm 0.52.6
 
-Installer builder
-- Fixes the semantics of "All newest": it now resolves the newest mutually compatible package set instead of independently selecting each package's highest version.
-- Uses an isolated resolver venv with the selected/newest eligible pip.
-- pip first resolves the newest stable dependency set with all direct Norm requirements unpinned.
-- Eligible newer RC candidates are then attempted with global re-resolution; incompatible RCs are skipped.
-- Alpha, beta, and dev releases remain excluded.
-- Resolved direct-package versions are written back into the UI before build, so the user can review exactly what will be pinned.
-- "Use online (manual)" remains available for deliberate per-package forcing and is still validated before packaging.
-- Final exact-lock resolver validation remains in place immediately before PyInstaller.
-- Generated EXE filename is Norm-Installer-1.4.1.exe.
-- Installer remains hard-bound to one exact Norm 0.52.5 payload filename and SHA-256.
+Runtime launch/HTTP reliability release.
 
-Norm 0.52.5
-- Unchanged from Installer Kit 1.3.9.
-- Includes the proportional plan-verifier hotfix.
+Norm 0.52.6 changes:
+- Core service is launched detached from operator consoles and always with --service.
+- Run-Norm.bat will not start a duplicate norm.exe merely because 12543/8766 are temporarily offline.
+- GUI fallback auto-start also uses --service.
+- Windows service mode adds a native SetConsoleCtrlHandler guard in addition to Python signal handlers.
+- GUI DB3 prompt dispatch catches bootstrap/HTTP races instead of letting the dispatcher thread die.
+- A later queued prompt can revive a dead dispatcher thread while preserving the DB3 queue.
+
+Installer 1.4.2 keeps the 1.4.1 auto-source behavior: the installer discovers the newest valid Norm source ZIP beside itself rather than being bound to one hardcoded ZIP.

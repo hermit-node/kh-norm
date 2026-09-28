@@ -434,12 +434,12 @@ Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-proto
 - Emergency stop now waits for the Redis/model-buffer signature to settle after cancellation (bounded to 5 seconds), then writes `SOS.md` with `flush()` + `os.fsync()`, reopens/fsyncs it, and read-back verifies UTF-8/header/size/SHA-256 before any `taskkill`. A snapshot failure returns without force-killing Norm. Synthetic regression preserved task state, working buffer, Unicode model chunks, and the raw Redis model-buffer key; live emergency regression logged the verified SOS hash before killing Ollama/Norm.
 - No new `norm.exe` was built for this correction because `C:\Norm\app` contains unrelated unreleased source drift; promoting that source would have mixed the GUI fix with unfinished runtime work.
 
-## 2026-09-23 - runtime convenience-code cleanup and 0.52.6 backup checkpoint
+## 2026-09-23 - runtime convenience-code cleanup and 0.52.5 backup checkpoint
 - Re-audited the live runtime tree after the GUI/UTF/emergency-stop work and removed 143 one-off convenience/probe/write helpers (207,481 bytes) from `C:\Norm\tools` and top-level `C:\Norm\state`. Removed categories included `_tmp_*`, StegoSplit patch/write helpers, decompiled probe artifacts, the superseded `verbatim_append.py`, and old top-level state maintenance scripts. Core runtime tools, `verbatim_lines.py`, GUI helpers, backup/restore tools, image analyzers, `state\file-backups`, and `state\deletion-trash` were preserved.
 - Repaired `tools\norm_backup.py` for the 0.51.4 centralized configuration model: runtime/workspace paths now come from `load_path_settings()`, PostgreSQL connection/schema from `runtime_bootstrap.load_config()`, and an optional `--label` is recorded in the filename/manifest. Validation succeeded against the live PostgreSQL schema and measured the cleaned runtime/workspace before ZIP creation.
 - Updated backup policy to exclude `state/file-backups`, avoiding recursive backup-of-backup growth while preserving those local mutation backups in place.
-- The user-requested `0.52.6` identifier is being used for this full backup checkpoint only. The deployed packaged runtime remains Norm `0.51.4`; no unfinished post-0.51.4 source drift was promoted or rebuilt as part of this maintenance pass.
-- Created and verified `C:\Users\KHzz\Documents\Norm-backups\Norm-backup-0.52.6-20260923-123324-0400.zip` (SHA-256 `7b0edd732c1540d6bf9bd98b1e7e5801250aec92bd12dbdfa154fe5b3987343e`). Archive `testzip`, `.sha256` match, checkpoint-label manifest check, nested-file-backup exclusion, and `pg_restore --list` on the embedded `norm_runtime` dump all passed. The manifest intentionally records project version `0.51.4` alongside checkpoint label `0.52.6`.
+- The user-requested `0.52.5` identifier is being used for this full backup checkpoint only. The deployed packaged runtime remains Norm `0.51.4`; no unfinished post-0.51.4 source drift was promoted or rebuilt as part of this maintenance pass.
+- Created and verified `C:\Users\KHzz\Documents\Norm-backups\Norm-backup-0.52.5-20260923-123324-0400.zip` (SHA-256 `7b0edd732c1540d6bf9bd98b1e7e5801250aec92bd12dbdfa154fe5b3987343e`). Archive `testzip`, `.sha256` match, checkpoint-label manifest check, nested-file-backup exclusion, and `pg_restore --list` on the embedded `norm_runtime` dump all passed. The manifest intentionally records project version `0.51.4` alongside checkpoint label `0.52.5`.
 
 ## 2026-09-23 - external hot-swappable plugin broker
 - Added `C:\Norm\tools\norm_plugins.py` and configured `documents_root\plugins` as the local plugin root without rebuilding the packaged executable.
@@ -531,6 +531,6 @@ No PostgreSQL memory write, task creation or service start was performed.
 
 
 
-## 2026-09-27 - 0.52.6 proportional plan verifier
+## 2026-09-27 - 0.52.5 proportional plan verifier
 
 The plan verifier was tightened around blocking execution correctness while reducing false-positive rejection. Cohesive bounded steps may cover multiple tightly coupled modules/functions when their responsibilities and checks are explicit. Advisory decomposition/style concerns are non-blocking. Existing inspected/reused mechanisms and execution-time invariant tests count as evidence, preventing speculative objections such as boundary-value cases already eliminated by the inherited implementation. Repair cycles are instructed to make the smallest material correction rather than mechanically split steps or repeat an unchanged rejected plan.

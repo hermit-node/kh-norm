@@ -18,13 +18,10 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable
 
-INSTALLER_VERSION = "1.4.1"
+INSTALLER_VERSION = "1.4.2"
 PIP_VERSION = "26.2.1"
 PIP_MIN_VERSION = PIP_VERSION  # backward-compatible internal print helper
 PIP_SPEC = f"pip=={PIP_VERSION}"
-BOUND_SOURCE_FILENAME = "Norm-0.52.5-portable-source.zip"
-BOUND_SOURCE_SHA256 = "c6c84fa7701d1e6f79c28fd47a4f65ab7e7732e771e2a6a269548fcaaa99f0a9"
-BOUND_NORM_VERSION = "0.52.5"
 SUPPORTED_PACKAGE_SCHEMA = {1}
 
 
@@ -138,20 +135,6 @@ def _sha256_file(path: Path) -> str:
             digest.update(chunk)
     return digest.hexdigest()
 
-
-def _verify_bound_source(source_zip: Path) -> None:
-    source_zip = Path(source_zip).expanduser().resolve()
-    if source_zip.name != BOUND_SOURCE_FILENAME:
-        raise InstallerError(
-            f"This installer is bound to {BOUND_SOURCE_FILENAME}, not {source_zip.name}."
-        )
-    actual = _sha256_file(source_zip)
-    if actual.lower() != BOUND_SOURCE_SHA256.lower():
-        raise InstallerError(
-            f"Bound payload SHA-256 mismatch for {source_zip.name}. "
-            f"Expected {BOUND_SOURCE_SHA256}, got {actual}. "
-            "Use the payload produced with this exact installer build."
-        )
 
 
 def inspect_package(source_zip: Path) -> PackageInfo:
@@ -684,9 +667,6 @@ def install_norm(
     python_exe = Path(options.python_exe).expanduser().resolve()
     warnings: list[str] = []
 
-    if source.name == BOUND_SOURCE_FILENAME:
-        _verify_bound_source(source)
-
     progress(2, "Validating package")
     info = inspect_package(source)
     log(f"Package: {info.label}")
@@ -921,13 +901,58 @@ def _candidate_roots() -> list[Path]:
     return unique
 
 
-def find_bound_source() -> Path | None:
-    root = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
-    candidate = root / BOUND_SOURCE_FILENAME
-    if not candidate.is_file():
+def _source_directory() -> Path:
+    """Directory beside the running installer, never PyInstaller's temporary _MEIPASS."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def _peek_norm_source(path: Path) -> tuple[str, str] | None:
+    """Return (version, package_type) for a Norm package without enforcing its companion SHA yet."""
+    try:
+        with zipfile.ZipFile(path, "r") as zf:
+            manifests = [
+                name for name in zf.namelist()
+                if PurePosixPath(name).name == "package-manifest.json" and not name.endswith("/")
+            ]
+            if len(manifests) != 1:
+                return None
+            manifest = json.loads(zf.read(manifests[0]).decode("utf-8-sig"))
+    except Exception:
         return None
-    _verify_bound_source(candidate)
-    return candidate.resolve()
+    if str(manifest.get("name") or "").strip().lower() != "norm":
+        return None
+    package_type = str(manifest.get("package_type") or "").strip()
+    if package_type != "portable-source":
+        return None
+    return str(manifest.get("version") or "0"), package_type
+
+
+def find_latest_source(directory: Path | None = None) -> Path | None:
+    """Pick the newest Norm portable-source ZIP beside the installer.
+
+    Version comes from package-manifest.json rather than the filename. If multiple
+    packages declare the same version, the most recently modified one wins so a
+    freshly rebuilt/customized package naturally supersedes an older copy.
+    """
+    root = Path(directory).resolve() if directory else _source_directory()
+    candidates: list[tuple[tuple, int, str, Path]] = []
+    for path in root.glob("*.zip"):
+        if not path.is_file():
+            continue
+        meta = _peek_norm_source(path)
+        if meta is None:
+            continue
+        version, _package_type = meta
+        try:
+            mtime = path.stat().st_mtime_ns
+        except OSError:
+            mtime = 0
+        candidates.append((_version_key(version), mtime, path.name.lower(), path.resolve()))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: (item[0], item[1], item[2]))[3]
 
 
 def _which_file(name: str) -> list[Path]:
@@ -1036,12 +1061,12 @@ def launch_gui(initial_source: Path | None = None) -> int:
     except Exception as exc:
         raise InstallerError(f"Tkinter is required for the GUI installer: {exc}") from exc
 
-    source = Path(initial_source).expanduser().resolve() if initial_source else find_bound_source()
+    source = Path(initial_source).expanduser().resolve() if initial_source else find_latest_source()
     if source is None:
         raise InstallerError(
-            f"Required payload {BOUND_SOURCE_FILENAME} was not found beside the installer."
+            f"No Norm portable-source ZIP was found beside the installer in {_source_directory()}. "
+            "Put the desired Norm source ZIP in the same folder and launch the installer again."
         )
-    _verify_bound_source(source)
     info = inspect_package(source)
 
     root = tk.Tk()
@@ -1053,7 +1078,7 @@ def launch_gui(initial_source: Path | None = None) -> int:
     target_var = tk.StringVar(value=r"C:\Norm" if os.name == "nt" else str(Path.home() / "Norm"))
     python_var = tk.StringVar(value=str(python_default or ""))
     package_var = tk.StringVar(
-        value=f"{info.label}  •  fixed payload  •  SHA-256 {BOUND_SOURCE_SHA256[:12]}…"
+        value=f"{info.label}  •  auto-selected newest local package  •  {source.name}"
     )
     progress_var = tk.DoubleVar(value=0)
     status_var = tk.StringVar(value="Ready")
@@ -1093,13 +1118,13 @@ def launch_gui(initial_source: Path | None = None) -> int:
 
     ttk.Button(outer, text="Browse…", command=browse_python).grid(row=3, column=2, padx=(8, 0), pady=4)
 
-    behavior = ttk.LabelFrame(outer, text="Fixed build", padding=(10, 7))
+    behavior = ttk.LabelFrame(outer, text="Package selection", padding=(10, 7))
     behavior.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(8, 7))
     ttk.Label(
         behavior,
         text=(
-            f"Payload: {BOUND_SOURCE_FILENAME}\n"
-            "Package source and dependency pins are fixed by this installer build. "
+            f"Selected automatically: {source.name}\n"
+            "The installer uses the newest Norm portable-source ZIP beside this EXE. "
             "A compatible existing .venv is reused; .ssh, user plugins, logs, and state are preserved on normal updates."
         ),
         justify="left",
@@ -1257,7 +1282,7 @@ def launch_gui(initial_source: Path | None = None) -> int:
     return 0
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Norm installer bound to one exact source payload")
+    parser = argparse.ArgumentParser(description="Norm installer using the newest local Norm source package")
     parser.add_argument("--source", help=argparse.SUPPRESS)
     parser.add_argument("--target", help="Installation directory")
     parser.add_argument("--python", dest="python_exe", help="Python executable used to create the Norm venv")
@@ -1275,7 +1300,7 @@ def main() -> int:
     if args.self_test_file:
         target = Path(args.self_test_file).expanduser()
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(f"ok {INSTALLER_VERSION} {BOUND_SOURCE_FILENAME} {BOUND_SOURCE_SHA256}\n", encoding="utf-8")
+        target.write_text(f"ok {INSTALLER_VERSION} auto-source\n", encoding="utf-8")
         return 0
 
     if args.print_pip_spec:
@@ -1286,16 +1311,15 @@ def main() -> int:
         print(PIP_VERSION)
         return 0
 
-    source = Path(args.source).expanduser() if args.source else find_bound_source()
+    source = Path(args.source).expanduser() if args.source else find_latest_source()
 
     if args.validate_only:
         if not source:
-            raise InstallerError("Required bound source package Norm-0.52.5-portable-source.zip was not found beside the installer")
+            raise InstallerError(f"No Norm portable-source ZIP was found beside the installer in {_source_directory()}")
         info = inspect_package(source)
         print(json.dumps({
             "installer_version": INSTALLER_VERSION,
-            "bound_source_filename": BOUND_SOURCE_FILENAME,
-            "bound_source_sha256": BOUND_SOURCE_SHA256,
+            "source_selection": "explicit --source" if args.source else "newest local package",
             "source": str(info.source_zip),
             "name": info.name,
             "version": info.version,
@@ -1308,7 +1332,7 @@ def main() -> int:
 
     if args.install:
         if not source or not args.target or not args.python_exe:
-            parser.error("--install requires the bound payload beside the installer plus --target and --python")
+            parser.error("--install requires a local Norm source package plus --target and --python")
         result = install_norm(
             InstallOptions(
                 source_zip=source,
@@ -1330,9 +1354,24 @@ def main() -> int:
     return launch_gui(source)
 
 
+def _show_fatal_error(message: str) -> None:
+    """Best-effort visible error for --windowed builds where stderr is invisible."""
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror("Norm Installer", message)
+        root.destroy()
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except InstallerError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
+        if getattr(sys, "frozen", False):
+            _show_fatal_error(str(exc))
         raise SystemExit(2)

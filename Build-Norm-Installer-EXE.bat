@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions
 cd /d "%~dp0"
-title Make Norm Installer 1.4.1
+title Make Norm Installer 1.4.2
 
 if not "%~1"=="" if exist "%~1" (
   "%~1" "%~dp0Make-Norm-Installer.py"

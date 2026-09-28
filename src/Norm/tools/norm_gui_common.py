@@ -103,7 +103,7 @@ def start_norm_detached() -> None:
     if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
         flags |= subprocess.CREATE_NEW_PROCESS_GROUP
     subprocess.Popen(
-        [str(exe)],
+        [str(exe), "--service"],
         cwd=str(ROOT),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,

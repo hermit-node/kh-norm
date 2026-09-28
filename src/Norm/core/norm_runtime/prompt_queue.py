@@ -271,13 +271,13 @@ class RedisPromptQueue:
     # ------------------------------------------------------------------
     # Park chain
     # ------------------------------------------------------------------
-    def park_chain(self, chain_id: str, failed_message_id: str, *, failed_job: PromptJob | None = None) -> int:
+    def park_chain(self, chain_id: str, failed_message_id: str) -> int:
         if not chain_id:
             entries = self.r.xrange(self.stream, min=failed_message_id, max=failed_message_id)
             if not entries:
                 return 0
             _, fields = entries[0]
-            job = failed_job if failed_job is not None else self._fields_to_job(failed_message_id, fields)
+            job = self._fields_to_job(failed_message_id, fields)
             job.attempt += 1
             self.r.xadd(self.retry_stream, self._job_to_fields(job))
             self.r.xack(self.stream, self.group, failed_message_id)
@@ -288,9 +288,8 @@ class RedisPromptQueue:
         if not entries:
             return 0
         _, failed_fields = entries[0]
-        stored_failed_job = self._fields_to_job(failed_message_id, failed_fields)
-        active_failed_job = failed_job if failed_job is not None else stored_failed_job
-        failed_index = active_failed_job.chain_index
+        failed_job = self._fields_to_job(failed_message_id, failed_fields)
+        failed_index = failed_job.chain_index
 
         all_entries = self.r.xrange(self.stream, min="-", max="+")
         parked = 0
@@ -300,7 +299,6 @@ class RedisPromptQueue:
                 continue
             if job.chain_index >= failed_index:
                 if msg_id == failed_message_id:
-                    job = active_failed_job
                     job.attempt += 1
                 self.r.xadd(self.retry_stream, self._job_to_fields(job))
                 self.r.xack(self.stream, self.group, msg_id)

@@ -53,6 +53,9 @@ class GuiPromptDispatcher:
         self.pause_dispatch = threading.Event()
         self.dispatch_active = threading.Event()
         self._admin_lock = threading.RLock()
+        self._thread_lock = threading.RLock()
+        self._activity_thread: threading.Thread | None = None
+        self._dispatcher_thread: threading.Thread | None = None
         self.redis.ping()
         self._ensure_group()
 
@@ -115,6 +118,10 @@ class GuiPromptDispatcher:
         )
         self._ensure_group()
         self.activity_wakeup.set()
+        # The prompt console can outlive a transient runtime/API failure.  If an
+        # unexpected exception killed the background dispatcher, a new prompt
+        # submission must revive it instead of silently accumulating in DB3.
+        self.start()
         return str(entry_id), prompt_id
 
     def enqueue_thread_reset(self) -> str:
@@ -895,11 +902,35 @@ class GuiPromptDispatcher:
             if self._prompt_retry_suppressed(prompt_id):
                 self._defer_entry(entry_id, fields, "prompt suppressed by operator")
                 continue
-            self._dispatch_prompt(entry_id, fields)
+            try:
+                self._dispatch_prompt(entry_id, fields)
+            except Exception as exc:
+                # Never let one thread/bootstrap/HTTP race permanently kill the
+                # GUI dispatcher.  The DB3 entry remains durable and is parked
+                # as uncertain rather than being lost or falsely acknowledged.
+                logger.exception(
+                    "Prompt ingress dispatch crashed source=%s prompt_id=%s entry_id=%s; preserving entry",
+                    str(fields.get("source") or self.source_name), prompt_id, entry_id,
+                )
+                self._mark_uncertain(entry_id, fields, exc)
 
     def start(self) -> None:
-        threading.Thread(target=self._activity_listener, name="norm-gui-activity", daemon=True).start()
-        threading.Thread(target=self._dispatcher_loop, name="norm-gui-dispatch", daemon=True).start()
+        """Idempotently ensure both background ingress threads are alive."""
+        if self.stop_event.is_set():
+            return
+        with self._thread_lock:
+            if self._activity_thread is None or not self._activity_thread.is_alive():
+                self._activity_thread = threading.Thread(
+                    target=self._activity_listener, name="norm-gui-activity", daemon=True
+                )
+                self._activity_thread.start()
+            if self._dispatcher_thread is None or not self._dispatcher_thread.is_alive():
+                if self._dispatcher_thread is not None:
+                    logger.warning("Restarting dead GUI prompt dispatcher thread; DB3 queue is preserved")
+                self._dispatcher_thread = threading.Thread(
+                    target=self._dispatcher_loop, name="norm-gui-dispatch", daemon=True
+                )
+                self._dispatcher_thread.start()
 
     def stop(self) -> None:
         self.stop_event.set()
