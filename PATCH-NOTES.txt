@@ -1,17 +1,25 @@
-Norm Installer Kit 1.4.4
-Norm runtime 0.52.8
+Norm Installer Kit 1.4.6
+Norm runtime 0.52.9
 
-Launcher regression fix:
-- Restores direct BAT-level opening of Norm Runtime, Norm Replies, and Norm Prompt after health is ready.
-- Keeps detached --service runtime and lifecycle protections from the 1.4.3 hotpatch.
-- start_norm_detached now returns the Popen object and start_norm_service reports the owned PID.
-- Existing norm.exe before launch is an attach/wait state; the process just spawned by this helper is not classified as a duplicate.
-- Startup timeout no longer emits the misleading "Refusing to launch a second Norm instance" message.
+Redis ingress state-machine repair:
+- Fixed a real duplicate-live-prompt race in uncertain HTTP recovery.
+- The original defer timer and startup recovery could both schedule the same uncertain record.
+- Previously each contender could XADD the same logical prompt before either HDEL removed the uncertain source.
+- Requeue is now serialized with a per-record Redis lock and re-reads the durable record after acquiring ownership.
+- Replacement XADD + uncertain HDEL execute in one Redis transaction.
+- Suppressed prompt IDs remain a hard retry gate.
+- /queue and /queue-full no longer call ACKed-but-preserved historical ingress rows "queued".
+- Queue visibility fails open if consumer-group metadata cannot be read.
 
-Packaging cleanup:
-- Removed obsolete 0.52.6/0.52.7 runtime payloads from this kit.
-- Added a fresh SHA-256 companion for 0.52.8.
-- The stale compiled 1.4.3 installer EXE is intentionally not carried forward; use Run-Norm-Installer.bat or rebuild the installer EXE from the included 1.4.4 source.
+Audit findings:
+- Worker-side chain replacement, dependency parking, child parking and cooperative yield already use Redis MULTI/EXEC where atomic replacement is required.
+- Worker-side park_chain/revise_retry/escalate/reclaim paths still contain sequential XADD/ACK/XDEL operations. These are recoverability/hardening candidates, but they do not explain the duplicate GUI prompt IDs shown in the reproduced incident.
+- Suppression deliberately preserves some ACKed stream rows for inspection until explicit cleanup; those rows are storage, not executable live work.
+- The reproduced duplicate prompt IDs originate in the independent GUI ingress uncertain-retry layer.
 
-Norm 0.52.8 portable-source SHA-256:
-67e6271d1193e5bbfb824dd67d383447e197b04e3a94e83a7744bd1017a8b142
+Regression tests:
+- Two concurrent retry contenders for one uncertain record produce exactly one live replacement.
+- ACKed historical rows are excluded from the LIVE QUEUE snapshot.
+- All packaged Python files syntax-compile.
+
+Installer-builder reusable-venv behavior from 1.4.5 is retained.

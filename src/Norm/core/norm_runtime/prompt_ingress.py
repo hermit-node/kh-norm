@@ -218,28 +218,59 @@ class GuiPromptDispatcher:
             })
         return snapshot
 
+    @staticmethod
+    def _stream_id_tuple(value: str) -> tuple[int, int]:
+        try:
+            left, right = str(value).split("-", 1)
+            return int(left), int(right)
+        except (TypeError, ValueError):
+            return -1, -1
+
     def queue_snapshot(self, limit: int | None = 1000) -> list[dict]:
-        """Return a stable, human-facing snapshot of the GUI ingress queue."""
+        """Return executable ingress work, excluding acknowledged historical rows."""
         options = {} if limit is None else {"count": max(1, int(limit))}
         rows = self.redis.xrange(self.stream, min="-", max="+", **options)
         dispatching = set(str(k) for k in self.redis.hkeys(self.dispatching_key))
+
+        pending_ids: set[str] | None = None
+        last_delivered: tuple[int, int] | None = None
+        try:
+            self._ensure_group()
+            pending = self.redis.xpending_range(self.stream, self.group, "-", "+", 10000)
+            pending_ids = {str(item.get("message_id") or "") for item in pending}
+            for info in self.redis.xinfo_groups(self.stream):
+                if str(info.get("name")) == self.group:
+                    last_delivered = self._stream_id_tuple(str(info.get("last-delivered-id") or "0-0"))
+                    break
+        except Exception:
+            # Visibility must fail open: if group metadata is unavailable, show rows
+            # rather than incorrectly hiding potentially live work.
+            pending_ids = None
+            last_delivered = None
+
         snapshot: list[dict] = []
-        for index, (raw_id, raw_fields) in enumerate(rows):
+        for raw_id, raw_fields in rows:
             entry_id = raw_id.decode("utf-8") if isinstance(raw_id, bytes) else str(raw_id)
-            fields = {
-                (k.decode("utf-8") if isinstance(k, bytes) else str(k)):
-                (v.decode("utf-8") if isinstance(v, bytes) else v)
-                for k, v in dict(raw_fields).items()
-            }
+            fields = self._normalize_fields(raw_fields)
             prompt_id = str(fields.get("prompt_id") or "")
+
+            if pending_ids is not None and last_delivered is not None:
+                already_delivered = self._stream_id_tuple(entry_id) <= last_delivered
+                if already_delivered and entry_id not in pending_ids:
+                    # ACKed-but-preserved rows are historical/suppressed storage, not
+                    # queued work and must not inflate the operator's LIVE QUEUE.
+                    continue
+
             if self._prompt_retry_suppressed(prompt_id):
                 state = "suppressed"
             elif entry_id in dispatching:
                 state = "dispatching"
+            elif pending_ids is not None and entry_id in pending_ids:
+                state = "in-flight"
             else:
                 state = "queued"
             snapshot.append({
-                "index": index,
+                "index": len(snapshot),
                 "entry_id": entry_id,
                 "state": state,
                 "prompt_id": prompt_id,
@@ -372,37 +403,76 @@ class GuiPromptDispatcher:
         }
 
     def _requeue_uncertain_record(self, uncertain_id: str, record: dict) -> str | None:
-        # Suppressed GUI prompt IDs are a hard retry gate. The uncertain queue
-        # must never recreate a new Norm task behind PostgreSQL suppression.
-        if self._prompt_retry_suppressed(str(record.get("prompt_id") or "")):
-            parked = dict(record)
-            parked["auto_retry"] = False
-            parked["suppressed"] = True
-            self.redis.hset(
-                self.uncertain_key,
-                uncertain_id,
-                json.dumps(parked, ensure_ascii=False),
-            )
+        """Move one uncertain record back to ingress exactly once.
+
+        Multiple recovery paths can schedule a timer for the same record (for example
+        the original defer timer plus startup recovery).  A per-record Redis lock
+        serializes those contenders, and the winning contender re-reads the durable
+        record before atomically XADDing the replacement and HDELing the uncertain
+        source.  This prevents two live stream entries with the same prompt_id.
+        """
+        uncertain_id = str(uncertain_id or "").strip()
+        if not uncertain_id:
             return None
-        if not bool(record.get("auto_retry")):
+        lock = self.redis.lock(
+            f"{self.uncertain_key}:requeue-lock:{uncertain_id}",
+            timeout=30,
+            blocking_timeout=0,
+        )
+        if not lock.acquire(blocking=False):
             return None
-        fields = dict(record.get("fields") or {})
-        if not fields:
-            fields = {
-                "kind": "prompt",
-                "prompt_id": str(record.get("prompt_id") or ""),
-                "message": str(record.get("message") or ""),
-                "project_id": str(record.get("project_id") or "default"),
-                "enqueued_at": str(record.get("enqueued_at") or self._now_iso()),
-            }
-        fields = {str(k): str(v) for k, v in fields.items()}
-        fields["retry_count"] = str(int(record.get("retry_count") or 0) + 1)
-        fields["retried_from"] = str(uncertain_id)
-        new_id = str(self.redis.xadd(self.stream, fields, maxlen=5000, approximate=True))
-        self._ensure_group()
-        self.redis.hdel(self.uncertain_key, uncertain_id)
-        self.activity_wakeup.set()
-        return new_id
+        try:
+            raw = self.redis.hget(self.uncertain_key, uncertain_id)
+            if not raw:
+                return None
+            try:
+                latest = json.loads(raw)
+            except Exception:
+                logger.exception("Cannot decode uncertain prompt record %s", uncertain_id)
+                return None
+            if not isinstance(latest, dict):
+                return None
+
+            prompt_id = str(latest.get("prompt_id") or "")
+            if self._prompt_retry_suppressed(prompt_id):
+                parked = dict(latest)
+                parked["auto_retry"] = False
+                parked["suppressed"] = True
+                self.redis.hset(
+                    self.uncertain_key,
+                    uncertain_id,
+                    json.dumps(parked, ensure_ascii=False),
+                )
+                return None
+            if not bool(latest.get("auto_retry")):
+                return None
+
+            fields = dict(latest.get("fields") or {})
+            if not fields:
+                fields = {
+                    "kind": "prompt",
+                    "prompt_id": prompt_id,
+                    "message": str(latest.get("message") or ""),
+                    "project_id": str(latest.get("project_id") or "default"),
+                    "enqueued_at": str(latest.get("enqueued_at") or self._now_iso()),
+                }
+            fields = {str(k): str(v) for k, v in fields.items()}
+            fields["retry_count"] = str(int(latest.get("retry_count") or 0) + 1)
+            fields["retried_from"] = uncertain_id
+
+            pipe = self.redis.pipeline(transaction=True)
+            pipe.xadd(self.stream, fields, maxlen=5000, approximate=True)
+            pipe.hdel(self.uncertain_key, uncertain_id)
+            result = pipe.execute()
+            new_id = str(result[0])
+            self._ensure_group()
+            self.activity_wakeup.set()
+            return new_id
+        finally:
+            try:
+                lock.release()
+            except redis.exceptions.LockError:
+                pass
 
     def _schedule_uncertain_retry(self, uncertain_id: str, record: dict) -> None:
         retry_after = float(record.get("retry_after_epoch") or (time.time() + self.uncertain_continue_seconds))
