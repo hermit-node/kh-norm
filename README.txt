@@ -1,4 +1,4 @@
-Norm Installer Kit 1.4.0
+Norm Installer Kit 1.4.1
 ========================
 
 What changed
@@ -26,9 +26,9 @@ Build-Norm-Installer-EXE.bat launches Make-Norm-Installer.py. The builder:
 - calculates that derived ZIP's SHA-256;
 - generates an installer source with the exact payload filename and SHA-256 baked into it;
 - resolver-checks the exact final dependency set again immediately before packaging;
-- builds and smoke-tests Norm-Installer-1.4.0.exe;
+- builds and smoke-tests Norm-Installer-1.4.1.exe;
 - publishes exactly three normal install files to the output folder:
-    Norm-Installer-1.4.0.exe
+    Norm-Installer-1.4.1.exe
     Norm-0.52.5-portable-source.zip
     Norm-0.52.5-portable-source.zip.sha256
 

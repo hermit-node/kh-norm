@@ -1,4 +1,4 @@
-Norm Installer 1.4.0 / Norm 0.52.5
+Norm Installer 1.4.1 / Norm 0.52.5
 ===================================
 
 Installer builder
@@ -10,7 +10,7 @@ Installer builder
 - Resolved direct-package versions are written back into the UI before build, so the user can review exactly what will be pinned.
 - "Use online (manual)" remains available for deliberate per-package forcing and is still validated before packaging.
 - Final exact-lock resolver validation remains in place immediately before PyInstaller.
-- Generated EXE filename is Norm-Installer-1.4.0.exe.
+- Generated EXE filename is Norm-Installer-1.4.1.exe.
 - Installer remains hard-bound to one exact Norm 0.52.5 payload filename and SHA-256.
 
 Norm 0.52.5
