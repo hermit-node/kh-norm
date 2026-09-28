@@ -96,6 +96,7 @@ def _render_reply(console: Console, text: str, source: str) -> None:
 
 def main() -> int:
     if not acquire_windows_mutex("NormGuiReply"):
+        print("Norm Replies is already running in another process. Close the old operator console/process, then run Run-Norm.bat again.")
         return 0
     _install_console_signal_handlers()
     if hasattr(sys.stdout, "reconfigure"):

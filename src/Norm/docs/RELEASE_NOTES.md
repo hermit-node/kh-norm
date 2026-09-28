@@ -1,5 +1,12 @@
 # Norm release notes
 
+## 0.52.7 — 2026-09-27 — restore explicit operator consoles
+
+- `norm.exe` remains detached in `--service` mode.
+- `Run-Norm.bat` launches `Norm Prompt`, `Norm Runtime`, and `Norm Replies` as three explicit persistent consoles via `tools\start_operator_consoles.py`.
+- Each console stays open if its Python helper exits during startup, so startup errors remain visible.
+- Duplicate GUI-helper mutex detection prints which operator console is already running rather than silently exiting.
+
 ## 0.52.6 — 2026-09-27 — detached service launch + HTTP ownership hardening
 
 - `Run-Norm.bat` no longer launches `norm.exe` in a transient/minimized helper console. It uses the shared detached service launcher instead.

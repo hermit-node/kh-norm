@@ -1,4 +1,4 @@
-# Norm 0.52.6 portable source package
+# Norm 0.52.7 portable source package
 
 This archive is the clean source baseline for installing or rebuilding Norm.
 
@@ -34,6 +34,10 @@ Package-managed built-in plugin subtrees are `plugins\backup`, `plugins\verbatim
 
 `/backup` creates portable/source installer media; `/backup full` creates the sensitive private-state format; `/backup-zip` is the legacy full-backup alias. `/condense-memories` is intentionally absent until the complete fail-closed curated-memory housekeeping policy is implemented.
 
+
+## 0.52.7 operator console launcher
+
+`norm.exe` remains detached in service mode. `Run-Norm.bat` now starts three explicit visible operator consoles (Prompt, Runtime, Replies) through a small console host. If a helper exits during startup, that console stays open and shows the exit/error instead of disappearing.
 
 ## 0.52.6 proportional plan verification
 

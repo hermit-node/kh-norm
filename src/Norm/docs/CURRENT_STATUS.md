@@ -1,10 +1,10 @@
 # Norm current status
 
-Updated 2026-09-27 for the clean **0.52.6** portable source line.
+Updated 2026-09-27 for the clean **0.52.7** portable source line.
 
 ## Source/layout
 
-- Version: **0.52.6**.
+- Version: **0.52.7**.
 - Runtime root: `C:\Norm` (relocatable by installer); the installed absolute path is written to `config\settings.ini` `[paths].runtime_root`.
 - Runtime source/executable directory: `core\`; compiled executable target is `core\norm.exe`.
 - Maintained docs: `C:\Norm\docs`.
@@ -52,6 +52,10 @@ Queued workers now obtain `runtime.json` through the same resolved `runtime_boot
 
 Emergency stop now passes the real runtime root into the SOS writer and supplies its emergency output directory separately. This prevents `state\emergency-stop` from being mistaken for a second Norm runtime root.
 
+
+## 0.52.7 operator console launcher
+
+`norm.exe` remains detached in service mode. `Run-Norm.bat` now starts three explicit visible operator consoles (Prompt, Runtime, Replies) through a small console host. If a helper exits during startup, that console stays open and shows the exit/error instead of disappearing.
 
 ## 0.52.6 proportional plan verification
 

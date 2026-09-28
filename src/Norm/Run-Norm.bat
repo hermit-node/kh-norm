@@ -76,10 +76,14 @@ echo Norm is healthy at %CHAT_HEALTH%
 if /I "%~1"=="--service-only" exit /b 0
 
 pushd "%ROOT%"
-start "Norm Runtime" "%PY%" -u "%ROOT%tools\norm_gui_stream.py"
-start "Norm Replies" "%PY%" -u "%ROOT%tools\norm_gui_reply.py"
-start "Norm Prompt" "%PY%" -u "%ROOT%tools\norm_gui_prompt.py"
+"%PY%" "%ROOT%tools\start_operator_consoles.py"
+set "CONSOLE_RC=%ERRORLEVEL%"
 popd
+if not "%CONSOLE_RC%"=="0" (
+  echo ERROR: One or more Norm operator consoles could not be opened.
+  pause
+  exit /b %CONSOLE_RC%
+)
 
 endlocal
 exit /b 0
