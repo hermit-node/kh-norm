@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-INSTALLER_VERSION = "1.4.4"
+INSTALLER_VERSION = "1.4.6"
 INSTALLER_TEMPLATE_FILENAME = "Norm-Installer.py"
 OUTPUT_EXE_FILENAME = f"Norm-Installer-{INSTALLER_VERSION}.exe"
 DEFAULT_PIP_VERSION = "26.2.1"
@@ -64,6 +64,140 @@ class BuildResult:
 
 def _app_dir() -> Path:
     return Path(__file__).resolve().parent
+
+
+def _builder_cache_root() -> Path:
+    """Stable per-user cache so installer-builder venvs survive kit upgrades and temp cleanup."""
+    if os.name == "nt":
+        base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+    else:
+        base = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
+    root = base / "Norm" / "InstallerBuilder"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _venv_python(venv: Path) -> Path:
+    return venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def _installed_distribution_version(python_exe: Path, distribution: str) -> str | None:
+    cp = subprocess.run(
+        [
+            str(python_exe), "-c",
+            "import importlib.metadata as m, sys; "
+            "name=sys.argv[1]; "
+            "print(m.version(name))",
+            distribution,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=15,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+    )
+    if cp.returncode != 0:
+        return None
+    lines = (cp.stdout or "").strip().splitlines()
+    return lines[-1].strip() if lines else None
+
+
+def _pip_check_ok(python_exe: Path, *, cwd: Path, log) -> bool:
+    command = [str(python_exe), "-m", "pip", "check"]
+    log("$ " + subprocess.list2cmdline(command))
+    cp = subprocess.run(
+        command,
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+    )
+    combined = "\n".join(part for part in (cp.stdout, cp.stderr) if part).strip()
+    if combined:
+        for line in combined.splitlines():
+            log(line)
+    return cp.returncode == 0
+
+
+def _ensure_reusable_venv(
+    *,
+    base_python: Path,
+    role: str,
+    pip_version: str,
+    cwd: Path,
+    log,
+    required: dict[str, str] | None = None,
+) -> Path:
+    """Reuse a stable venv and invoke pip install only when its required state is actually stale."""
+    required = dict(required or {})
+    base_version = _python_version(base_python)
+    role_key = re.sub(r"[^A-Za-z0-9_.-]+", "-", role).strip("-") or "default"
+    venv = _builder_cache_root() / f"{role_key}-py{base_version[0]}.{base_version[1]}"
+    python_exe = _venv_python(venv)
+
+    recreate = False
+    if python_exe.is_file():
+        try:
+            cached_version = _python_version(python_exe)
+            if cached_version[:2] != base_version[:2]:
+                recreate = True
+        except Exception:
+            recreate = True
+    elif venv.exists():
+        recreate = True
+
+    if recreate:
+        log(f"Cached builder venv is incompatible or incomplete; recreating: {venv}")
+        shutil.rmtree(venv, ignore_errors=True)
+
+    if not python_exe.is_file():
+        log(f"Creating reusable builder venv: {venv}")
+        _run([str(base_python), "-m", "venv", str(venv)], cwd=cwd, log=log)
+        if not python_exe.is_file():
+            raise BuilderError(f"Reusable builder venv Python is missing: {python_exe}")
+    else:
+        log(f"Reusing builder venv: {venv}")
+
+    desired = {"pip": pip_version, **required}
+    actual = {name: _installed_distribution_version(python_exe, name) for name in desired}
+    stale = {name: version for name, version in desired.items() if actual.get(name) != version}
+
+    if not stale and _pip_check_ok(python_exe, cwd=cwd, log=log):
+        log("Reusable builder venv already satisfies all required versions; skipping pip install.")
+        return python_exe
+
+    if actual.get("pip") != pip_version:
+        _run(
+            [str(python_exe), "-m", "pip", "install", "--disable-pip-version-check", f"pip=={pip_version}"],
+            cwd=cwd,
+            log=log,
+        )
+
+    packages = [f"{name}=={version}" for name, version in required.items()
+                if _installed_distribution_version(python_exe, name) != version]
+    if packages:
+        _run(
+            [str(python_exe), "-m", "pip", "install", "--disable-pip-version-check", *packages],
+            cwd=cwd,
+            log=log,
+        )
+
+    remaining = {
+        name: version for name, version in desired.items()
+        if _installed_distribution_version(python_exe, name) != version
+    }
+    if remaining:
+        detail = ", ".join(
+            f"{name} expected {version}, got {_installed_distribution_version(python_exe, name)!r}"
+            for name, version in remaining.items()
+        )
+        raise BuilderError(f"Reusable builder venv did not converge to required versions: {detail}")
+    if not _pip_check_ok(python_exe, cwd=cwd, log=log):
+        raise BuilderError(f"Reusable builder venv failed pip check: {venv}")
+    return python_exe
 
 
 def _sha256_file(path: Path) -> str:
@@ -324,17 +458,13 @@ def _relax_requirements(text: str, exact_overrides: dict[str, str] | None = None
 
 
 def _resolver_python(base_python: Path, pip_version: str, temp_root: Path, log) -> Path:
-    resolver_venv = temp_root / "resolver-venv"
-    _run([str(base_python), "-m", "venv", str(resolver_venv)], cwd=temp_root, log=log)
-    resolver_python = resolver_venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    if not resolver_python.is_file():
-        raise BuilderError(f"Resolver venv Python is missing: {resolver_python}")
-    _run(
-        [str(resolver_python), "-m", "pip", "install", "--upgrade", f"pip=={pip_version}"],
+    return _ensure_reusable_venv(
+        base_python=base_python,
+        role="resolver",
+        pip_version=pip_version,
         cwd=temp_root,
         log=log,
     )
-    return resolver_python
 
 
 def _parse_pip_report(report_path: Path, direct_names: list[str]) -> dict[str, str]:
@@ -631,19 +761,6 @@ def build_installer(
             newline="\n",
         )
 
-        progress(22, "Creating installer build venv")
-        build_venv = temp_root / "venv"
-        _run([str(base_python), "-m", "venv", str(build_venv)], cwd=temp_root, log=log)
-        venv_python = build_venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        if not venv_python.is_file():
-            raise BuilderError(f"Build venv Python is missing: {venv_python}")
-
-        progress(32, f"Installing pip {pip_version}")
-        _run([str(venv_python), "-m", "pip", "install", "--upgrade", f"pip=={pip_version}"], cwd=temp_root, log=log)
-
-        progress(36, "Validating selected dependency stack")
-        _validate_selected_requirements(venv_python, req_path, cwd=temp_root, log=log)
-
         pyinstaller_version = selected.get("pyinstaller")
         if not pyinstaller_version:
             for name, version in selected.items():
@@ -653,12 +770,18 @@ def build_installer(
         if not pyinstaller_version:
             raise BuilderError("requirements-lock.txt does not contain a PyInstaller pin")
 
-        progress(42, f"Installing PyInstaller {pyinstaller_version}")
-        _run(
-            [str(venv_python), "-m", "pip", "install", "--disable-pip-version-check", f"pyinstaller=={pyinstaller_version}"],
+        progress(22, "Reusing installer build venv")
+        venv_python = _ensure_reusable_venv(
+            base_python=base_python,
+            role="build",
+            pip_version=pip_version,
+            required={"pyinstaller": pyinstaller_version},
             cwd=temp_root,
             log=log,
         )
+
+        progress(36, "Validating selected dependency stack")
+        _validate_selected_requirements(venv_python, req_path, cwd=temp_root, log=log)
 
         progress(54, f"Building {OUTPUT_EXE_FILENAME}")
         dist = temp_root / "dist"
@@ -819,11 +942,11 @@ def launch_gui() -> int:
         text=f"Norm {source_info.version}  •  newest local base {source_info.zip_path.name}  •  output {OUTPUT_EXE_FILENAME}",
     ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 10))
 
-    ttk.Label(outer, text="Build venv Python").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
+    ttk.Label(outer, text="Base Python (reusable build venv)").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
     ttk.Entry(outer, textvariable=python_var).grid(row=2, column=1, sticky="ew", pady=4)
 
     def browse_python() -> None:
-        path = filedialog.askopenfilename(title="Select base Python for the installer build venv", filetypes=[("Python", "python.exe" if os.name == "nt" else "python*"), ("All files", "*.*")])
+        path = filedialog.askopenfilename(title="Select base Python for the reusable installer build venv", filetypes=[("Python", "python.exe" if os.name == "nt" else "python*"), ("All files", "*.*")])
         if path:
             python_var.set(path)
 
@@ -1168,7 +1291,7 @@ def self_test() -> int:
         raise BuilderError("Base requirements do not contain PyInstaller")
     template = (_app_dir() / INSTALLER_TEMPLATE_FILENAME).read_text(encoding="utf-8")
     patched = _patch_installer_template(template, pip_version=DEFAULT_PIP_VERSION)
-    if 'INSTALLER_VERSION = "1.4.4"' not in patched:
+    if 'INSTALLER_VERSION = "1.4.6"' not in patched:
         raise BuilderError("Installer version injection self-test failed")
     if 'find_latest_source()' not in patched:
         raise BuilderError("Installer auto-source discovery self-test failed")
