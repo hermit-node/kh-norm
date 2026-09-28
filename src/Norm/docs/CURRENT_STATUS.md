@@ -1,10 +1,10 @@
 # Norm current status
 
-Updated 2026-09-27 for the clean **0.52.9** portable source line.
+Updated 2026-09-27 for the clean **0.53.1** portable source line.
 
 ## Source/layout
 
-- Version: **0.52.9**.
+- Version: **0.53.1**.
 - Runtime root: `C:\Norm` (relocatable by installer); the installed absolute path is written to `config\settings.ini` `[paths].runtime_root`.
 - Runtime source/executable directory: `core\`; compiled executable target is `core\norm.exe`.
 - Maintained docs: `C:\Norm\docs`.
@@ -53,7 +53,7 @@ Queued workers now obtain `runtime.json` through the same resolved `runtime_boot
 Emergency stop now passes the real runtime root into the SOS writer and supplies its emergency output directory separately. This prevents `state\emergency-stop` from being mistaken for a second Norm runtime root.
 
 
-## 0.52.9 operator console launcher
+## 0.53.1 operator console launcher
 
 `norm.exe` remains detached in service mode. `Run-Norm.bat` now starts three explicit visible operator consoles (Prompt, Runtime, Replies) through a small console host. If a helper exits during startup, that console stays open and shows the exit/error instead of disappearing.
 
@@ -78,3 +78,8 @@ The Windows launcher now starts `norm.exe --service`. Service mode ignores and l
 - `/new [name]`, `/thread-list`, and `/thread-resume <name|id>` are queue-ordered console controls. Named threads are created durably in PostgreSQL; the switch itself is queued so older queued prompts remain attached to the thread they preceded.
 - `/flush-suppressed` reconciles the durable task ledger with GUI delivery state: suppressed/parked uncertain records are discarded as well as suppressed task rows, while an in-flight prompt keeps a temporary retry-block tombstone until its socket dispatch finishes.
 - Visible help lists only current canonical commands. Legacy aliases remain accepted silently for compatibility.
+
+
+## 0.53.1 aiohttp transport
+
+Chat and activity/control HTTP are served by pinned aiohttp 3.14.3 on dedicated asyncio loops. Existing coordinator lifecycle semantics remain compatible; blocking runtime callbacks are offloaded with asyncio.to_thread. SSE disconnects are benign transport events.

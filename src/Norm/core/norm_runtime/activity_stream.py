@@ -1,17 +1,19 @@
 from __future__ import annotations
 
-from .secret_redaction import redact, RedactingFormatter
-
-import ipaddress
+import asyncio
+from collections import deque
 import json
 import logging
+from pathlib import Path
 import queue
 import threading
 import time
-from collections import deque
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from typing import Callable
+
+from aiohttp import web
+
+from .aiohttp_host import AiohttpThreadServer
+from .secret_redaction import RedactingFormatter, redact
 
 
 class ActivityHub:
@@ -61,210 +63,198 @@ class ActivityLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            self.hub.publish(
-                {"channel": "norm", "type": "log", "text": self.format(record)}
-            )
+            self.hub.publish({"channel": "norm", "type": "log", "text": self.format(record)})
         except Exception:
             self.handleError(record)
 
 
-class ActivityHTTPServer(ThreadingHTTPServer):
-    daemon_threads = True
-    allow_reuse_address = True
-
-    def __init__(
-        self,
-        address: tuple[str, int],
-        hub: ActivityHub,
-        cancel_ollama: Callable[[], int],
-        shutdown_ollama: Callable[[], dict] | None = None,
-        shutdown_norm: Callable[[bool], dict] | None = None,
-        stop_all: Callable[[bool], dict] | None = None,
-        suppress_task: Callable[[str | None, str], dict] | None = None,
-        flush_suppressed: Callable[[], dict] | None = None,
-        busy_status: Callable[[], dict] | None = None,
-        context_status: Callable[[], dict] | None = None,
-        inject_context: Callable | None = None,
-        health_status: Callable[[], dict] | None = None,
-    ) -> None:
-        super().__init__(address, ActivityRequestHandler)
-        self.hub = hub
-        self.cancel_ollama = cancel_ollama
-        self.shutdown_ollama = shutdown_ollama
-        self.shutdown_norm = shutdown_norm
-        self.stop_all = stop_all
-        self.suppress_task = suppress_task
-        self.flush_suppressed = flush_suppressed
-        self.busy_status = busy_status
-        self.context_status = context_status
-        self.inject_context = inject_context
-        self.health_status = health_status
+async def _call(callback: Callable, *args):
+    return await asyncio.to_thread(callback, *args)
 
 
-class ActivityRequestHandler(BaseHTTPRequestHandler):
-    server: ActivityHTTPServer
+def _activity_app(
+    hub: ActivityHub,
+    *,
+    cancel_ollama: Callable[[], int],
+    shutdown_ollama: Callable[[], dict] | None,
+    shutdown_norm: Callable[[bool], dict] | None,
+    stop_all: Callable[[bool], dict] | None,
+    suppress_task: Callable[[str | None, str], dict] | None,
+    flush_suppressed: Callable[[], dict] | None,
+    busy_status: Callable[[], dict] | None,
+    context_status: Callable[[], dict] | None,
+    inject_context: Callable | None,
+    health_status: Callable[[], dict] | None,
+):
+    def factory(_server: AiohttpThreadServer) -> web.Application:
+        app = web.Application(client_max_size=1_048_576)
 
-    def log_message(self, format: str, *args) -> None:
-        logging.info("Activity HTTP %s - %s", self.client_address[0], format % args)
-
-    def _send_json(self, status: int, payload: dict) -> None:
-        body = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _send_text(self, status: int, text: str, content_type: str = "text/plain; charset=utf-8") -> None:
-        body = text.encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_GET(self) -> None:
-        if self.path == "/health":
-            if self.server.health_status is None:
-                self._send_json(200, {"status": "ok"})
-            else:
-                try:
-                    self._send_json(200, self.server.health_status())
-                except Exception:
-                    logging.exception("Activity health probe failed")
-                    self._send_json(500, {"status": "error", "error": "activity health probe failed"})
-            return
-        if self.path == "/status/busy":
-            if self.server.busy_status is None:
-                self._send_json(503, {"error": "busy status unavailable"})
-                return
+        async def health(_request: web.Request) -> web.Response:
+            if health_status is None:
+                return web.json_response({"status": "ok"})
             try:
-                self._send_json(200, self.server.busy_status())
+                return web.json_response(await _call(health_status))
             except Exception:
-                logging.exception("Busy status probe failed")
-                self._send_json(500, {"error": "busy status probe failed"})
-            return
-        if self.path == "/status-context":
-            if self.server.context_status is None:
-                self._send_json(503, {"error": "context status unavailable"})
-                return
+                logging.exception("Activity health probe computation failed")
+                return web.json_response({"status": "error", "error": "activity health probe failed"}, status=500)
+
+        async def busy(_request: web.Request) -> web.Response:
+            if busy_status is None:
+                return web.json_response({"error": "busy status unavailable"}, status=503)
             try:
-                payload = self.server.context_status()
+                return web.json_response(await _call(busy_status))
+            except Exception:
+                logging.exception("Busy status computation failed")
+                return web.json_response({"error": "busy status probe failed"}, status=500)
+
+        async def context(request: web.Request) -> web.Response:
+            if context_status is None:
+                return web.json_response({"error": "context status unavailable"}, status=503)
+            try:
+                payload = await _call(context_status)
+                if request.path.endswith(".md"):
+                    return web.Response(text=str(payload.get("handoff_markdown", "")), content_type="text/markdown")
+                return web.json_response(payload)
+            except Exception:
+                logging.exception("Context snapshot computation failed")
+                return web.json_response({"error": "context snapshot failed"}, status=500)
+
+        async def status_context(_request: web.Request) -> web.Response:
+            if context_status is None:
+                return web.json_response({"error": "context status unavailable"}, status=503)
+            try:
+                payload = await _call(context_status)
                 text = str(payload.get("handoff_markdown", ""))
                 pointer = payload.get("handoff_pointer")
                 if isinstance(pointer, dict) and pointer.get("path"):
                     pointer_path = Path(str(pointer["path"]))
                     if pointer_path.is_file():
-                        text = pointer_path.read_text(encoding="utf-8-sig", errors="replace")
-                self._send_text(200, text, "text/markdown; charset=utf-8")
+                        text = await asyncio.to_thread(
+                            pointer_path.read_text, encoding="utf-8-sig", errors="replace"
+                        )
+                return web.Response(text=text, content_type="text/markdown")
             except Exception:
-                logging.exception("Full context snapshot failed")
-                self._send_json(500, {"error": "full context snapshot failed"})
-            return
-        if self.path in {"/status/context", "/status/context.md"}:
-            if self.server.context_status is None:
-                self._send_json(503, {"error": "context status unavailable"})
-                return
-            try:
-                payload = self.server.context_status()
-                if self.path.endswith(".md"):
-                    self._send_text(200, str(payload.get("handoff_markdown", "")), "text/markdown; charset=utf-8")
-                else:
-                    self._send_json(200, payload)
-            except Exception:
-                logging.exception("Context snapshot failed")
-                self._send_json(500, {"error": "context snapshot failed"})
-            return
-        if self.path != "/events":
-            self._send_json(404, {"error": "not found"})
-            return
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.end_headers()
-        subscriber = self.server.hub.subscribe()
-        try:
-            while True:
-                try:
-                    event = subscriber.get(timeout=15)
-                    payload = json.dumps(event, ensure_ascii=False)
-                    data = f"data: {payload}\n\n".encode("utf-8")
-                except queue.Empty:
-                    data = b": keepalive\n\n"
-                self.wfile.write(data)
-                self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError, OSError):
-            pass
-        finally:
-            self.server.hub.unsubscribe(subscriber)
+                logging.exception("Full context snapshot computation failed")
+                return web.json_response({"error": "full context snapshot failed"}, status=500)
 
-    def _read_json_body(self) -> dict:
-        try:
-            length = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
-            length = 0
-        if length <= 0:
-            return {}
-        try:
-            return json.loads(self.rfile.read(length).decode("utf-8"))
-        except Exception:
-            return {}
-
-    def do_POST(self) -> None:
-        payload = self._read_json_body()
-        if self.path == "/control/inject-context":
-            if self.server.inject_context is None:
-                self._send_json(503, {"error": "Context injection unavailable"})
-                return
+        async def events(request: web.Request) -> web.StreamResponse:
+            response = web.StreamResponse(
+                status=200,
+                headers={
+                    "Content-Type": "text/event-stream; charset=utf-8",
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+            await response.prepare(request)
+            subscriber = hub.subscribe()
+            last_write = time.monotonic()
             try:
-                result = self.server.inject_context(payload.get("task_id"), payload.get("content"), payload.get("request_id"))
-                self._send_json(200, result)
-            except ValueError as exc:
-                self._send_json(400, {"error": str(exc)})
+                while True:
+                    event = None
+                    try:
+                        event = subscriber.get_nowait()
+                    except queue.Empty:
+                        pass
+                    if event is not None:
+                        payload = json.dumps(event, ensure_ascii=False)
+                        data = f"data: {payload}\n\n".encode("utf-8")
+                    elif time.monotonic() - last_write >= 15:
+                        data = b": keepalive\n\n"
+                    else:
+                        await asyncio.sleep(0.1)
+                        continue
+                    try:
+                        await response.write(data)
+                        last_write = time.monotonic()
+                    except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, asyncio.CancelledError):
+                        break
+                    except OSError as exc:
+                        if getattr(exc, "winerror", None) in {10053, 10054}:
+                            break
+                        raise
+            finally:
+                hub.unsubscribe(subscriber)
+            return response
+
+        async def body(request: web.Request) -> dict:
+            if not request.can_read_body:
+                return {}
+            try:
+                payload = await request.json()
             except Exception:
-                logging.exception("Context injection failed")
-                self._send_json(503, {"error": "Could not persist context; retry the same request ID"})
-            return
-        if self.path == "/control/cancel-ollama":
-            count = self.server.cancel_ollama()
-            self._send_json(200, {"status": "ok", "cancelled": count})
-            return
-        if self.path == "/control/shutdown-ollama":
-            if self.server.shutdown_ollama is None:
-                self._send_json(503, {"error": "Ollama shutdown control unavailable"})
-                return
-            result = self.server.shutdown_ollama()
-            self._send_json(200 if result.get("status") == "ok" else 409, result)
-            return
-        if self.path in {"/control/shutdown-norm", "/control/shutdown-norm-now"}:
-            if self.server.shutdown_norm is None:
-                self._send_json(503, {"error": "shutdown control unavailable"})
-                return
-            result = self.server.shutdown_norm(self.path.endswith("-now"))
-            self._send_json(200, result)
-            return
-        if self.path == "/control/suppress-task":
-            if self.server.suppress_task is None:
-                self._send_json(503, {"error": "suppress-task control unavailable"})
-                return
-            result = self.server.suppress_task(payload.get("task_id"), str(payload.get("reason") or ""))
-            self._send_json(200 if result.get("status") == "ok" else 409, result)
-            return
-        if self.path == "/control/flush-suppressed":
-            if self.server.flush_suppressed is None:
-                self._send_json(503, {"error": "flush-suppressed control unavailable"})
-                return
-            self._send_json(200, self.server.flush_suppressed())
-            return
-        if self.path in {"/control/stop-all", "/control/stop-all-now"}:
-            if self.server.stop_all is None:
-                self._send_json(503, {"error": "stop-all control unavailable"})
-                return
-            result = self.server.stop_all(self.path.endswith("-now"))
-            self._send_json(200, result)
-            return
-        self._send_json(404, {"error": "not found"})
+                return {}
+            return payload if isinstance(payload, dict) else {}
+
+        async def control(request: web.Request) -> web.Response:
+            payload = await body(request)
+            path = request.path
+            try:
+                if path == "/control/inject-context":
+                    if inject_context is None:
+                        return web.json_response({"error": "Context injection unavailable"}, status=503)
+                    try:
+                        result = await _call(
+                            inject_context,
+                            payload.get("task_id"),
+                            payload.get("content"),
+                            payload.get("request_id"),
+                        )
+                    except ValueError as exc:
+                        return web.json_response({"error": str(exc)}, status=400)
+                    return web.json_response(result)
+                if path == "/control/cancel-ollama":
+                    return web.json_response({"status": "ok", "cancelled": await _call(cancel_ollama)})
+                if path == "/control/shutdown-ollama":
+                    if shutdown_ollama is None:
+                        return web.json_response({"error": "Ollama shutdown control unavailable"}, status=503)
+                    result = await _call(shutdown_ollama)
+                    return web.json_response(result, status=200 if result.get("status") == "ok" else 409)
+                if path in {"/control/shutdown-norm", "/control/shutdown-norm-now"}:
+                    if shutdown_norm is None:
+                        return web.json_response({"error": "shutdown control unavailable"}, status=503)
+                    return web.json_response(await _call(shutdown_norm, path.endswith("-now")))
+                if path == "/control/suppress-task":
+                    if suppress_task is None:
+                        return web.json_response({"error": "suppress-task control unavailable"}, status=503)
+                    result = await _call(
+                        suppress_task, payload.get("task_id"), str(payload.get("reason") or "")
+                    )
+                    return web.json_response(result, status=200 if result.get("status") == "ok" else 409)
+                if path == "/control/flush-suppressed":
+                    if flush_suppressed is None:
+                        return web.json_response({"error": "flush-suppressed control unavailable"}, status=503)
+                    return web.json_response(await _call(flush_suppressed))
+                if path in {"/control/stop-all", "/control/stop-all-now"}:
+                    if stop_all is None:
+                        return web.json_response({"error": "stop-all control unavailable"}, status=503)
+                    return web.json_response(await _call(stop_all, path.endswith("-now")))
+            except Exception:
+                logging.exception("Activity control operation failed path=%s", path)
+                return web.json_response({"error": "control operation failed"}, status=503)
+            return web.json_response({"error": "not found"}, status=404)
+
+        app.router.add_get("/health", health)
+        app.router.add_get("/status/busy", busy)
+        app.router.add_get("/status-context", status_context)
+        app.router.add_get("/status/context", context)
+        app.router.add_get("/status/context.md", context)
+        app.router.add_get("/events", events)
+        for route in (
+            "/control/inject-context",
+            "/control/cancel-ollama",
+            "/control/shutdown-ollama",
+            "/control/shutdown-norm",
+            "/control/shutdown-norm-now",
+            "/control/suppress-task",
+            "/control/flush-suppressed",
+            "/control/stop-all",
+            "/control/stop-all-now",
+        ):
+            app.router.add_post(route, control)
+        return app
+    return factory
 
 
 def start_activity_server(
@@ -283,19 +273,24 @@ def start_activity_server(
     inject_context: Callable | None = None,
     health_status: Callable[[], dict] | None = None,
 ):
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError as exc:
-        raise ValueError("service bind host must be a literal loopback or Tailscale IP") from exc
-    if not (ip.is_loopback or ip in ipaddress.ip_network("100.64.0.0/10")):
-        raise ValueError("service bind host must remain loopback or Tailscale-only")
-    server = ActivityHTTPServer(
-        (host, port), hub, cancel_ollama, shutdown_ollama, shutdown_norm, stop_all, suppress_task, flush_suppressed, busy_status, context_status, inject_context, health_status
-    )
-    thread = threading.Thread(
-        target=server.serve_forever,
+    server = AiohttpThreadServer(
+        host=host,
+        port=int(port),
+        app_factory=_activity_app(
+            hub,
+            cancel_ollama=cancel_ollama,
+            shutdown_ollama=shutdown_ollama,
+            shutdown_norm=shutdown_norm,
+            stop_all=stop_all,
+            suppress_task=suppress_task,
+            flush_suppressed=flush_suppressed,
+            busy_status=busy_status,
+            context_status=context_status,
+            inject_context=inject_context,
+            health_status=health_status,
+        ),
         name="norm-activity-api",
-        daemon=True,
     )
-    thread.start()
-    return server, thread
+    result = server.start()
+    logging.info("Norm aiohttp activity/control API listening on http://%s:%s", host, port)
+    return result

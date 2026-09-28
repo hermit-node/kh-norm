@@ -1,6 +1,6 @@
 # Norm
 
-**Norm 0.52.9** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
+**Norm 0.53.1** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
 
 ## Canonical layout
 
@@ -64,7 +64,7 @@ The GUI recognizes `help`/`/help`, `/status`, `/status/busy`, `/queue-full`, `/m
 Historical notes may mention earlier `app\` and Documents-root layouts. Those are historical records, not current paths.
 
 
-## 0.52.9 operator console launcher
+## 0.53.1 operator console launcher
 
 `norm.exe` remains detached in service mode. `Run-Norm.bat` now starts three explicit visible operator consoles (Prompt, Runtime, Replies) through a small console host. If a helper exits during startup, that console stays open and shows the exit/error instead of disappearing.
 
@@ -86,3 +86,8 @@ Startup ownership is fail-closed: the activity API, worker, and chat API are all
 
 The activity/control API starts before PostgreSQL schema initialization and reports an explicit `initializing` phase until the worker/chat runtime is ready. This keeps `/status/busy` and shutdown/stop controls reachable during bounded schema waits without treating a half-started runtime as healthy. Conversation consoles support queue-ordered thread controls: `/new [name]`, `/thread-list`, and `/thread-resume <name-or-id>`.
 `/flush-suppressed` removes suppressed task records and their parked GUI delivery records together; active socket dispatches retain only the hidden retry-block tombstone needed to prevent a late connection reset from recreating the prompt.
+
+
+## 0.53.1 aiohttp transport
+
+Chat and activity/control HTTP are served by pinned aiohttp 3.14.3 on dedicated asyncio loops. Existing coordinator lifecycle semantics remain compatible; blocking runtime callbacks are offloaded with asyncio.to_thread. SSE disconnects are benign transport events.

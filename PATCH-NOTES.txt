@@ -1,5 +1,36 @@
-Norm Installer Kit 1.4.6
-Norm runtime 0.52.9
+Norm Installer Kit 1.4.8
+Norm runtime 0.53.1
+
+aiohttp startup/readiness regression repair:
+- Restores the old HTTP server's allow_reuse_address behavior with aiohttp TCPSite(reuse_address=True).
+- Preserves the known-good Run-Norm.bat dual-health gate and direct three-console launch block.
+- Startup timeout now reports chat and activity health separately before pointing to norm-runtime.log.
+- Does not reintroduce start_operator_consoles.py.
+- Repeated bind -> /health -> shutdown -> immediate rebind regression passed.
+- Abrupt-client disconnect handling from 0.53.0 remains in place.
+
+Norm Installer Kit 1.4.8
+Norm runtime 0.53.1
+
+aiohttp control-plane migration:
+- Replaced socketserver/ThreadingHTTPServer transports for chat and activity/control with aiohttp.web.
+- Pinned aiohttp 3.14.3 plus compatible transitive dependencies in the runtime install lock.
+- Preserved coordinator lifecycle methods and active-request accounting.
+- Blocking runtime callbacks execute through asyncio.to_thread.
+- SSE disconnect/reset/WinError 10053/10054 is treated as normal client departure.
+- Retained loopback/Tailscale-only binding.
+- Added graceful aiohttp AppRunner/event-loop cleanup.
+
+Regression validation:
+- Abrupt client disconnect during /status/busy leaves the activity server healthy.
+- Stub /api/chat POST round-trip returns 200 through aiohttp.
+- Server threads terminate cleanly.
+- All packaged Python files syntax-compile.
+
+Installer-builder reusable-venv behavior from 1.4.5 and ingress deduplication from 1.4.6 are retained.
+
+Norm Installer Kit 1.4.8
+Norm runtime 0.53.1
 
 Redis ingress state-machine repair:
 - Fixed a real duplicate-live-prompt race in uncertain HTTP recovery.

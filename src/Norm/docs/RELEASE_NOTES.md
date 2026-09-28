@@ -1,13 +1,23 @@
+## 0.53.1 — 2026-09-28 — aiohttp control plane
+
+- Replaced the hand-rolled ThreadingHTTPServer/socketserver chat and activity/control transports with aiohttp.web.
+- Preserved the coordinator-facing lifecycle contract so startup/shutdown ordering remains stable.
+- Blocking conversation, PostgreSQL-facing, context, and control callbacks run via asyncio.to_thread rather than blocking the HTTP event loops.
+- Activity SSE is asyncio-native and treats client disconnect/reset/WinError 10053/10054 as normal stream termination.
+- Pinned aiohttp==3.14.3 in runtime and installer locks.
+- Retained loopback/Tailscale-only bind validation.
+- Added bounded graceful AppRunner cleanup and explicit event-loop/default-executor shutdown.
+
 # Norm release notes
 
-## 0.52.9 — 2026-09-28 — ingress retry deduplication
+## 0.53.1 — 2026-09-28 — ingress retry deduplication
 
 - Serialized uncertain-prompt requeue by durable uncertain-record identity so duplicate retry timers cannot create multiple live Redis deliveries for one prompt.
 - Requeue now atomically adds the replacement ingress entry and removes its uncertain source record.
 - `/queue` and `/queue-full` now exclude acknowledged-but-preserved historical stream rows from the LIVE QUEUE view while failing open if consumer-group metadata is unavailable.
 - Added regression coverage for concurrent retry contenders and live-queue historical-row filtering.
 
-## 0.52.9 — 2026-09-27 — launcher ownership/readiness fix
+## 0.53.1 — 2026-09-27 — launcher ownership/readiness fix
 
 - Restored the proven `cmd.exe start` path for the three operator consoles after both Norm health endpoints are ready.
 - Removed `start_operator_consoles.py` from the normal `Run-Norm.bat` startup path.
@@ -16,7 +26,7 @@
 - Startup timeout messaging now reports readiness failure without falsely claiming that the just-launched Norm process is a duplicate.
 
 
-## 0.52.9 — 2026-09-27 — restore explicit operator consoles
+## 0.53.1 — 2026-09-27 — restore explicit operator consoles
 
 - `norm.exe` remains detached in `--service` mode.
 - `Run-Norm.bat` launches `Norm Prompt`, `Norm Runtime`, and `Norm Replies` as three explicit persistent consoles via `tools\start_operator_consoles.py`.
