@@ -2,12 +2,12 @@
 
 This is the active backlog/design notebook for behavior that is not fully implemented. `README.md` describes operation, `CURRENT_STATUS.md` describes current facts, `RELEASE_NOTES.md` records shipped/source-release deltas, and `DEVELOPMENT_NOTES.md` preserves engineering history.
 
-## Current backlog after 0.52.5 source consolidation
+## Current backlog after 0.52.6 source consolidation
 
 - Make installer source sync transactional: stage/validate dependencies and candidate executable before committing a new managed source tree, with a defined rollback path if post-sync dependency/build validation fails.
 - Add explicit plugin export declarations so compatibility `run` wrappers and helper functions do not automatically become model-visible native tools.
 - Route the `verbatim_lines` plugin through Norm's canonical allowed-root policy; it is currently an intentional exact writer but should not be a second unrestricted filesystem API.
-1. Run full Windows acceptance on a real installed 0.52.5 build: installer in-place update, venv reuse, executable build, service/API/GUI health, plugin hot-reload, and a real task.
+1. Run full Windows acceptance on a real installed 0.52.6 build: installer in-place update, venv reuse, executable build, service/API/GUI health, plugin hot-reload, and a real task.
 2. Validate the full-backup plugin and installer restore path against a disposable PostgreSQL schema and test installation before relying on it as the sole disaster-recovery mechanism.
 3. Rotate any historically exposed PostgreSQL credential and verify every consumer after rotation; old traces are not automatically scrubbed.
 4. Extend command execution guardrails so an alternate shell/plugin path cannot bypass a file-tool denial. Prefer reviewed typed operations and least-privilege execution over arbitrary shell text.

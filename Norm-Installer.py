@@ -18,9 +18,13 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable
 
-INSTALLER_VERSION = "1.3.6"
-PIP_MIN_VERSION = "26.1"
-PIP_SPEC = f"pip>={PIP_MIN_VERSION}"
+INSTALLER_VERSION = "1.4.0"
+PIP_VERSION = "26.2.1"
+PIP_MIN_VERSION = PIP_VERSION  # backward-compatible internal print helper
+PIP_SPEC = f"pip=={PIP_VERSION}"
+BOUND_SOURCE_FILENAME = "Norm-0.52.5-portable-source.zip"
+BOUND_SOURCE_SHA256 = "c6c84fa7701d1e6f79c28fd47a4f65ab7e7732e771e2a6a269548fcaaa99f0a9"
+BOUND_NORM_VERSION = "0.52.5"
 SUPPORTED_PACKAGE_SCHEMA = {1}
 
 
@@ -124,6 +128,29 @@ def _verify_companion_sha256(source_zip: Path) -> None:
         raise InstallerError(
             f"SHA-256 mismatch for {source_zip.name}. Expected {expected}, got {actual}. "
             "If you intentionally rebuilt this source ZIP, regenerate its .sha256 companion first."
+        )
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _verify_bound_source(source_zip: Path) -> None:
+    source_zip = Path(source_zip).expanduser().resolve()
+    if source_zip.name != BOUND_SOURCE_FILENAME:
+        raise InstallerError(
+            f"This installer is bound to {BOUND_SOURCE_FILENAME}, not {source_zip.name}."
+        )
+    actual = _sha256_file(source_zip)
+    if actual.lower() != BOUND_SOURCE_SHA256.lower():
+        raise InstallerError(
+            f"Bound payload SHA-256 mismatch for {source_zip.name}. "
+            f"Expected {BOUND_SOURCE_SHA256}, got {actual}. "
+            "Use the payload produced with this exact installer build."
         )
 
 
@@ -657,6 +684,9 @@ def install_norm(
     python_exe = Path(options.python_exe).expanduser().resolve()
     warnings: list[str] = []
 
+    if source.name == BOUND_SOURCE_FILENAME:
+        _verify_bound_source(source)
+
     progress(2, "Validating package")
     info = inspect_package(source)
     log(f"Package: {info.label}")
@@ -770,14 +800,18 @@ def install_norm(
     # out of requirements-lock.txt so changing pip never mutates the portable
     # source package or invalidates the source ZIP's companion SHA-256.
     installed_pip = _installed_version(venv_python, "pip", log)
-    progress(32, f"Updating pip ({PIP_SPEC})")
-    if installed_pip:
-        log(f"Current pip version: {installed_pip}; allowing any newer release satisfying {PIP_SPEC}.")
-    _run(
-        [str(venv_python), "-m", "pip", "install", "--upgrade", PIP_SPEC],
-        cwd=target,
-        log=log,
-    )
+    if installed_pip == PIP_VERSION:
+        progress(32, f"pip {PIP_VERSION} already installed")
+        log(f"pip {PIP_VERSION} matches the installer infrastructure pin; skipping reinstall.")
+    else:
+        progress(32, f"Normalizing pip to {PIP_VERSION}")
+        if installed_pip:
+            log(f"Current pip version: {installed_pip}; installing exact reproducible version {PIP_VERSION}.")
+        _run(
+            [str(venv_python), "-m", "pip", "install", PIP_SPEC],
+            cwd=target,
+            log=log,
+        )
 
     if options.install_torch:
         torch_cfg = _configured_torch(settings)
@@ -887,21 +921,13 @@ def _candidate_roots() -> list[Path]:
     return unique
 
 
-def find_default_source() -> Path | None:
-    valid: list[tuple[tuple, float, Path]] = []
-    for root in _candidate_roots():
-        if not root.is_dir():
-            continue
-        for path in root.glob("*.zip"):
-            try:
-                info = inspect_package(path)
-            except Exception:
-                continue
-            valid.append((_version_key(info.version), path.stat().st_mtime, path.resolve()))
-    if not valid:
+def find_bound_source() -> Path | None:
+    root = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+    candidate = root / BOUND_SOURCE_FILENAME
+    if not candidate.is_file():
         return None
-    valid.sort(reverse=True)
-    return valid[0][2]
+    _verify_bound_source(candidate)
+    return candidate.resolve()
 
 
 def _which_file(name: str) -> list[Path]:
@@ -1010,28 +1036,32 @@ def launch_gui(initial_source: Path | None = None) -> int:
     except Exception as exc:
         raise InstallerError(f"Tkinter is required for the GUI installer: {exc}") from exc
 
+    source = Path(initial_source).expanduser().resolve() if initial_source else find_bound_source()
+    if source is None:
+        raise InstallerError(
+            f"Required payload {BOUND_SOURCE_FILENAME} was not found beside the installer."
+        )
+    _verify_bound_source(source)
+    info = inspect_package(source)
+
     root = tk.Tk()
     root.title(f"Norm Installer {INSTALLER_VERSION}")
-    root.geometry("800x570")
-    root.minsize(720, 520)
+    root.geometry("810x545")
+    root.minsize(720, 500)
 
-    source_default = initial_source or find_default_source()
-    python_default = choose_default_python(source_default)
-
-    source_var = tk.StringVar(value=str(source_default or ""))
+    python_default = choose_default_python(source)
     target_var = tk.StringVar(value=r"C:\Norm" if os.name == "nt" else str(Path.home() / "Norm"))
     python_var = tk.StringVar(value=str(python_default or ""))
-    package_var = tk.StringVar(value="Select a Norm source ZIP")
-    compile_var = tk.BooleanVar(value=True)
-    torch_var = tk.BooleanVar(value=True)
-    recreate_venv_var = tk.BooleanVar(value=False)
+    package_var = tk.StringVar(
+        value=f"{info.label}  •  fixed payload  •  SHA-256 {BOUND_SOURCE_SHA256[:12]}…"
+    )
     progress_var = tk.DoubleVar(value=0)
     status_var = tk.StringVar(value="Ready")
 
     outer = ttk.Frame(root, padding=(14, 12))
     outer.pack(fill="both", expand=True)
     outer.columnconfigure(1, weight=1)
-    outer.rowconfigure(9, weight=1)
+    outer.rowconfigure(7, weight=1)
 
     ttk.Label(outer, text="Norm Installer", font=("Segoe UI", 16, "bold")).grid(
         row=0, column=0, columnspan=3, sticky="w", pady=(0, 4)
@@ -1040,70 +1070,53 @@ def launch_gui(initial_source: Path | None = None) -> int:
         row=1, column=0, columnspan=3, sticky="w", pady=(0, 14)
     )
 
-    ttk.Label(outer, text="Source package").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
-    source_entry = ttk.Entry(outer, textvariable=source_var)
-    source_entry.grid(row=2, column=1, sticky="ew", pady=4)
-
-    def browse_source() -> None:
-        path = filedialog.askopenfilename(
-            title="Select Norm source or full-backup package",
-            filetypes=[("ZIP packages", "*.zip"), ("All files", "*.*")],
-        )
-        if path:
-            source_var.set(path)
-            refresh_package_label()
-            if not python_var.get().strip():
-                candidate = choose_default_python(Path(path))
-                if candidate:
-                    python_var.set(str(candidate))
-
-    ttk.Button(outer, text="Browse…", command=browse_source).grid(row=2, column=2, padx=(8, 0), pady=4)
-
-    ttk.Label(outer, text="Install to").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=4)
-    ttk.Entry(outer, textvariable=target_var).grid(row=3, column=1, sticky="ew", pady=4)
+    ttk.Label(outer, text="Install/update to").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
+    ttk.Entry(outer, textvariable=target_var).grid(row=2, column=1, sticky="ew", pady=4)
 
     def browse_target() -> None:
         path = filedialog.askdirectory(title="Select Norm installation directory")
         if path:
             target_var.set(path)
 
-    ttk.Button(outer, text="Browse…", command=browse_target).grid(row=3, column=2, padx=(8, 0), pady=4)
+    ttk.Button(outer, text="Browse…", command=browse_target).grid(row=2, column=2, padx=(8, 0), pady=4)
 
-    ttk.Label(outer, text="Python").grid(row=4, column=0, sticky="w", padx=(0, 8), pady=4)
-    ttk.Entry(outer, textvariable=python_var).grid(row=4, column=1, sticky="ew", pady=4)
+    ttk.Label(outer, text="Base Python").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=4)
+    ttk.Entry(outer, textvariable=python_var).grid(row=3, column=1, sticky="ew", pady=4)
 
     def browse_python() -> None:
         path = filedialog.askopenfilename(
-            title="Select Python executable",
+            title="Select Python executable used for the Norm venv",
             filetypes=[("Python", "python.exe" if os.name == "nt" else "python*"), ("All files", "*.*")],
         )
         if path:
             python_var.set(path)
 
-    ttk.Button(outer, text="Browse…", command=browse_python).grid(row=4, column=2, padx=(8, 0), pady=4)
+    ttk.Button(outer, text="Browse…", command=browse_python).grid(row=3, column=2, padx=(8, 0), pady=4)
 
-    options_frame = ttk.LabelFrame(outer, text="Install behavior", padding=(10, 6))
-    options_frame.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(8, 6))
-    ttk.Checkbutton(options_frame, text="Compile norm.exe", variable=compile_var).grid(row=0, column=0, sticky="w", padx=(0, 18))
-    ttk.Checkbutton(options_frame, text="Ensure configured PyTorch/CUDA", variable=torch_var).grid(row=0, column=1, sticky="w", padx=(0, 18))
-    ttk.Checkbutton(options_frame, text="Recreate .venv", variable=recreate_venv_var).grid(row=0, column=2, sticky="w")
-    ttk.Label(options_frame, text="Existing compatible .venv, .ssh, user plugins, logs, and state are preserved during normal updates.").grid(
-        row=1, column=0, columnspan=3, sticky="w", pady=(5, 0)
-    )
+    behavior = ttk.LabelFrame(outer, text="Fixed build", padding=(10, 7))
+    behavior.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(8, 7))
+    ttk.Label(
+        behavior,
+        text=(
+            f"Payload: {BOUND_SOURCE_FILENAME}\n"
+            "Package source and dependency pins are fixed by this installer build. "
+            "A compatible existing .venv is reused; .ssh, user plugins, logs, and state are preserved on normal updates."
+        ),
+        justify="left",
+        wraplength=750,
+    ).grid(row=0, column=0, sticky="w")
 
     progress = ttk.Progressbar(outer, maximum=100, variable=progress_var)
-    progress.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(6, 2))
-    ttk.Label(outer, textvariable=status_var).grid(row=8, column=0, columnspan=3, sticky="w", pady=(0, 5))
+    progress.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(6, 2))
+    ttk.Label(outer, textvariable=status_var).grid(row=6, column=0, columnspan=3, sticky="w", pady=(0, 5))
 
     log_box = ScrolledText(outer, height=14, wrap="word", font=("Consolas", 9))
-    log_box.grid(row=9, column=0, columnspan=3, sticky="nsew")
+    log_box.grid(row=7, column=0, columnspan=3, sticky="nsew")
     log_box.configure(state="disabled")
 
     actions = ttk.Frame(outer)
-    actions.grid(row=10, column=0, columnspan=3, sticky="e", pady=(10, 0))
-    validate_btn = ttk.Button(actions, text="Validate Package")
-    validate_btn.pack(side="left", padx=(0, 8))
-    install_btn = ttk.Button(actions, text="Install Norm")
+    actions.grid(row=8, column=0, columnspan=3, sticky="e", pady=(10, 0))
+    install_btn = ttk.Button(actions, text="Install / Update Norm")
     install_btn.pack(side="left")
 
     events: queue.Queue[tuple[str, object]] = queue.Queue()
@@ -1115,39 +1128,10 @@ def launch_gui(initial_source: Path | None = None) -> int:
         log_box.see("end")
         log_box.configure(state="disabled")
 
-    def refresh_package_label() -> bool:
-        raw = source_var.get().strip()
-        if not raw:
-            package_var.set("Select a Norm source ZIP")
-            return False
-        try:
-            info = inspect_package(Path(raw))
-            package_var.set(f"{info.label}  •  {info.manifest.get('package_type')}  •  package schema {info.manifest.get('package_schema')}")
-            return True
-        except Exception as exc:
-            package_var.set(f"Invalid source package: {exc}")
-            return False
-
-    def validate_clicked() -> None:
-        try:
-            info = inspect_package(Path(source_var.get().strip()))
-            package_var.set(f"{info.label}  •  {info.manifest.get('package_type')}  •  package schema {info.manifest.get('package_schema')}")
-            messagebox.showinfo(
-                "Valid Norm package",
-                f"{info.label}\n\nEntrypoint: {info.manifest['entrypoint']}\n"
-                f"Requirements: {info.manifest['requirements_lock']}\nBuild: {info.manifest['build_script']}",
-            )
-        except Exception as exc:
-            messagebox.showerror("Invalid package", str(exc))
-
-    validate_btn.configure(command=validate_clicked)
-
     def set_busy(value: bool) -> None:
         nonlocal busy
         busy = value
-        state = "disabled" if value else "normal"
-        install_btn.configure(state=state)
-        validate_btn.configure(state=state)
+        install_btn.configure(state="disabled" if value else "normal")
 
     def worker(options: InstallOptions) -> None:
         try:
@@ -1163,20 +1147,21 @@ def launch_gui(initial_source: Path | None = None) -> int:
     def install_clicked() -> None:
         if busy:
             return
-        source_text = source_var.get().strip()
         target_text = target_var.get().strip()
         python_text = python_var.get().strip()
-        if not source_text or not target_text or not python_text:
-            messagebox.showerror("Missing information", "Select a source package, installation target, and Python executable.")
+        if not target_text or not python_text:
+            messagebox.showerror("Missing information", "Choose the install/update folder and base Python executable.")
             return
         try:
-            info = inspect_package(Path(source_text))
+            _verify_bound_source(source)
+            current_info = inspect_package(source)
         except Exception as exc:
-            messagebox.showerror("Invalid source package", str(exc))
+            messagebox.showerror("Payload validation failed", str(exc))
             return
 
         target = Path(target_text).expanduser()
         replace = False
+        recreate_venv = False
         if target.exists():
             try:
                 nonempty = any(target.iterdir())
@@ -1187,14 +1172,30 @@ def launch_gui(initial_source: Path | None = None) -> int:
                 replace = messagebox.askyesno(
                     "Update existing Norm installation?",
                     f"{target} is not empty.\n\n"
-                    f"The installer will synchronize package-owned files to {info.label}: changed files are replaced and files removed from the new base are deleted.\n\n"
-                    "For a normal source update, the existing .venv, .ssh, plugins, logs/state, local secrets, and compiled norm.exe are preserved. If Compile norm.exe is checked, the executable is rebuilt after the sync.\n\n"
-                    + ("THIS IS A FULL BACKUP: its saved .ssh, plugins, secrets, workspace, runtime state, and PostgreSQL snapshot will be restored.\n\n" if info.manifest.get("package_type") == "full-backup" else "")
-                    + "Continue?",
+                    f"Synchronize package-owned files to {current_info.label}?\n\n"
+                    "The existing compatible .venv, .ssh, user plugins, logs/state, local secrets, and compiled executable are preserved until their normal update/rebuild step.",
                     icon="question",
                 )
                 if not replace:
                     return
+                try:
+                    settings = _read_settings(target, json.loads((target / "package-manifest.json").read_text(encoding="utf-8-sig")))
+                    venv_rel = settings.get("environment", "venv_path", fallback=".venv").strip() or ".venv"
+                    existing_py = target / venv_rel / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+                    expected = _expected_python(settings)
+                    if existing_py.is_file() and expected:
+                        existing_ver = _python_version(existing_py, _noop_log)
+                        if existing_ver[:2] != expected:
+                            recreate_venv = messagebox.askyesno(
+                                "Recreate incompatible .venv?",
+                                f"The existing venv uses Python {existing_ver[0]}.{existing_ver[1]}.{existing_ver[2]}, "
+                                f"but this package expects {expected[0]}.{expected[1]}.x.\n\nRecreate the venv using the selected Base Python?",
+                            )
+                            if not recreate_venv:
+                                return
+                except Exception:
+                    # A partial/older install can still be repaired by the normal installer path.
+                    pass
 
         log_box.configure(state="normal")
         log_box.delete("1.0", "end")
@@ -1203,13 +1204,13 @@ def launch_gui(initial_source: Path | None = None) -> int:
         status_var.set("Starting installation…")
         set_busy(True)
         opts = InstallOptions(
-            source_zip=Path(source_text),
+            source_zip=source,
             target_dir=target,
             python_exe=Path(python_text),
-            compile_exe=compile_var.get(),
-            install_torch=torch_var.get(),
+            compile_exe=True,
+            install_torch=True,
             replace_existing=replace,
-            recreate_venv=recreate_venv_var.get(),
+            recreate_venv=recreate_venv,
         )
         threading.Thread(target=worker, args=(opts,), daemon=True).start()
 
@@ -1251,16 +1252,13 @@ def launch_gui(initial_source: Path | None = None) -> int:
             pass
         root.after(100, pump_events)
 
-    source_entry.bind("<FocusOut>", lambda _e: refresh_package_label())
-    refresh_package_label()
     root.after(100, pump_events)
     root.mainloop()
     return 0
 
-
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Reusable Norm source/full-backup installer")
-    parser.add_argument("--source", help="Norm portable-source or full-backup ZIP")
+    parser = argparse.ArgumentParser(description="Norm installer bound to one exact source payload")
+    parser.add_argument("--source", help=argparse.SUPPRESS)
     parser.add_argument("--target", help="Installation directory")
     parser.add_argument("--python", dest="python_exe", help="Python executable used to create the Norm venv")
     parser.add_argument("--validate-only", action="store_true", help="Validate the source package and exit")
@@ -1277,7 +1275,7 @@ def main() -> int:
     if args.self_test_file:
         target = Path(args.self_test_file).expanduser()
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(f"ok {INSTALLER_VERSION}\n", encoding="utf-8")
+        target.write_text(f"ok {INSTALLER_VERSION} {BOUND_SOURCE_FILENAME} {BOUND_SOURCE_SHA256}\n", encoding="utf-8")
         return 0
 
     if args.print_pip_spec:
@@ -1285,17 +1283,19 @@ def main() -> int:
         return 0
     if args.print_pip_version:
         # Backward-compatible internal helper for older build BATs.
-        print(PIP_MIN_VERSION)
+        print(PIP_VERSION)
         return 0
 
-    source = Path(args.source).expanduser() if args.source else find_default_source()
+    source = Path(args.source).expanduser() if args.source else find_bound_source()
 
     if args.validate_only:
         if not source:
-            raise InstallerError("No source package was specified or found beside the installer")
+            raise InstallerError("Required bound source package Norm-0.52.5-portable-source.zip was not found beside the installer")
         info = inspect_package(source)
         print(json.dumps({
             "installer_version": INSTALLER_VERSION,
+            "bound_source_filename": BOUND_SOURCE_FILENAME,
+            "bound_source_sha256": BOUND_SOURCE_SHA256,
             "source": str(info.source_zip),
             "name": info.name,
             "version": info.version,
@@ -1308,7 +1308,7 @@ def main() -> int:
 
     if args.install:
         if not source or not args.target or not args.python_exe:
-            parser.error("--install requires --source (or a detected package), --target, and --python")
+            parser.error("--install requires the bound payload beside the installer plus --target and --python")
         result = install_norm(
             InstallOptions(
                 source_zip=source,

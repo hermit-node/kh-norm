@@ -1,4 +1,4 @@
-# Norm 0.52.5 portable source package
+# Norm 0.52.6 portable source package
 
 This archive is the clean source baseline for installing or rebuilding Norm.
 
@@ -35,7 +35,7 @@ Package-managed built-in plugin subtrees are `plugins\backup`, `plugins\verbatim
 `/backup` creates portable/source installer media; `/backup full` creates the sensitive private-state format; `/backup-zip` is the legacy full-backup alias. `/condense-memories` is intentionally absent until the complete fail-closed curated-memory housekeeping policy is implemented.
 
 
-## 0.52.5 proportional plan verification
+## 0.52.6 proportional plan verification
 
 The independent verifier now distinguishes blocking execution defects from advisory plan-shape/style concerns. Explicitly bounded cohesive work may remain together, and existing mechanisms plus execution-time tests are treated as evidence rather than invitations for speculative rejection. Repair cycles must materially address the reported blocker.
 
