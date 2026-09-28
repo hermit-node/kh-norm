@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-INSTALLER_VERSION = "1.4.0"
+INSTALLER_VERSION = "1.4.1"
 BASE_SOURCE_FILENAME = "Norm-0.52.5-portable-source.zip"
 INSTALLER_TEMPLATE_FILENAME = "Norm-Installer.py"
 OUTPUT_EXE_FILENAME = f"Norm-Installer-{INSTALLER_VERSION}.exe"
