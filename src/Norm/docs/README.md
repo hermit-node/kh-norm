@@ -1,6 +1,6 @@
 # Norm
 
-**Norm 0.52.7** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
+**Norm 0.52.8** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
 
 ## Canonical layout
 
@@ -64,7 +64,7 @@ The GUI recognizes `help`/`/help`, `/status`, `/status/busy`, `/queue-full`, `/m
 Historical notes may mention earlier `app\` and Documents-root layouts. Those are historical records, not current paths.
 
 
-## 0.52.7 operator console launcher
+## 0.52.8 operator console launcher
 
 `norm.exe` remains detached in service mode. `Run-Norm.bat` now starts three explicit visible operator consoles (Prompt, Runtime, Replies) through a small console host. If a helper exits during startup, that console stays open and shows the exit/error instead of disappearing.
 

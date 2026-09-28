@@ -66,8 +66,8 @@ for /L %%I in (1,1,90) do (
   curl.exe -fsS "%CHAT_HEALTH%" >NUL 2>&1 && curl.exe -fsS "%ACTIVITY_HEALTH%" >NUL 2>&1 && goto ready
   ping.exe -n 2 127.0.0.1 >NUL
 )
-echo ERROR: norm.exe exists or was started, but Norm HTTP/control APIs did not become healthy.
-echo Refusing to launch a second Norm instance. Check: %ROOT%logs\norm-runtime.log
+echo ERROR: Norm did not become healthy within the startup window.
+echo No second instance was launched. Check: %ROOT%logs\norm-runtime.log
 pause
 exit /b 1
 
@@ -76,14 +76,10 @@ echo Norm is healthy at %CHAT_HEALTH%
 if /I "%~1"=="--service-only" exit /b 0
 
 pushd "%ROOT%"
-"%PY%" "%ROOT%tools\start_operator_consoles.py"
-set "CONSOLE_RC=%ERRORLEVEL%"
+start "Norm Runtime" "%PY%" -u "%ROOT%tools\norm_gui_stream.py"
+start "Norm Replies" "%PY%" -u "%ROOT%tools\norm_gui_reply.py"
+start "Norm Prompt" "%PY%" -u "%ROOT%tools\norm_gui_prompt.py"
 popd
-if not "%CONSOLE_RC%"=="0" (
-  echo ERROR: One or more Norm operator consoles could not be opened.
-  pause
-  exit /b %CONSOLE_RC%
-)
 
 endlocal
 exit /b 0

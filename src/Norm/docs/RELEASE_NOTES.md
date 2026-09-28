@@ -1,6 +1,15 @@
 # Norm release notes
 
-## 0.52.7 — 2026-09-27 — restore explicit operator consoles
+## 0.52.8 — 2026-09-27 — launcher ownership/readiness fix
+
+- Restored the proven `cmd.exe start` path for the three operator consoles after both Norm health endpoints are ready.
+- Removed `start_operator_consoles.py` from the normal `Run-Norm.bat` startup path.
+- Detached service creation now returns and reports the owned `norm.exe` PID instead of discarding the process handle immediately.
+- A pre-existing `norm.exe` is treated as an attach/wait condition; a process launched by the current helper is not subsequently described as a second instance.
+- Startup timeout messaging now reports readiness failure without falsely claiming that the just-launched Norm process is a duplicate.
+
+
+## 0.52.8 — 2026-09-27 — restore explicit operator consoles
 
 - `norm.exe` remains detached in `--service` mode.
 - `Run-Norm.bat` launches `Norm Prompt`, `Norm Runtime`, and `Norm Replies` as three explicit persistent consoles via `tools\start_operator_consoles.py`.

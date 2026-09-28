@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable
 
-INSTALLER_VERSION = "1.4.2"
+INSTALLER_VERSION = "1.4.4"
 PIP_VERSION = "26.2.1"
 PIP_MIN_VERSION = PIP_VERSION  # backward-compatible internal print helper
 PIP_SPEC = f"pip=={PIP_VERSION}"
@@ -1178,7 +1178,6 @@ def launch_gui(initial_source: Path | None = None) -> int:
             messagebox.showerror("Missing information", "Choose the install/update folder and base Python executable.")
             return
         try:
-            _verify_bound_source(source)
             current_info = inspect_package(source)
         except Exception as exc:
             messagebox.showerror("Payload validation failed", str(exc))
