@@ -1,6 +1,6 @@
 # Norm
 
-**Norm 0.52.5** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
+**Norm 0.52.6** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
 
 ## Canonical layout
 
@@ -64,7 +64,7 @@ The GUI recognizes `help`/`/help`, `/status`, `/status/busy`, `/queue-full`, `/m
 Historical notes may mention earlier `app\` and Documents-root layouts. Those are historical records, not current paths.
 
 
-## 0.52.5 proportional plan verification
+## 0.52.6 proportional plan verification
 
 The independent plan verifier now rejects only blocking execution defects. Cohesive bounded steps may contain multiple tightly coupled implementation parts when their roles and verification are explicit. Advisory organization/style concerns no longer veto a plan, and the verifier is instructed not to invent hypothetical implementation failures when the plan explicitly inspects/reuses an existing mechanism or verifies the invariant during execution. Repair cycles must make the smallest material correction instead of mechanically splitting cohesive work or returning the same rejected plan.
 

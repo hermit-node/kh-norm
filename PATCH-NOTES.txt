@@ -1,69 +1,18 @@
-Norm Installer 1.3.6 / Norm 0.52.3
-====================================
-- Removed the stale Norm 0.52.1 source ZIP; the kit contains only current Norm 0.52.3 source plus checksum.
-- Standalone installer EXE builds now use PyInstaller 6.22.3.
-- Added a post-build executable startup self-test. The generated EXE must launch, parse arguments, and write a versioned sentinel before it is copied into the kit.
-- `Run-Norm.bat` starts `norm.exe --service`; service mode ignores/logs stray Ctrl+C and Ctrl-Break events. Explicit `/shutdown` and `/stop-all` controls remain authoritative.
-- Direct manual `norm.exe` invocation retains normal KeyboardInterrupt behavior.
+Norm Installer 1.4.0 / Norm 0.52.5
+===================================
 
-Norm Installer 1.3.5
-====================
-- Fixed Build-Norm-Installer-EXE.bat failing on some external/non-C: Python paths because cmd.exe FOR /F command capture parsed the quoted executable invocation incorrectly.
-- The build helper now writes --print-pip-spec output to a temporary file and reads it with SET /P.
-- Clarified that Update-Source-SHA.bat only regenerates the companion checksum; it does not update/install Norm or modify the source ZIP.
-- Embedded Norm remains 0.52.2; no runtime behavior changed in this installer-only patch.
+Installer builder
+- Fixes the semantics of "All newest": it now resolves the newest mutually compatible package set instead of independently selecting each package's highest version.
+- Uses an isolated resolver venv with the selected/newest eligible pip.
+- pip first resolves the newest stable dependency set with all direct Norm requirements unpinned.
+- Eligible newer RC candidates are then attempted with global re-resolution; incompatible RCs are skipped.
+- Alpha, beta, and dev releases remain excluded.
+- Resolved direct-package versions are written back into the UI before build, so the user can review exactly what will be pinned.
+- "Use online (manual)" remains available for deliberate per-package forcing and is still validated before packaging.
+- Final exact-lock resolver validation remains in place immediately before PyInstaller.
+- Generated EXE filename is Norm-Installer-1.4.0.exe.
+- Installer remains hard-bound to one exact Norm 0.52.5 payload filename and SHA-256.
 
-Norm Installer Kit 1.3.4 / Norm 0.52.2 - thread navigation and startup visibility
-
-Changes:
-- Took Installer 1.3.3 / Norm 0.52.1 as the base; no rollback to the old 0.51.x tree.
-- Activity/control port 8766 comes up before PostgreSQL/schema initialization and reports an explicit initializing phase until chat/worker readiness.
-- Added queue-ordered `/new [name]`, `/thread-list`, and `/thread-resume <name|id>` controls.
-- Visible help now shows canonical commands only; legacy aliases remain accepted silently.
-- `/flush-suppressed` now removes both suppressed task rows and matching parked/suppressed GUI delivery records; active prompt retry tombstones are retained only while their HTTP dispatch is still in flight.
-- Existing compatible `.venv` is reused; pip is maintained with `--upgrade "pip>=26.1"`, allowing newer releases instead of forcing one exact build.
-- Build-Norm-Installer-EXE.bat reads the same PIP_SPEC from Norm-Installer.py instead of carrying a second pip rule.
-- `.ssh`, `.venv`, user plugins, logs, and state remain protected during normal in-place updates.
-- Current-state docs and package metadata were advanced to Norm 0.52.2; historical release/development references were retained as history.
-
-Norm Installer Kit 1.3.3 - checksum/version maintenance hardening
-
-Changes:
-- pip 26.2.1 is now a single installer constant and is used by the Norm venv installer.
-- The standalone Norm-Installer.exe build venv also upgrades to pip 26.2.1.
-- Companion <source.zip>.sha256 files are verified automatically when present.
-- Added Update-Source-SHA.bat / Update-Source-SHA.ps1 for intentional source ZIP rebuilds.
-- Corrected stale README wording from Norm 0.52.0 to Norm 0.52.1.
-- Norm 0.52.1 portable source remains byte-for-byte unchanged.
-
-Norm Installer Kit 1.3.2 - pip maintenance update
-
-Changes:
-- Installer upgrades the Norm virtual environment to pip 26.2.1 before installing PyTorch and pinned dependencies.
-- pip remains installer infrastructure and is intentionally NOT added to Norm's requirements-lock.txt.
-- Norm 0.52.1 portable source is unchanged byte-for-byte from Installer Kit 1.3.1.
-- The existing Norm 0.52.1 portable-source SHA-256 therefore remains valid.
-
-Why:
-- Editing anything inside the portable source ZIP changes that ZIP's SHA-256.
-- Keeping pip versioning in the installer lets pip be maintained without changing Norm's source archive or dependency lock.
-
-Norm 0.52.1 / Installer Kit 1.3.1 - startup crash hotfix
-
-Changes:
-- PostgreSQL schema initialization now uses a 5-second lock_timeout.
-- PostgreSQL schema initialization now uses a 120-second statement_timeout.
-- Schema migrations are serialized with a transaction-scoped PostgreSQL advisory lock.
-- Norm retries transient PostgreSQL startup failures up to three times with bounded backoff.
-- The activity HTTP server is not exposed until durable PostgreSQL/conversation initialization succeeds.
-- Unhandled fatal runtime exceptions are written to norm-runtime.log with a traceback before exit.
-- Release/package version bumped instead of mutating the existing 0.52.0 / Installer 1.3.0 artifacts.
-
-Scope:
-- No plugin behavior changes.
-- No HTTP authentication changes.
-- No model/tool behavior changes after successful startup.
-
-Validation:
-- All packaged Python source files syntax-compiled successfully.
-- Portable source SHA-256 companion file generated from the final archive.
+Norm 0.52.5
+- Unchanged from Installer Kit 1.3.9.
+- Includes the proportional plan-verifier hotfix.

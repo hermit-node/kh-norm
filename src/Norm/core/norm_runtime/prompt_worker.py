@@ -2111,7 +2111,7 @@ class PromptWorker:
         task_rounds = self.queue.task_rounds(job.task_id)
         tool_prompt = tools.instructions() + "\n\n" + prompt
         messages: list[dict] = [{"role": "user", "content": tool_prompt}]
-        pending_verification: dict[str, str] = {}
+        pending_verification: dict[str, dict[str, str]] = {}
         evidence: list[dict] = []
         step_rounds = 0
         last_content = ""
@@ -2276,12 +2276,21 @@ class PromptWorker:
                     raise ModelGenerationCancelled("task suppressed by operator after current tool boundary")
 
                 if result.get("ok"):
-                    observed_path = str(result.get("path") or "")
+                    observed_path = str(result.get("path") or result.get("original_path") or "")
                     observed_hash = str(result.get("sha256") or "")
                     if name in {"write_file", "replace_text"} and observed_path and observed_hash:
-                        pending_verification[observed_path] = observed_hash
+                        pending_verification[observed_path] = {
+                            "operation": "present",
+                            "sha256": observed_hash,
+                        }
+                    elif name == "delete_file" and observed_path:
+                        pending_verification[observed_path] = {
+                            "operation": "absent",
+                            "sha256": observed_hash,
+                        }
                     elif name == "read_file" and observed_path and observed_hash:
-                        if pending_verification.get(observed_path) == observed_hash:
+                        pending = pending_verification.get(observed_path) or {}
+                        if pending.get("operation") == "present" and pending.get("sha256") == observed_hash:
                             pending_verification.pop(observed_path, None)
                 messages.append(
                     {
@@ -2318,19 +2327,46 @@ class PromptWorker:
             "evidence": evidence,
         }
 
-    def _verify_pending(self, job: PromptJob, pending: dict[str, str], tools) -> list[dict]:
-        """Verification is mandatory and does not consume model/tool-round budget."""
+    def _verify_pending(self, job: PromptJob, pending: dict[str, dict[str, str]], tools) -> list[dict]:
+        """Verify mutation postconditions without asking the model to rediscover them."""
         evidence: list[dict] = []
-        for path, expected_hash in tuple(pending.items()):
+        for path, receipt in tuple(pending.items()):
+            operation = str((receipt or {}).get("operation") or "present")
+            expected_hash = str((receipt or {}).get("sha256") or "")
             observed = tools.execute("read_file", {"path": path})
+            verified_result = observed
+            if operation == "absent" and not observed.get("ok"):
+                error = str(observed.get("error") or "")
+                if "FileNotFoundError" in error:
+                    verified_result = {
+                        "ok": True,
+                        "path": path,
+                        "absent": True,
+                        "verification": "original path is absent after staged deletion",
+                    }
             item = {
-                "tool": "read_file",
+                "tool": "verify_absent" if operation == "absent" else "read_file",
                 "arguments": {"path": path},
-                "result": observed,
+                "result": verified_result,
                 "deterministic_verification": True,
+                "verification_operation": operation,
             }
             evidence.append(item)
             self._persist_evidence_now(job, [item])
+
+            if operation == "absent":
+                if observed.get("ok"):
+                    raise RuntimeError(
+                        f"deletion verification failed for {path}: path still exists"
+                    )
+                error = str(observed.get("error") or "")
+                if "FileNotFoundError" not in error:
+                    raise RuntimeError(
+                        f"deletion verification failed for {path}: {error or 'path absence could not be established'}"
+                    )
+                pending.pop(path, None)
+                continue
+
             if not observed.get("ok"):
                 raise RuntimeError(
                     f"verification read failed for {path}: {observed.get('error')}"
@@ -2360,7 +2396,7 @@ class PromptWorker:
             compact_result = {}
             if isinstance(result, dict):
                 for key in (
-                    "ok", "path", "paths", "sha256", "created", "error", "staged", "staged_path", "note_path",
+                    "ok", "path", "paths", "sha256", "created", "absent", "verification", "error", "staged", "staged_path", "note_path",
                     "attempts", "answer", "content", "text", "summary", "analysis", "observations", "data", "items",
                     "image_count", "output_dir", "analysis_json", "geometry_overlay", "horizontal_consensus", "profile",
                     "device", "width", "height", "reconstruction_similarity", "artifact_fraction", "resource_status", "storage_context",
@@ -2577,6 +2613,36 @@ class PromptWorker:
             task_rounds,
         )
 
+    def _failure_retry_checkpoint(self, job: PromptJob, error: str) -> str:
+        """Build a deterministic continuation note from state already persisted by Norm."""
+        evidence = self.live.task_evidence(job.task_id) if hasattr(self.live, "task_evidence") else []
+        compact_evidence = self._evidence_text(evidence[-16:]) if evidence else "[]"
+        prior_context = str(job.context or "").strip()
+        if len(prior_context) > 8_000:
+            prior_context = prior_context[-8_000:]
+        checkpoint = (
+            "FAILURE RECOVERY CHECKPOINT\n"
+            f"Original goal: {job.prompt}\n"
+            f"Task: {job.task_id}\nStep: {job.step_id}\n"
+            f"Failure: {error}\n"
+            "Resume this same step from observed persisted state. Do not restart the step from scratch. "
+            "Do not repeat successful mutations, commands, tests, or corrections merely because the attempt number changed. "
+            "Before any side effect, reconcile the evidence below with current state and continue from the first unresolved postcondition.\n"
+            f"Prior continuation context:\n{prior_context or '(none)'}\n"
+            f"Recent persisted tool evidence:\n{compact_evidence}"
+        )
+        return checkpoint[-32_000:]
+
+    def _checkpoint_failure_for_retry(self, job: PromptJob, error: str) -> str:
+        checkpoint = self._failure_retry_checkpoint(job, error)
+        job.context = checkpoint
+        metadata = dict(job.metadata or {})
+        metadata["last_retry_reason"] = str(error)[:2000]
+        metadata["retry_resume_required"] = True
+        metadata["retry_checkpointed_at"] = _utc_now().isoformat()
+        job.metadata = metadata
+        return checkpoint
+
     def _recover_or_escalate(self, redis_id: str, job: PromptJob, error: str) -> bool:
         if self._task_suppressed(job.task_id):
             # Preserve the entry in Redis: ack (remove from PEL) but do NOT delete
@@ -2586,7 +2652,8 @@ class PromptWorker:
             self._clear_suppression_request(job.task_id)
             logging.info("Skipped suppressed recovery task=%s step=%s (preserved in Redis)", job.task_id, job.step_id)
             return True
-        parked = self.queue.park_chain(job.chain_id, redis_id)
+        checkpoint = self._checkpoint_failure_for_retry(job, error)
+        parked = self.queue.park_chain(job.chain_id, redis_id, failed_job=job)
         if not parked:
             logging.error("Failed prompt was not parked task=%s step=%s", job.task_id, job.step_id)
             return True
@@ -2610,7 +2677,7 @@ class PromptWorker:
                 job.chain_id,
                 job.message_id,
                 revised,
-                recovery_context=error,
+                recovery_context=checkpoint,
             )
         except Exception:
             logging.exception("Norm troubleshooting failed")

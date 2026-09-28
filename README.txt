@@ -1,85 +1,67 @@
-Norm Installer Kit 1.3.6
+Norm Installer Kit 1.4.0
 ========================
 
-Normal use
-----------
-1. Double-click Run-Norm-Installer.bat, or run Norm-Installer.py with Python.
-2. Select either a Norm portable-source ZIP or a private Norm full-backup ZIP.
-3. Select the install target (default C:\Norm).
-4. Select the Python executable Norm should use.
-5. Click Install Norm.
-
-Normal source updates are in-place managed syncs. Changed package files are replaced,
-package-owned files removed by the new base are deleted, and persistent local state is
-preserved. In particular, a compatible .venv is reused instead of being rebuilt.
-
-Persistent normal-update paths include:
-  .venv\
-  .ssh\
-  plugins\
-  logs\
-  state\
-
-The package-managed docs live in C:\Norm\docs. The external writable tree is split into:
-  %USERPROFILE%\Documents\Norm\workspace   durable artifacts/work
-  %USERPROFILE%\Documents\Norm\temp        disposable scratch/recovery
-
-Full backups
+What changed
 ------------
-The shipped backup plugin supports `/backup` portable-source media and `/backup full` sensitive full-state media. This same installer accepts both package types. A full-backup restore additionally restores the captured .ssh, plugins, secrets,
-workspace, selected recovery material, runtime state/logs, and PostgreSQL snapshot.
+The installer builder now treats "All newest" as a dependency-resolution request, not as
+"pin every package to its individually newest PyPI release."
 
-Full-backup ZIPs contain credentials and private keys. Protect them accordingly.
-The .venv directory is deliberately NOT archived; the installer reuses an existing compatible
-venv or recreates it from the included Python/Torch/requirements metadata.
+Build-Norm-Installer-EXE.bat launches Make-Norm-Installer.py. The builder:
+- uses Norm-0.52.5-portable-source.zip as the one fixed base source package;
+- reads every exact package pin from tools\requirements-lock.txt;
+- shows the locked version and newest Python-compatible eligible PyPI release;
+- considers stable releases and release candidates (rc) eligible;
+- excludes alpha, beta, and dev builds;
+- "All newest (resolve)" creates an isolated resolver venv and asks pip for the newest
+  mutually compatible stable set across all direct Norm requirements;
+- after the stable solve, it tries eligible newer RC candidates one at a time, globally
+  re-resolving the rest of the stack around each RC and keeping only compatible RCs;
+- writes the resolved direct-package versions back into the table before any build starts;
+- keeps "Use online (manual)" for intentionally forcing an individual row; manual choices
+  are still checked by pip before packaging and may legitimately fail if incompatible;
+- exposes pip separately as installer infrastructure and uses the newest eligible pip for
+  the resolver when "All newest" is selected;
+- creates a derived source ZIP whose requirements-lock.txt exactly matches the selected /
+  resolved versions;
+- calculates that derived ZIP's SHA-256;
+- generates an installer source with the exact payload filename and SHA-256 baked into it;
+- resolver-checks the exact final dependency set again immediately before packaging;
+- builds and smoke-tests Norm-Installer-1.4.0.exe;
+- publishes exactly three normal install files to the output folder:
+    Norm-Installer-1.4.0.exe
+    Norm-0.52.5-portable-source.zip
+    Norm-0.52.5-portable-source.zip.sha256
 
-Future Norm versions
+The generated installer
+-----------------------
+The normal installer GUI does not ask which source ZIP to use. The EXE is bound to the exact
+Norm-0.52.5-portable-source.zip produced with that build, including its SHA-256.
+
+The normal installer GUI only asks for:
+1. Install/update folder (normally C:\Norm)
+2. Base Python used to create/recreate the Norm .venv
+
+Normal in-place updates preserve a compatible .venv, .ssh, user plugins, logs/state, and
+local secrets. Package-owned source is synchronized and norm.exe is rebuilt normally.
+
+Dependency selection
 --------------------
-The installer is not tied to Norm 0.52.3. Future package_schema 1 source/full-backup packages can be
-selected without recompiling the installer.
+"All newest (resolve)" is the safe global update button. pip, not the UI's per-row maximum,
+determines the compatible version set. For example, if the newest mpmath violates SymPy's
+constraint, the resolver keeps the newest mpmath version SymPy actually permits rather than
+selecting an impossible pair and failing afterward.
 
-Build the standalone GUI EXE
-----------------------------
-Double-click Build-Norm-Installer-EXE.bat. It creates a temporary build venv, installs
-PyInstaller, writes Norm-Installer.exe beside this file, and removes the temporary build
-environment after a successful build. Installer 1.3.6 avoids FOR /F command capture when
-reading the pip requirement, so Python executables on paths/drives such as G:\... work reliably.
+The online column remains informational: it is the newest individually eligible stable/RC
+release for that package. The selected/build column shows the globally resolved version.
+Those two columns may therefore differ, and that is expected when another package constrains
+the version.
 
+"Use online (manual)" deliberately forces selected rows to the individual online version.
+This is useful for experiments, but the final resolver check can reject the combination.
 
-Runtime-root binding
---------------------
-Portable source packages keep [paths].runtime_root relative (`.`) so they remain relocatable.
-After every install/update/restore, Installer 1.3.6 writes the target's actual absolute path
-(e.g. C:\Norm) into the installed config\settings.ini. This prevents runtime placeholders
-from drifting or being interpreted relative to the wrong folder.
-
-
-Checksums and intentional source changes
-----------------------------------------
-If a selected ZIP has a sibling file named <zip-name>.sha256, Installer 1.3.6 verifies it
-before reading or installing the package. A ZIP copied without a companion checksum is still
-accepted.
-
-pip is installer infrastructure and is NOT stored in Norm's requirements-lock.txt. Installer 1.3.6 runs `pip install --upgrade "pip>=26.1"`, so any newer available pip is accepted instead of pinning one exact build. The standalone EXE build reads the same PIP_SPEC from Norm-Installer.py.
-
-If you intentionally change Norm source or requirements, build a NEW portable-source ZIP
-(preferably with a bumped Norm version), then drag that ZIP onto Update-Source-SHA.bat.
-Despite its old filename, this helper does NOT update Norm or alter the ZIP; it only regenerates
-the companion .sha256 file for the rebuilt ZIP. Do not regenerate a checksum merely to silence
-an unexpected mismatch; investigate unexpected changes first.
-
-
-Installer 1.3.6 notes
----------------------
-- Normal updates preserve `.ssh`, `.venv`, user plugins, logs, and state.
-- The installer UI explicitly shows the reuse/preservation behavior and gives more space to useful progress/log output.
-- Embedded Norm 0.52.3 retains canonical thread controls: `/new [name]`, `/thread-list`, and `/thread-resume <name|id>`.
-- Visible command help no longer lists legacy aliases, although the parsers continue to accept them for compatibility.
-- `/flush-suppressed` removes suppressed PostgreSQL tasks and the corresponding parked GUI delivery records; an in-flight prompt keeps only its hidden retry-block tombstone until dispatch ends.
-
-Installer 1.3.6 build/startup hardening
-----------------------------------------
-- The kit contains one source payload only: Norm 0.52.3 plus its SHA-256 companion.
-- Standalone installer builds use PyInstaller 6.22.3.
-- The build BAT launches the freshly generated EXE with a hidden self-test and requires a sentinel file before promoting it. A loader/startup failure therefore fails the build.
-- Norm 0.52.3 adds explicit Windows service mode so stray Ctrl+C/Ctrl-Break events from console/process-group interactions cannot silently terminate the background runtime.
+Norm 0.52.5
+-----------
+0.52.5 includes the proportional plan-verifier change: blocking execution defects can reject
+a plan, while advisory plan-shape preferences do not automatically veto execution. Existing
+inspected/reused mechanisms and execution tests can establish invariants instead of the
+verifier inventing already-handled edge cases.

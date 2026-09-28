@@ -1,6 +1,14 @@
+# Norm 0.52.6
+
+- Fixed deletion verification: `delete_file` now verifies that the original path is absent instead of attempting to hash-read a deliberately removed file.
+- Failed worker attempts now write a deterministic recovery checkpoint into the Redis job context before parking/requeueing the chain.
+- Retry checkpoints include recent persisted tool evidence and live working state, and explicitly require resuming from the first unresolved postcondition rather than replaying completed work.
+- Retry parking can now persist the active in-memory `PromptJob`, ensuring the newly written continuation context is what Redis restores.
+- Weekly/deep-history maintenance behavior is unchanged in this hotfix.
+
 # Norm release notes
 
-## 0.52.5 — 2026-09-27 — proportional plan verification
+## 0.52.6 — 2026-09-27 — proportional plan verification
 
 - Plan verification rejects only blocking defects: lost constraints, unauthorized/unsafe actions, materially contradictory or impossible designs, missing material verification, unbounded work, or missing final synthesis on multi-step plans.
 - Clearly described tightly coupled implementation parts may remain in one bounded step; advisory organization/granularity concerns no longer veto execution.
@@ -97,7 +105,7 @@ Rules:
 - Post-promotion companion-script repair updated the external GUI helpers to use the same 0.51.4 endpoint/config resolver instead of the removed `[ports]` section and raw `runtime.json` connection fields; this did not require replacing the packaged executable.
 - 2026-09-23 companion-script hardening kept the packaged 0.51.4 executable unchanged: Redis-backed replies tolerate malformed legacy bytes, large replies bypass monolithic Markdown rendering, `Run-Norm.bat` uses the central settings resolver/noninteractive-safe startup wait, and GUI `/stop-all now` waits for the live Redis model-buffer to settle, writes Redis task state/events + raw model buffers + PostgreSQL checkpoints to `SOS.md`, fsync/read-back verifies it, then force-terminates Norm/Ollama.
 - 2026-09-23 external capability extension kept the packaged executable unchanged: `tools\norm_plugins.py` plus the workspace `plugins\` directory provide filesystem-discovered Python plugins with README/capability matching, version/SHA/UUID identity, fresh per-call loading, and `run_command` access. A one-time process restart is required only for an already-running worker to pick up the new broker instruction; plugin swaps themselves require no rebuild/restart.
-- The same 2026-09-23 maintenance pass repaired `tools\norm_backup.py` to use the centralized 0.51.4 settings/runtime resolver, added optional checkpoint labels, excluded runtime `state\file-backups` from ZIPs, and removed one-off convenience/probe/write helpers. A requested `0.52.5` backup label is a snapshot/checkpoint identifier, not a promoted executable release.
+- The same 2026-09-23 maintenance pass repaired `tools\norm_backup.py` to use the centralized 0.51.4 settings/runtime resolver, added optional checkpoint labels, excluded runtime `state\file-backups` from ZIPs, and removed one-off convenience/probe/write helpers. A requested `0.52.6` backup label is a snapshot/checkpoint identifier, not a promoted executable release.
 - A stale PostgreSQL `idle in transaction` session was found blocking startup schema DDL. Clearing the stale transaction allowed both Tailscale-bound APIs (`12543` and `8766`) to start normally. The underlying startup-lock hardening remains a separate unresolved item, not a claimed 0.51.4 fix.
 
 ## 0.51.3 — 2026-09-21 — Nonblocking durable GUI ingress
