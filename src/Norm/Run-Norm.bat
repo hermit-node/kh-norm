@@ -52,14 +52,22 @@ curl.exe -fsS "%ACTIVITY_HEALTH%" >NUL 2>&1
 if not errorlevel 1 goto ready
 
 :start_service
-echo Starting Norm service and Ollama...
-start "Norm Service" /min "%NORM_EXE%" --service
+echo Starting or attaching to the Norm service...
+"%PY%" "%ROOT%tools\start_norm_service.py"
+set "START_RC=%ERRORLEVEL%"
+if "%START_RC%"=="2" (
+  echo Existing norm.exe is still present. Waiting for its APIs instead of launching a duplicate...
+) else if not "%START_RC%"=="0" (
+  echo ERROR: Could not launch Norm service helper. Exit code %START_RC%.
+  pause
+  exit /b %START_RC%
+)
 for /L %%I in (1,1,90) do (
   curl.exe -fsS "%CHAT_HEALTH%" >NUL 2>&1 && curl.exe -fsS "%ACTIVITY_HEALTH%" >NUL 2>&1 && goto ready
   ping.exe -n 2 127.0.0.1 >NUL
 )
-echo ERROR: Norm did not become healthy.
-echo Check: %ROOT%logs\norm-runtime.log
+echo ERROR: norm.exe exists or was started, but Norm HTTP/control APIs did not become healthy.
+echo Refusing to launch a second Norm instance. Check: %ROOT%logs\norm-runtime.log
 pause
 exit /b 1
 

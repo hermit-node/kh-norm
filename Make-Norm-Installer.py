@@ -20,8 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-INSTALLER_VERSION = "1.4.1"
-BASE_SOURCE_FILENAME = "Norm-0.52.5-portable-source.zip"
+INSTALLER_VERSION = "1.4.2"
 INSTALLER_TEMPLATE_FILENAME = "Norm-Installer.py"
 OUTPUT_EXE_FILENAME = f"Norm-Installer-{INSTALLER_VERSION}.exe"
 DEFAULT_PIP_VERSION = "26.2.1"
@@ -132,6 +131,45 @@ def inspect_source(path: Path) -> SourceInfo:
         pins=_parse_requirements(requirements_text),
         expected_python=expected_python,
     )
+
+
+def _source_version_key(raw: str) -> tuple:
+    Version = _version_class()
+    if Version is not None:
+        try:
+            return (1, Version(raw))
+        except Exception:
+            pass
+    return (0, _fallback_version_key(raw))
+
+
+def find_latest_base_source(directory: Path | None = None) -> Path:
+    """Find the newest Norm portable-source ZIP in the builder folder.
+
+    Manifest version wins first; modification time breaks same-version ties so a
+    newly customized/rebuilt ZIP is picked without changing builder source code.
+    """
+    root = Path(directory).resolve() if directory else _app_dir()
+    candidates: list[tuple[tuple, int, str, Path]] = []
+    for path in root.glob("*.zip"):
+        if not path.is_file():
+            continue
+        try:
+            info = inspect_source(path)
+        except Exception:
+            continue
+        if str(info.manifest.get("name") or "").strip().lower() != "norm":
+            continue
+        if str(info.manifest.get("package_type") or "").strip() != "portable-source":
+            continue
+        try:
+            mtime = path.stat().st_mtime_ns
+        except OSError:
+            mtime = 0
+        candidates.append((_source_version_key(info.version), mtime, path.name.lower(), path.resolve()))
+    if not candidates:
+        raise BuilderError(f"No Norm portable-source ZIP was found in {root}")
+    return max(candidates, key=lambda item: (item[0], item[1], item[2]))[3]
 
 
 def _version_class():
@@ -450,12 +488,10 @@ def _zip_tree(root: Path, output: Path) -> None:
             zf.write(path, (Path(root.name) / rel).as_posix())
 
 
-def _patch_installer_template(template_text: str, *, pip_version: str, payload_sha: str) -> str:
+def _patch_installer_template(template_text: str, *, pip_version: str) -> str:
     replacements = {
         r'^INSTALLER_VERSION = ".*?"$': f'INSTALLER_VERSION = "{INSTALLER_VERSION}"',
         r'^PIP_VERSION = ".*?"$': f'PIP_VERSION = "{pip_version}"',
-        r'^BOUND_SOURCE_FILENAME = ".*?"$': f'BOUND_SOURCE_FILENAME = "{BASE_SOURCE_FILENAME}"',
-        r'^BOUND_SOURCE_SHA256 = ".*?"$': f'BOUND_SOURCE_SHA256 = "{payload_sha}"',
     }
     result = template_text
     for pattern, replacement in replacements.items():
@@ -577,11 +613,12 @@ def build_installer(
             encoding="utf-8",
             newline="\n",
         )
-        payload_zip = temp_root / BASE_SOURCE_FILENAME
+        payload_filename = source_info.zip_path.name
+        payload_zip = temp_root / payload_filename
         _zip_tree(extracted_root, payload_zip)
         payload_sha = _sha256_file(payload_zip)
-        payload_sha_path = temp_root / f"{BASE_SOURCE_FILENAME}.sha256"
-        payload_sha_path.write_text(f"{payload_sha}  {BASE_SOURCE_FILENAME}\n", encoding="utf-8")
+        payload_sha_path = temp_root / f"{payload_filename}.sha256"
+        payload_sha_path.write_text(f"{payload_sha}  {payload_filename}\n", encoding="utf-8")
         log(f"Bound payload SHA-256: {payload_sha}")
 
         progress(15, "Generating bound installer source")
@@ -589,7 +626,7 @@ def build_installer(
         template = template_path.read_text(encoding="utf-8")
         generated_installer = temp_root / "Norm-Installer.generated.py"
         generated_installer.write_text(
-            _patch_installer_template(template, pip_version=pip_version, payload_sha=payload_sha),
+            _patch_installer_template(template, pip_version=pip_version),
             encoding="utf-8",
             newline="\n",
         )
@@ -645,10 +682,19 @@ def build_installer(
             raise BuilderError(f"PyInstaller did not create {built_exe}")
 
         progress(78, "Smoke-testing generated installer")
-        sentinel = temp_root / "installer-self-test.txt"
+        smoke_dir = temp_root / "smoke-bundle"
+        smoke_dir.mkdir(parents=True, exist_ok=True)
+        smoke_exe = smoke_dir / OUTPUT_EXE_FILENAME
+        smoke_zip = smoke_dir / payload_filename
+        smoke_sha = smoke_dir / f"{payload_filename}.sha256"
+        shutil.copy2(built_exe, smoke_exe)
+        shutil.copy2(payload_zip, smoke_zip)
+        shutil.copy2(payload_sha_path, smoke_sha)
+
+        sentinel = smoke_dir / "installer-self-test.txt"
         cp = subprocess.run(
-            [str(built_exe), "--self-test-file", str(sentinel)],
-            cwd=str(temp_root),
+            [str(smoke_exe), "--self-test-file", str(sentinel)],
+            cwd=str(smoke_dir),
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -661,14 +707,31 @@ def build_installer(
                 f"Generated installer failed startup self-test (exit {cp.returncode}).\n{cp.stdout}\n{cp.stderr}"
             )
         marker = sentinel.read_text(encoding="utf-8", errors="replace").strip()
-        expected_prefix = f"ok {INSTALLER_VERSION} {BASE_SOURCE_FILENAME} {payload_sha}"
-        if marker != expected_prefix:
+        expected_marker = f"ok {INSTALLER_VERSION} auto-source"
+        if marker != expected_marker:
             raise BuilderError(f"Generated installer returned the wrong self-test marker: {marker!r}")
 
-        progress(90, "Publishing deterministic installer bundle")
+        # Exercise the exact path that previously looked like a launch crash: the EXE
+        # must discover the newest package beside itself and validate it successfully.
+        cp = subprocess.run(
+            [str(smoke_exe), "--validate-only"],
+            cwd=str(smoke_dir),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+        )
+        if cp.returncode != 0:
+            raise BuilderError(
+                f"Generated installer failed local-source discovery smoke test (exit {cp.returncode}).\n{cp.stdout}\n{cp.stderr}"
+            )
+
+        progress(90, "Publishing installer bundle")
         out_exe = output_dir / OUTPUT_EXE_FILENAME
-        out_zip = output_dir / BASE_SOURCE_FILENAME
-        out_sha = output_dir / f"{BASE_SOURCE_FILENAME}.sha256"
+        out_zip = output_dir / payload_filename
+        out_sha = output_dir / f"{payload_filename}.sha256"
         shutil.copy2(built_exe, out_exe)
         shutil.copy2(payload_zip, out_zip)
         shutil.copy2(payload_sha_path, out_sha)
@@ -722,7 +785,7 @@ def launch_gui() -> int:
     except Exception as exc:
         raise BuilderError(f"Tkinter is required for the installer builder: {exc}") from exc
 
-    source_info = inspect_source(_app_dir() / BASE_SOURCE_FILENAME)
+    source_info = inspect_source(find_latest_base_source())
     template_path = _app_dir() / INSTALLER_TEMPLATE_FILENAME
     if not template_path.is_file():
         raise BuilderError(f"Installer template is missing: {template_path}")
@@ -753,7 +816,7 @@ def launch_gui() -> int:
     ttk.Label(outer, text="Make Norm Installer", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, columnspan=3, sticky="w")
     ttk.Label(
         outer,
-        text=f"Norm {source_info.version}  •  base payload {BASE_SOURCE_FILENAME}  •  output {OUTPUT_EXE_FILENAME}",
+        text=f"Norm {source_info.version}  •  newest local base {source_info.zip_path.name}  •  output {OUTPUT_EXE_FILENAME}",
     ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 10))
 
     ttk.Label(outer, text="Build venv Python").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
@@ -1081,7 +1144,7 @@ def launch_gui() -> int:
                     messagebox.showinfo(
                         "Installer build complete",
                         f"EXE: {result.exe_path}\n\nPayload: {result.source_zip}\nSHA-256: {result.payload_sha256}\n\n"
-                        "The installer is hard-bound to that exact payload filename and SHA-256.",
+                        "At launch, the installer auto-selects the newest valid Norm portable-source ZIP beside it.",
                     )
         except queue.Empty:
             pass
@@ -1094,7 +1157,7 @@ def launch_gui() -> int:
 
 
 def self_test() -> int:
-    info = inspect_source(_app_dir() / BASE_SOURCE_FILENAME)
+    info = inspect_source(find_latest_base_source())
     assert _eligible_version("1.2.3")
     assert _eligible_version("1.2.4rc1")
     assert not _eligible_version("1.2.4b1")
@@ -1104,9 +1167,11 @@ def self_test() -> int:
     if not pyinstaller:
         raise BuilderError("Base requirements do not contain PyInstaller")
     template = (_app_dir() / INSTALLER_TEMPLATE_FILENAME).read_text(encoding="utf-8")
-    patched = _patch_installer_template(template, pip_version=DEFAULT_PIP_VERSION, payload_sha="0" * 64)
-    if 'BOUND_SOURCE_SHA256 = "' + ("0" * 64) + '"' not in patched:
-        raise BuilderError("Installer binding injection self-test failed")
+    patched = _patch_installer_template(template, pip_version=DEFAULT_PIP_VERSION)
+    if 'INSTALLER_VERSION = "1.4.2"' not in patched:
+        raise BuilderError("Installer version injection self-test failed")
+    if 'find_latest_source()' not in patched:
+        raise BuilderError("Installer auto-source discovery self-test failed")
     print(json.dumps({
         "builder_version": INSTALLER_VERSION,
         "norm_version": info.version,
@@ -1119,7 +1184,7 @@ def self_test() -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build a version-bound Norm installer")
+    parser = argparse.ArgumentParser(description="Build a Norm installer that auto-selects the newest local source package")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:

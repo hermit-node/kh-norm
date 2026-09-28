@@ -1,67 +1,57 @@
-Norm Installer Kit 1.4.1
+Norm Installer Kit 1.4.2
 ========================
 
 What changed
 ------------
-The installer builder now treats "All newest" as a dependency-resolution request, not as
-"pin every package to its individually newest PyPI release."
+The installer is no longer hard-bound to one source ZIP filename/SHA. At launch it scans
+the folder containing the installer EXE and automatically chooses the newest valid Norm
+portable-source package. Version comes from package-manifest.json, not from the filename.
+If two packages declare the same Norm version, the most recently modified ZIP wins.
 
-Build-Norm-Installer-EXE.bat launches Make-Norm-Installer.py. The builder:
-- uses Norm-0.52.5-portable-source.zip as the one fixed base source package;
-- reads every exact package pin from tools\requirements-lock.txt;
-- shows the locked version and newest Python-compatible eligible PyPI release;
-- considers stable releases and release candidates (rc) eligible;
-- excludes alpha, beta, and dev builds;
-- "All newest (resolve)" creates an isolated resolver venv and asks pip for the newest
-  mutually compatible stable set across all direct Norm requirements;
-- after the stable solve, it tries eligible newer RC candidates one at a time, globally
-  re-resolving the rest of the stack around each RC and keeping only compatible RCs;
-- writes the resolved direct-package versions back into the table before any build starts;
-- keeps "Use online (manual)" for intentionally forcing an individual row; manual choices
-  are still checked by pip before packaging and may legitimately fail if incompatible;
-- exposes pip separately as installer infrastructure and uses the newest eligible pip for
-  the resolver when "All newest" is selected;
-- creates a derived source ZIP whose requirements-lock.txt exactly matches the selected /
-  resolved versions;
-- calculates that derived ZIP's SHA-256;
-- generates an installer source with the exact payload filename and SHA-256 baked into it;
-- resolver-checks the exact final dependency set again immediately before packaging;
-- builds and smoke-tests Norm-Installer-1.4.1.exe;
-- publishes exactly three normal install files to the output folder:
-    Norm-Installer-1.4.1.exe
-    Norm-0.52.5-portable-source.zip
-    Norm-0.52.5-portable-source.zip.sha256
+This specifically fixes the awkward workflow where a customized Norm package had to be
+renamed/rebound to whatever payload filename had been compiled into that installer.
 
-The generated installer
------------------------
-The normal installer GUI does not ask which source ZIP to use. The EXE is bound to the exact
-Norm-0.52.5-portable-source.zip produced with that build, including its SHA-256.
+Launch behavior
+---------------
+- Double-click Norm-Installer-1.4.2.exe.
+- It scans only the EXE's own folder for *.zip packages.
+- It ignores ZIPs that are not Norm portable-source packages.
+- It selects the highest manifest version; modification time breaks same-version ties.
+- If a .sha256 companion exists for the selected package, it is still verified.
+- If the selected newest package is invalid or its companion SHA is stale, the installer
+  reports that problem visibly instead of silently falling back to an older package.
+- If no Norm source package is present, a visible error dialog explains what is missing
+  instead of a windowed EXE appearing to crash.
 
-The normal installer GUI only asks for:
+The installer GUI still only asks for:
 1. Install/update folder (normally C:\Norm)
 2. Base Python used to create/recreate the Norm .venv
 
-Normal in-place updates preserve a compatible .venv, .ssh, user plugins, logs/state, and
-local secrets. Package-owned source is synchronized and norm.exe is rebuilt normally.
+Builder behavior
+----------------
+Build-Norm-Installer-EXE.bat / Make-Norm-Installer.py also select the newest local Norm
+portable-source ZIP rather than a hardcoded filename. The dependency table and
+"All newest (resolve)" behavior from 1.4.0 are unchanged.
+
+When a build is made, the selected/resolved requirements are written into a derived copy
+of that source ZIP, and a matching .sha256 companion is generated. The installer itself
+remains generic, so a later newer/customized Norm package can simply be placed beside the
+EXE without recompiling the installer.
+
+Startup smoke test
+------------------
+The builder now smoke-tests the generated EXE as a real mini bundle: it copies the EXE,
+payload ZIP, and SHA into one folder, launches the EXE with no explicit --source, and
+requires its newest-local-package discovery/validation path to succeed before publishing.
+This exercises the path that previously could look like an immediate launch crash.
 
 Dependency selection
 --------------------
-"All newest (resolve)" is the safe global update button. pip, not the UI's per-row maximum,
-determines the compatible version set. For example, if the newest mpmath violates SymPy's
-constraint, the resolver keeps the newest mpmath version SymPy actually permits rather than
-selecting an impossible pair and failing afterward.
+"All newest (resolve)" still asks pip for the newest mutually compatible stable/RC set.
+Alpha, beta, and dev releases remain excluded. Manual online overrides are still allowed
+and the exact final lock is resolver-validated before packaging.
 
-The online column remains informational: it is the newest individually eligible stable/RC
-release for that package. The selected/build column shows the globally resolved version.
-Those two columns may therefore differ, and that is expected when another package constrains
-the version.
-
-"Use online (manual)" deliberately forces selected rows to the individual online version.
-This is useful for experiments, but the final resolver check can reject the combination.
-
-Norm 0.52.5
+Norm source
 -----------
-0.52.5 includes the proportional plan-verifier change: blocking execution defects can reject
-a plan, while advisory plan-shape preferences do not automatically veto execution. Existing
-inspected/reused mechanisms and execution tests can establish invariants instead of the
-verifier inventing already-handled edge cases.
+The included base source remains Norm 0.52.6. This installer-only revision does not change
+the Norm runtime version.
