@@ -1,10 +1,10 @@
 # Norm current status
 
-Updated 2026-09-28 for the clean **0.53.2** portable source line.
+Updated 2026-09-29 for the clean **0.53.3** portable source line.
 
 ## Source/layout
 
-- Version: **0.53.2**.
+- Version: **0.53.3**.
 - Runtime root: `C:\Norm` (relocatable by installer); the installed absolute path is written to `config\settings.ini` `[paths].runtime_root`.
 - Runtime source/executable directory: `core\`; compiled executable target is `core\norm.exe`.
 - Maintained docs: `C:\Norm\docs`.
@@ -24,6 +24,12 @@ First-party package-managed plugin subtrees are `plugins\backup`, `plugins\verba
 
 Plugins are first-class native tools. Norm rescans the plugin tree before schema use and dispatch, supports multi-file/sibling imports, hot-reloads changed code without an executable rebuild, and keeps the last-known-good loaded capability when a new edit fails to import. The legacy `tools\norm_plugins.py` remains a diagnostic/manual broker.
 
+## Operator metadata and manual memory condensation
+
+- `/about` is available in both operator prompt surfaces and reports current project/version, runtime/executable paths, source/frozen mode, Python version, package schema/type, and plugin-root/count information.
+- `/memory-condense` schedules an incremental consolidated background-memory refresh inside the existing worker when idle. `/memory-condense -full` rebuilds the consolidated snapshot from the full surviving PostgreSQL source set. Neither command creates a user task or new task UUID.
+- This command is intentionally not the deferred destructive `/condense-memories` design: it does not hard-prune curated memories, delete history, or treat age as a deletion reason. Existing checkpointed condensation machinery is reused and maintenance outcomes are written to PostgreSQL.
+
 ## Task/memory integrity
 
 0.52.2 includes defensive task-lineage repair around UUID/dependency migration and referentially safe pruning. Surviving children are reparented to a defensible surviving ancestor or detached rather than left with dangling task UUIDs. Memory-thread recovery preserves intact links first, then source-message mapping, then conservative grouping of genuinely orphaned memories. `tools\repair_norm_state.py` provides an offline repair path when an older executable cannot start.
@@ -40,7 +46,7 @@ Portable base/source ZIPs remain secrets-free and safe to treat separately from 
 
 ## Installer behavior
 
-The reusable installer performs an in-place managed sync. Changed package files are replaced and package-owned files no longer present are removed. Persistent local directories (`.venv`, `.ssh`, plugins, logs/state) survive normal base updates. Existing compatible venvs are reused. Recommended Installer 1.3.8 binds one exact source payload by filename and SHA-256 and can build a derived payload from locked or newest eligible stable/RC dependency versions. Alpha, beta, and dev releases are excluded. Full-backup packages additionally restore their private state payload.
+The reusable installer performs an in-place managed sync. Changed package files are replaced and package-owned files no longer present are removed. Persistent local directories (`.venv`, `.ssh`, plugins, logs/state) survive normal base updates. Existing compatible venvs are reused. Recommended Installer 1.4.10 binds one exact source payload by filename and SHA-256 and can build a derived payload from locked or newest eligible stable/RC dependency versions. Alpha, beta, and dev releases are excluded. Full-backup packages additionally restore their private state payload.
 
 ## Current validation boundary
 

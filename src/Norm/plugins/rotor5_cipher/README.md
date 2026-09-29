@@ -25,7 +25,7 @@ Put either of these in Norm's configured `%APPDATA%\Norm\.env`:
 
 `NORM_ROTOR5_PREVIOUS_SECRETS=<older secret 1>;<older secret 2>`
 
-Norm 0.53.2 exports only these Rotor5 secret values from its already-loaded/redacted secrets dictionary into the process environment for the plugin. New envelopes use the current secret when present. Previous values permit decoding after rotation. The live secret itself is never placed in the Rotor5 envelope; only an 8-byte selector fingerprint is stored.
+Norm 0.53.3 exports only these Rotor5 secret values from its already-loaded/redacted secrets dictionary into the process environment for the plugin. New envelopes use the current secret when present. Previous values permit decoding after rotation. The live secret itself is never placed in the Rotor5 envelope; only an 8-byte selector fingerprint is stored.
 
 If no live secret is configured, Rotor5 remains password-only. Adding a live secret later does not break older password-only envelopes.
 

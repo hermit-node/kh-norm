@@ -81,6 +81,7 @@ def _activity_app(
     stop_all: Callable[[bool], dict] | None,
     suppress_task: Callable[[str | None, str], dict] | None,
     flush_suppressed: Callable[[], dict] | None,
+    memory_condense: Callable[[bool], dict] | None,
     busy_status: Callable[[], dict] | None,
     context_status: Callable[[], dict] | None,
     inject_context: Callable | None,
@@ -226,6 +227,10 @@ def _activity_app(
                     if flush_suppressed is None:
                         return web.json_response({"error": "flush-suppressed control unavailable"}, status=503)
                     return web.json_response(await _call(flush_suppressed))
+                if path == "/control/memory-condense":
+                    if memory_condense is None:
+                        return web.json_response({"error": "memory-condense control unavailable"}, status=503)
+                    return web.json_response(await _call(memory_condense, bool(payload.get("full", False))))
                 if path in {"/control/stop-all", "/control/stop-all-now"}:
                     if stop_all is None:
                         return web.json_response({"error": "stop-all control unavailable"}, status=503)
@@ -249,6 +254,7 @@ def _activity_app(
             "/control/shutdown-norm-now",
             "/control/suppress-task",
             "/control/flush-suppressed",
+            "/control/memory-condense",
             "/control/stop-all",
             "/control/stop-all-now",
         ):
@@ -268,6 +274,7 @@ def start_activity_server(
     stop_all: Callable[[bool], dict] | None = None,
     suppress_task: Callable[[str | None, str], dict] | None = None,
     flush_suppressed: Callable[[], dict] | None = None,
+    memory_condense: Callable[[bool], dict] | None = None,
     busy_status: Callable[[], dict] | None = None,
     context_status: Callable[[], dict] | None = None,
     inject_context: Callable | None = None,
@@ -284,6 +291,7 @@ def start_activity_server(
             stop_all=stop_all,
             suppress_task=suppress_task,
             flush_suppressed=flush_suppressed,
+            memory_condense=memory_condense,
             busy_status=busy_status,
             context_status=context_status,
             inject_context=inject_context,
