@@ -40,6 +40,14 @@ def load_config(root: Path) -> dict[str, Any]:
     network = load_network_settings(root)
     ports = load_ports(root)
     secrets = load_secrets(root)
+    # Expose only explicitly supported plugin secrets to hot-loaded plugins.
+    # Names include SECRET/SECRETS so Norm's redaction registry treats their values as sensitive.
+    for key in ("NORM_ROTOR5_SECRET", "NORM_ROTOR5_PREVIOUS_SECRETS"):
+        value = secrets.get(key, "").strip()
+        if value:
+            os.environ[key] = value
+        else:
+            os.environ.pop(key, None)
     path_cfg = load_path_settings(root)
     documents_root = path_cfg["documents_root"]
     substitutions = {
