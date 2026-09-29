@@ -17,9 +17,9 @@ This is the active backlog/design notebook for behavior that is not fully implem
 8. Consider a separate low-privilege capability broker/coordinator for high-impact filesystem/shell/database actions.
 
 
-## Manual `/condense-memories` operator action
+## Destructive curated-memory `/condense-memories` operator action
 
-Do not implement this command as a weak alias for background-snapshot rebuilding. The intended action must run non-recursively through the low-level maintenance/model path, traverse the full curated/current memory set, identify true duplicates/contradictions/resolved or superseded state, preserve reusable lessons before deleting redundant rows, never delete merely because a record is old, checkpoint its own continuation state, and rebuild retrieval/background summaries only after the curated-memory result is valid. Add the command only when those semantics can be tested fail-closed.
+`/memory-condense` and `/memory-condense -full` now exist for safe incremental/full-source background-snapshot rebuilding. Do not implement `/condense-memories` as an alias for either of them. The intended action must run non-recursively through the low-level maintenance/model path, traverse the full curated/current memory set, identify true duplicates/contradictions/resolved or superseded state, preserve reusable lessons before deleting redundant rows, never delete merely because a record is old, checkpoint its own continuation state, and rebuild retrieval/background summaries only after the curated-memory result is valid. Add the command only when those semantics can be tested fail-closed.
 
 ## Cleanup/workspace follow-up
 

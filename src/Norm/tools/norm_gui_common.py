@@ -79,6 +79,7 @@ def endpoints() -> dict[str, str]:
         "suppress_task": f"http://{host}:{activity_port}/control/suppress-task",
         "inject_context": f"http://{host}:{activity_port}/control/inject-context",
         "flush_suppressed": f"http://{host}:{activity_port}/control/flush-suppressed",
+        "memory_condense": f"http://{host}:{activity_port}/control/memory-condense",
     }
 
 

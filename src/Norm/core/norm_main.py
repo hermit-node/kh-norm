@@ -464,6 +464,12 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             result["delivery_errors"] = errors
         return result
 
+    def request_memory_condense(full: bool = False) -> dict:
+        worker_obj = resources.get("worker")
+        if worker_obj is None:
+            return {"status": "unavailable", "scheduled": False, "reason": "worker is still initializing"}
+        return worker_obj.request_memory_condense(full=bool(full))
+
     activity_cfg = config.get("activity", {})
     activity_host = resolve_bind_host(str(activity_cfg.get("host", "127.0.0.1")))
     activity_port = int(ports['activity'])
@@ -505,6 +511,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             stop_all=request_stop_all,
             suppress_task=request_suppress_task,
             flush_suppressed=request_flush_suppressed,
+            memory_condense=request_memory_condense,
             busy_status=request_busy_status,
             context_status=request_context_status,
             health_status=request_activity_health,

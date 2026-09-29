@@ -70,6 +70,7 @@ class PromptWorker:
         self._state_lock = Lock()
         self._active_task_id = ""
         self._suppress_requested: set[str] = set()
+        self._manual_memory_condense_mode = ""
         self.deferred_append_planner = deferred_append_planner
 
     def start(self) -> Thread:
@@ -216,6 +217,60 @@ class PromptWorker:
     def is_idle(self) -> bool:
         return self._idle.is_set()
 
+    def request_memory_condense(self, full: bool = False) -> dict:
+        """Schedule background-memory condensation without creating a user task."""
+        if not self.durable:
+            return {"status": "unavailable", "scheduled": False, "reason": "durable store unavailable"}
+        requested = "full" if bool(full) else "incremental"
+        with self._state_lock:
+            current = self._manual_memory_condense_mode
+            if current != "full":
+                self._manual_memory_condense_mode = requested
+            scheduled = self._manual_memory_condense_mode
+        return {
+            "status": "ok",
+            "scheduled": True,
+            "mode": scheduled,
+            "runs_when": "worker_idle",
+            "worker_idle": self.is_idle(),
+        }
+
+    def _run_manual_memory_condense_if_requested(self) -> bool:
+        with self._state_lock:
+            mode = self._manual_memory_condense_mode
+            if not mode:
+                return False
+            self._manual_memory_condense_mode = ""
+        self._idle.clear()
+        memory_cfg = self._runtime_config().get("memory", {})
+        full = mode == "full"
+        try:
+            maintainer = DeepHistoryMaintainer(
+                self.durable, self.client, runtime_root=self._runtime_root(), config=memory_cfg,
+                queue=self.queue, drain_event=self._drain,
+            )
+            summary = maintainer.rebuild_background_snapshot(incremental=not full)
+            details = {"status": "success", "mode": mode, "background_chars": len(summary or "")}
+            self.durable.record_maintenance_note(
+                "manual_background_condensation",
+                "[manual_background_condensation] Manual background-memory condensation completed.",
+                details=details,
+            )
+            logging.info("Manual memory condensation completed mode=%s chars=%s", mode, len(summary or ""))
+        except Exception as exc:
+            try:
+                self.durable.record_maintenance_note(
+                    "manual_background_condensation",
+                    "[manual_background_condensation] Manual background-memory condensation failed; checkpoint retained for retry.",
+                    details={"status": "failed", "mode": mode, "error": f"{type(exc).__name__}: {exc}"[:1200]},
+                )
+            except Exception:
+                logging.exception("Could not record failed manual memory-condensation note")
+            logging.exception("Manual memory condensation failed mode=%s", mode)
+        finally:
+            self._idle.set()
+        return True
+
     def run_forever(self) -> None:
         logging.info("Prompt worker started consumer=%s", self.consumer)
         try:
@@ -242,7 +297,8 @@ class PromptWorker:
                     if restored:
                         logging.info("Restored parked prompts count=%s", restored)
                     else:
-                        self._maybe_consolidate_background_memory()
+                        if not self._run_manual_memory_condense_if_requested():
+                            self._maybe_consolidate_background_memory()
                     continue
                 redis_id, job = claimed
                 if not job.prompt or not job.prompt.strip():

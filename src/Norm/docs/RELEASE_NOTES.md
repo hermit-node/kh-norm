@@ -1,3 +1,11 @@
+## 0.53.3 — 2026-09-29 — about command and taskless manual memory condensation
+
+- Added `/about` to both operator prompt surfaces with current project/version, runtime/executable path, source/frozen mode, Python, package, and plugin summary.
+- Added `/memory-condense` for incremental background-memory snapshot refresh and `/memory-condense -full` for a full-source snapshot rebuild.
+- Manual memory condensation is scheduled directly on the existing worker and runs only when that worker reaches idle; it does not enqueue a user prompt, create a new task UUID, or re-plan user work.
+- Reused the checkpointed `DeepHistoryMaintainer.rebuild_background_snapshot()` path so interrupted condensation can resume safely. The manual operation records a PostgreSQL maintenance note and leaves the stronger destructive `/condense-memories` concept unimplemented.
+- Updated visible `/help` output in both prompt consoles.
+
 ## 0.53.2 — 2026-09-28 — cipher/plugin separation and frozen cryptography support
 
 - Split the optional five-machine Rotor5 message transform into its own first-party `plugins\rotor5_cipher` capability; `stegosplit_message` is again only the two-image carrier.

@@ -29,6 +29,8 @@ from norm_gui_common import (
     start_norm_detached,
     load_runtime_config,
 )
+from norm_runtime.about import format_about
+
 
 PROJECT_ID = "default"
 _resume_command_lock = threading.Lock()
@@ -257,6 +259,7 @@ def ensure_norm_running(ep: dict[str, str]) -> None:
 def show_help() -> None:
     print("Norm GUI commands:")
     print("  help or /help       List current operator commands")
+    print("  /about              Show Norm version, runtime, package, and plugin summary")
     print("  /status             Show runtime and queue state")
     print("  /status/busy        Show authoritative runtime busy state")
     print("  /queue [N]          Show queued GUI prompts with stable snapshot indexes")
@@ -274,6 +277,8 @@ def show_help() -> None:
     print("  /flush-suppressed   Permanently delete suppressed tasks and parked delivery records")
     print("  /backup             Create a portable installer/source backup")
     print("  /backup full        Create a sensitive full backup with private state and PostgreSQL")
+    print("  /memory-condense    Incrementally refresh consolidated background memory when idle")
+    print("  /memory-condense -full  Rebuild consolidated background memory from the full surviving source set")
     print("  /stop-all           Finish the current step, then stop Norm/Ollama")
     print("  /stop-all now       Emergency snapshot to temp\\recovery\\SOS.md, then force-stop Norm/Ollama")
     print("  /shutdown           Request Norm's graceful shutdown and close this console")
@@ -416,6 +421,12 @@ def main() -> int:
             lowered = " ".join(text.lower().split())
             if lowered in {"help", "/help"}:
                 show_help()
+                continue
+            if lowered == "/about":
+                try:
+                    print(format_about(ROOT))
+                except Exception as exc:
+                    print(f"Could not build about information: {exc}")
                 continue
             if lowered == "/inject-context" or lowered.startswith("/inject-context "):
                 body = text[len("/inject-context"):].strip()
@@ -593,6 +604,17 @@ def main() -> int:
             elif lowered == "/flush-suppressed":
                 result = post_json(ep["flush_suppressed"], timeout=10)
                 print(f"Flushed {int(result.get('deleted') or 0)} suppressed task(s) and {int(result.get('delivery_deleted') or 0)} suppressed delivery record(s).")
+                continue
+            elif lowered in {"/memory-condense", "/memory-condense -full", "/memory-condense --full", "/memory-condense full"}:
+                full = lowered != "/memory-condense"
+                try:
+                    result = post_json(ep["memory_condense"], payload={"full": full}, timeout=10)
+                    if result.get("scheduled"):
+                        print(f"Memory condensation scheduled in {result.get('mode')} mode; it will run inside the existing worker when idle (no new user task).")
+                    else:
+                        print(f"Memory condensation was not scheduled: {result.get('reason') or result.get('status') or 'unknown reason'}")
+                except Exception as exc:
+                    print(f"Could not schedule memory condensation: {exc}")
                 continue
             elif lowered == "/exit":
                 print("Closing GUI prompt console; queued Redis input is preserved.")

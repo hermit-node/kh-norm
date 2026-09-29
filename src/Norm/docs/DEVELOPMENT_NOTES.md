@@ -539,3 +539,10 @@ No PostgreSQL memory write, task creation or service start was performed.
 ## 2026-09-27 - 0.52.5 proportional plan verifier
 
 The plan verifier was tightened around blocking execution correctness while reducing false-positive rejection. Cohesive bounded steps may cover multiple tightly coupled modules/functions when their responsibilities and checks are explicit. Advisory decomposition/style concerns are non-blocking. Existing inspected/reused mechanisms and execution-time invariant tests count as evidence, preventing speculative objections such as boundary-value cases already eliminated by the inherited implementation. Repair cycles are instructed to make the smallest material correction rather than mechanically split steps or repeat an unchanged rejected plan.
+
+## 2026-09-29 - 0.53.3 `/about` and taskless manual memory condensation
+- Added a shared `norm_runtime.about` helper and exposed `/about` through both the local Rich console and GUI prompt console.
+- Added `/control/memory-condense`; it calls `PromptWorker.request_memory_condense()` directly rather than submitting a chat prompt.
+- `/memory-condense` schedules incremental background-memory condensation; `/memory-condense -full` uses the same checkpointed full-source rebuild with `incremental=False`. Pending full mode dominates an incremental request.
+- The worker consumes the request only at an idle point in its own loop, preventing a competing Ollama maintenance call and avoiding the new-task/task-lineage problem. Completion/failure is recorded as `[manual_background_condensation]` maintenance state and excluded from future condensation input to prevent recursive self-summary.
+- The previously documented `/condense-memories` command remains separate future work because its intended semantics include destructive curated-memory reconciliation/pruning that this safe snapshot operation does not perform.

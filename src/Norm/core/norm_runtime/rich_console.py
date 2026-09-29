@@ -15,6 +15,7 @@ from urllib import request
 from urllib.parse import quote
 
 from .prompt_ingress import GuiPromptDispatcher
+from .about import format_about
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
@@ -37,6 +38,7 @@ class NormConsole:
         self.stop_all_now_url = control_base + "/stop-all-now"
         self.suppress_task_url = control_base + "/suppress-task"
         self.flush_suppressed_url = control_base + "/flush-suppressed"
+        self.memory_condense_url = control_base + "/memory-condense"
         self.busy_url = activity_url.rsplit("/", 1)[0] + "/status/busy"
         shared_endpoints = {
             "chat": self.chat_url,
@@ -256,6 +258,33 @@ class NormConsole:
         except Exception as exc:
             self.console.print(f"[red]Backup failed: {exc}[/]")
 
+    def _show_about(self) -> None:
+        try:
+            runtime_root = Path(os.environ.get("NORM_RUNTIME_ROOT") or Path(__file__).resolve().parents[2]).resolve()
+            self.console.print(format_about(runtime_root))
+        except Exception as exc:
+            self.console.print(f"[red]Could not build about information: {exc}[/]")
+
+    def _memory_condense(self, full: bool = False) -> None:
+        req = request.Request(
+            self.memory_condense_url,
+            data=json.dumps({"full": bool(full)}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with request.urlopen(req, timeout=10) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            if result.get("scheduled"):
+                self.console.print(
+                    f"[yellow]Memory condensation scheduled in {result.get('mode')} mode; "
+                    "it will run inside the existing worker when idle (no new user task).[/]"
+                )
+            else:
+                self.console.print(f"[red]Memory condensation was not scheduled: {result.get('reason') or result.get('status')}[/]")
+        except Exception as exc:
+            self.console.print(f"[red]Could not schedule memory condensation: {exc}[/]")
+
     def _show_busy(self) -> None:
         try:
             with request.urlopen(self.busy_url, timeout=5) as response:
@@ -267,6 +296,7 @@ class NormConsole:
     def _show_help(self) -> None:
         self.console.print(
             "[bold]Commands[/]\n"
+            "  /about             Show Norm version, runtime, package, and plugin summary.\n"
             "  /mute ollama       Hide Ollama thinking/answer output; work continues.\n"
             "  /unmute ollama     Show Ollama output again.\n"
             "  /mute norm         Hide Norm runtime messages; work continues.\n"
@@ -282,6 +312,8 @@ class NormConsole:
             "  /flush-suppressed  Permanently delete suppressed tasks and parked delivery records.\n"
             "  /backup            Create a portable installer/source backup.\n"
             "  /backup full       Create a sensitive full backup with private state and PostgreSQL.\n"
+            "  /memory-condense   Incrementally refresh consolidated background memory when idle.\n"
+            "  /memory-condense -full  Rebuild consolidated background memory from the full surviving source set.\n"
             "  /status            Show local mute, pause, and pending-input state.\n"
             "  /status/busy       Show authoritative runtime busy state.\n"
             "  /stop-all          Finish the current step, snapshot recovery state, then stop Norm/Ollama.\n"
@@ -297,6 +329,8 @@ class NormConsole:
         parts = stripped.lower().split()
         if parts == ["/help"]:
             self._show_help()
+        elif parts == ["/about"]:
+            self._show_about()
         elif len(parts) == 2 and parts[0] in {"/mute", "/unmute"} and parts[1] in {"ollama", "norm"}:
             muted = parts[0] == "/mute"
             self._set_muted(parts[1], muted)
@@ -340,6 +374,10 @@ class NormConsole:
             threading.Thread(target=self._run_backup, kwargs={"full": False}, daemon=True).start()
         elif parts in (["/backup", "full"], ["/backup-zip"]):
             threading.Thread(target=self._run_backup, kwargs={"full": True}, daemon=True).start()
+        elif parts == ["/memory-condense"]:
+            threading.Thread(target=self._memory_condense, kwargs={"full": False}, daemon=True).start()
+        elif parts in (["/memory-condense", "-full"], ["/memory-condense", "--full"], ["/memory-condense", "full"]):
+            threading.Thread(target=self._memory_condense, kwargs={"full": True}, daemon=True).start()
         elif parts == ["/new"] or (parts and parts[0] == "/new"):
             name = stripped[len("/new"):].strip()
             try:
