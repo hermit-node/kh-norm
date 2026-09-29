@@ -1,4 +1,4 @@
-# Norm 0.53.1 portable source package
+# Norm 0.53.2 portable source package
 
 This archive is the clean source baseline for installing or rebuilding Norm.
 
@@ -30,7 +30,7 @@ The first-party `plugins\backup` capability creates a **sensitive** installer-co
 
 `config\settings.ini` explicitly carries `paths.runtime_root`; portable media stores `.` and the installer rewrites the installed copy to its actual target (normally `C:\Norm`). Queued workers use the same resolved runtime configuration as the host, and optional image-analysis Python dependencies are validated only when image analysis is called.
 
-Package-managed built-in plugin subtrees are `plugins\backup`, `plugins\verbatim_lines`, `plugins\stegosplit_key`, and `plugins\stegosplit_message`. Unrelated user plugins remain persistent across normal installer updates. The two StegoSplit plugins bundle their implementation rather than depending on an editable external checkout.
+Package-managed built-in plugin subtrees are `plugins\backup`, `plugins\verbatim_lines`, `plugins\stegosplit_key`, `plugins\stegosplit_message`, and `plugins\rotor5_cipher`. Unrelated user plugins remain persistent across normal installer updates. The two StegoSplit plugins bundle their implementation rather than depending on an editable external checkout.
 
 `/backup` creates portable/source installer media; `/backup full` creates the sensitive private-state format; `/backup-zip` is the legacy full-backup alias. `/condense-memories` is intentionally absent until the complete fail-closed curated-memory housekeeping policy is implemented.
 

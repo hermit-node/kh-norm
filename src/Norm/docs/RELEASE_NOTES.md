@@ -1,3 +1,12 @@
+## 0.53.2 — 2026-09-28 — cipher/plugin separation and frozen cryptography support
+
+- Split the optional five-machine Rotor5 message transform into its own first-party `plugins\rotor5_cipher` capability; `stegosplit_message` is again only the two-image carrier.
+- Rotor5 R5E2 uses five independently derived 256-symbol rotor machines, a fresh per-message nonce, pre-rotor compression, and HMAC-SHA256 envelope authentication.
+- Added optional `NORM_ROTOR5_SECRET` and `NORM_ROTOR5_PREVIOUS_SECRETS` values in the configured Norm `.env`; only those two already-redacted secret values are exported into the Norm process for the hot-loaded Rotor5 plugin.
+- Added `cryptography==46.0.4`, `cffi==2.0.0`, and `pycparser==3.0` to the reproducible environment lock.
+- PyInstaller now explicitly collects `cryptography`, `cffi`, and `_cffi_backend`, allowing the frozen `norm.exe` process to hydrate the ChaCha20-Poly1305 StegoSplit plugin without relying on imports from an external editable checkout.
+- `stegosplit_message` 0.3.0 exposes typed native tools for text, Base64 bytes, files, password rotation, cover reconstruction, authenticated pair info, and differential stats while retaining the legacy `run(payload)` wrapper.
+
 ## 0.53.1 — 2026-09-28 — aiohttp control plane
 
 - Replaced the hand-rolled ThreadingHTTPServer/socketserver chat and activity/control transports with aiohttp.web.

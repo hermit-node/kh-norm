@@ -1,3 +1,8 @@
+## 2026-09-28 — Rotor5 separation and cryptography freeze support
+- Corrected the temporary combined StegoSplit/Rotor5 design: Rotor5 is now an independent plugin and StegoSplit accepts its output as arbitrary bytes through the normal `embed_base64`/`extract_base64` carrier path.
+- Added process-environment export for only `NORM_ROTOR5_SECRET` and `NORM_ROTOR5_PREVIOUS_SECRETS` after the configured `.env` has been loaded/redaction-registered.
+- Added cryptography/cffi build pins and explicit PyInstaller collection because a dynamically imported plugin cannot assume packages merely installed in `.venv` are importable from a one-file frozen runtime.
+
 # Norm development notes
 
 `RELEASE_NOTES.md` is the concise promoted-version change ledger. This file remains the detailed chronological engineering record: implementation work, incidents, experiments, validation, corrections, and lessons that explain how each release was reached.

@@ -1,10 +1,10 @@
 # Norm current status
 
-Updated 2026-09-27 for the clean **0.53.1** portable source line.
+Updated 2026-09-28 for the clean **0.53.2** portable source line.
 
 ## Source/layout
 
-- Version: **0.53.1**.
+- Version: **0.53.2**.
 - Runtime root: `C:\Norm` (relocatable by installer); the installed absolute path is written to `config\settings.ini` `[paths].runtime_root`.
 - Runtime source/executable directory: `core\`; compiled executable target is `core\norm.exe`.
 - Maintained docs: `C:\Norm\docs`.
@@ -17,8 +17,10 @@ Updated 2026-09-27 for the clean **0.53.1** portable source line.
 
 ## Built-in capabilities and plugin hydration
 
-First-party package-managed plugin subtrees are `plugins\backup`, `plugins\verbatim_lines`, `plugins\stegosplit_key`, and `plugins\stegosplit_message`. User-added plugin folders remain persistent and are not deleted by normal base updates. The StegoSplit key and MessageCodec sources are bundled privately inside their plugin folders, eliminating the old editable-install dependency.
+First-party package-managed plugin subtrees are `plugins\backup`, `plugins\verbatim_lines`, `plugins\stegosplit_key`, `plugins\stegosplit_message`, and `plugins\rotor5_cipher`. User-added plugin folders remain persistent and are not deleted by normal base updates. The StegoSplit key and message sources are bundled privately inside their plugin folders, eliminating the old editable-install dependency. Rotor5 is now a separate first-party plugin rather than being embedded in the StegoSplit message codec.
 
+
+`cryptography 46.0.4` is now a locked runtime/build dependency and the PyInstaller build explicitly collects cryptography/cffi so ChaCha20-Poly1305 remains available inside the frozen `norm.exe` plugin host.
 
 Plugins are first-class native tools. Norm rescans the plugin tree before schema use and dispatch, supports multi-file/sibling imports, hot-reloads changed code without an executable rebuild, and keeps the last-known-good loaded capability when a new edit fails to import. The legacy `tools\norm_plugins.py` remains a diagnostic/manual broker.
 

@@ -1,3 +1,22 @@
+Norm Installer Kit 1.4.9
+Norm runtime 0.53.2
+
+Rotor5 / StegoSplit separation + cryptography freeze support:
+- Rotor5 is now the independent first-party plugins\rotor5_cipher capability (R5E2).
+- StegoSplit Message 0.3.0 is only the paired-image carrier; it accepts arbitrary text/bytes and no longer owns Rotor5.
+- Rotor5 can use NORM_ROTOR5_SECRET from the configured Norm .env and older values from NORM_ROTOR5_PREVIOUS_SECRETS.
+- cryptography 46.0.4, cffi 2.0.0, and pycparser 3.0 are pinned in the runtime lock.
+- build_norm.py forces PyInstaller collection of cryptography/cffi/_cffi_backend so the frozen plugin host can import ChaCha20-Poly1305.
+- Existing 1.4.8 source discovery, aiohttp control-plane, ingress deduplication, venv reuse, and managed persistent plugin update behavior are retained.
+
+Validation performed in the packaging environment:
+- All Python source syntax-compiles.
+- Rotor5 text/binary round-trips, wrong-password rejection, compression, live-secret rollover, and authentication pass.
+- Rotor5 -> StegoSplit -> StegoSplit extraction -> Rotor5 decode chain passes.
+- StegoSplit all-16-formula permutation self-test passes.
+- Current PluginManager hydrates rotor5_cipher 0.1.0 and stegosplit_message 0.3.0 with no refresh errors.
+- Windows PyInstaller EXE compilation must run on Windows; this kit's installer performs that target-machine rebuild.
+
 Norm Installer Kit 1.4.8
 Norm runtime 0.53.1
 
