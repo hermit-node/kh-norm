@@ -1,10 +1,10 @@
 # Norm current status
 
-Updated 2026-09-30 for the clean **0.53.4** portable source line.
+Updated 2026-09-30 for the clean **0.53.5** portable source line.
 
 ## Source/layout
 
-- Version: **0.53.4**.
+- Version: **0.53.5**.
 - Runtime root: `C:\Norm` (relocatable by installer); the installed absolute path is written to `config\settings.ini` `[paths].runtime_root`.
 - Runtime source/executable directory: `core\`; compiled executable target is `core\norm.exe`.
 - Maintained docs: `C:\Norm\docs`.
@@ -15,12 +15,18 @@ Updated 2026-09-30 for the clean **0.53.4** portable source line.
 - Disposable/recovery root: `%USERPROFILE%\Documents\Norm\temp`.
 - `.venv` is generated/reusable and is intentionally omitted from source and full backup ZIPs.
 
+## 0.53.5 suppression and rebuild tuning
+
+- `/suppress-task` now falls back to canonical Redis DB3 ingress when a prompt is dispatching/planning but no durable PostgreSQL task row exists yet. It tombstones the active prompt ID (or oldest queued prompt), cancels an active pre-task model call when needed, and lets the ingress layer park the submission instead of retrying it.
+- The PyInstaller runtime build cache now lives under `state\build-cache\pyinstaller` and survives normal release staging cleanup. `tools\build_norm.py` no longer forces `--clean`; pass `--clean` explicitly only when a cold rebuild is wanted.
+- The cryptography pin was advanced to 50.0.2 so a working newer cryptography installation is not downgraded back to the former 46.0.4 pin during this release.
+
 ## Built-in capabilities and plugin hydration
 
 First-party package-managed plugin subtrees are `plugins\backup`, `plugins\verbatim_lines`, `plugins\stegosplit_key`, `plugins\stegosplit_message`, and `plugins\rotor5_cipher`. User-added plugin folders remain persistent and are not deleted by normal base updates. The StegoSplit key and message sources are bundled privately inside their plugin folders, eliminating the old editable-install dependency. Rotor5 is now a separate first-party plugin rather than being embedded in the StegoSplit message codec.
 
 
-`cryptography 46.0.4` is now a locked runtime/build dependency and the PyInstaller build explicitly collects cryptography/cffi so ChaCha20-Poly1305 remains available inside the frozen `norm.exe` plugin host.
+`cryptography 50.0.2` is the locked runtime/build dependency and the PyInstaller build explicitly collects cryptography/cffi so ChaCha20-Poly1305 remains available inside the frozen `norm.exe` plugin host.
 
 Plugins are first-class native tools. Norm rescans the plugin tree before schema use and dispatch, supports multi-file/sibling imports, hot-reloads changed code without an executable rebuild, and keeps the last-known-good loaded capability when a new edit fails to import. The legacy `tools\norm_plugins.py` remains a diagnostic/manual broker.
 
@@ -46,7 +52,7 @@ Portable base/source ZIPs remain secrets-free and safe to treat separately from 
 
 ## Installer behavior
 
-The reusable installer performs an in-place managed sync. Changed package files are replaced and package-owned files no longer present are removed. Persistent local directories (`.venv`, `.ssh`, plugins, logs/state) survive normal base updates. Existing compatible venvs are reused. Recommended Installer 1.4.10 binds one exact source payload by filename and SHA-256 and can build a derived payload from locked or newest eligible stable/RC dependency versions. Alpha, beta, and dev releases are excluded. Full-backup packages additionally restore their private state payload.
+The reusable installer performs an in-place managed sync. Changed package files are replaced and package-owned files no longer present are removed. Persistent local directories (`.venv`, `.ssh`, plugins, logs/state) survive normal base updates. Existing compatible venvs are reused. Recommended Installer 1.4.12 binds one exact source payload by filename and SHA-256 and can build a derived payload from locked or newest eligible stable/RC dependency versions. Alpha, beta, and dev releases are excluded. Full-backup packages additionally restore their private state payload.
 
 ## Current validation boundary
 

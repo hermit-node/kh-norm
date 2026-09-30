@@ -1,3 +1,10 @@
+## 0.53.5 — 2026-09-30 — pre-task suppression and incremental rebuild cache
+
+- `/suppress-task` now covers the canonical DB3 ingress gap before a durable task UUID exists: it suppresses the currently dispatching prompt first, otherwise the oldest live queued prompt, and prevents uncertain retry resurrection.
+- A dispatching pre-task prompt cancellation also cancels the active Ollama call so planning/generation does not continue after the operator suppressed it.
+- Runtime PyInstaller work/spec state now persists under `state\build-cache\pyinstaller`; normal builds reuse analysis state and no longer pass `--clean`. `tools\build_norm.py --clean` remains available for deliberate cold rebuilds.
+- Updated the cryptography lock from 46.0.4 to 50.0.2.
+
 ## 0.53.4 — 2026-09-30 — suppression/cancellation reliability
 
 - Fixed mid-execution suppression acknowledgement to use the actual Redis Streams entry ID rather than the logical task-node UUID. This prevents `XACK` failures after a model generation is cancelled for `/suppress-task`.

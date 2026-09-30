@@ -1,4 +1,4 @@
-# Norm 0.53.4 portable source package
+# Norm 0.53.5 portable source package
 
 This archive is the clean source baseline for installing or rebuilding Norm.
 
@@ -62,3 +62,8 @@ Suppressed operator cleanup is two-layer: `/flush-suppressed` removes suppressed
 ## 0.53.1 aiohttp transport
 
 Chat and activity/control HTTP are served by pinned aiohttp 3.14.3 on dedicated asyncio loops. Existing coordinator lifecycle semantics remain compatible; blocking runtime callbacks are offloaded with asyncio.to_thread. SSE disconnects are benign transport events.
+
+
+## 0.53.5 tuning
+
+This source adds ingress-level `/suppress-task` fallback for prompts that are still dispatching before task creation, reuses PyInstaller analysis state under `state\build-cache\pyinstaller`, and advances the cryptography pin to 50.0.2.
