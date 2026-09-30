@@ -231,6 +231,123 @@ def clear_runtime_redis(root: Path) -> dict[str, int]:
 
 
 
+
+def _stream_id_tuple(value: str) -> tuple[int, int]:
+    try:
+        left, right = str(value).split("-", 1)
+        return int(left), int(right)
+    except (TypeError, ValueError):
+        return (-1, -1)
+
+
+def _suppress_console_prompt_state(config: dict, section: str, *, default_prefix: str, client_factory=redis.Redis) -> dict:
+    """Suppress one user-visible ingress prompt before it has a durable task row.
+
+    /suppress-task normally acts on PostgreSQL task identity.  A GUI prompt can spend
+    time in canonical DB3 ingress / HTTP planning before /api/chat has returned a
+    durable task_id, so the worker legitimately has nothing to suppress yet.  In that
+    gap, tombstone the dispatching prompt (preferred) or oldest queued prompt by its
+    stable prompt_id.  The ingress dispatcher will park the row instead of retrying it.
+    """
+    cfg = dict(config.get(section, {}) or {})
+    client = client_factory(
+        host=str(cfg.get("host", "127.0.0.1")),
+        port=int(cfg.get("port", 6379)),
+        db=int(cfg.get("db", 3)),
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=10,
+        socket_keepalive=True,
+        health_check_interval=30,
+    )
+    stream = str(cfg.get("console_ingress_stream", f"{default_prefix}:ingress"))
+    group = str(cfg.get("console_ingress_group", f"{default_prefix.split(':')[-1]}-dispatchers"))
+    dispatching_key = str(cfg.get("console_dispatching_key", f"{default_prefix}:dispatching"))
+    uncertain_key = str(cfg.get("console_uncertain_key", f"{default_prefix}:uncertain"))
+    suppressed_key = str(cfg.get("console_suppressed_prompt_ids_key", f"{default_prefix}:suppressed-prompt-ids"))
+
+    blocked = {str(value) for value in client.smembers(suppressed_key)}
+    dispatching = client.hgetall(dispatching_key)
+    selected: dict | None = None
+
+    # Prefer the oldest active HTTP dispatch: this is the prompt the operator sees as
+    # currently running even when task creation/planning has not reached PostgreSQL.
+    active_candidates: list[tuple[tuple[int, int], str, str]] = []
+    for entry_id, raw in dispatching.items():
+        try:
+            record = json.loads(raw)
+        except Exception:
+            continue
+        if not isinstance(record, dict):
+            continue
+        prompt_id = str(record.get("prompt_id") or "").strip()
+        if prompt_id and prompt_id not in blocked:
+            active_candidates.append((_stream_id_tuple(str(entry_id)), str(entry_id), prompt_id))
+    if active_candidates:
+        _, entry_id, prompt_id = min(active_candidates, key=lambda item: item[0])
+        selected = {"entry_id": entry_id, "prompt_id": prompt_id, "state": "dispatching"}
+
+    if selected is None:
+        pending_ids: set[str] | None = None
+        last_delivered: tuple[int, int] | None = None
+        try:
+            pending = client.xpending_range(stream, group, "-", "+", 10000)
+            pending_ids = {str(item.get("message_id") or "") for item in pending}
+            for info in client.xinfo_groups(stream):
+                if str(info.get("name")) == group:
+                    last_delivered = _stream_id_tuple(str(info.get("last-delivered-id") or "0-0"))
+                    break
+        except Exception:
+            pending_ids = None
+            last_delivered = None
+
+        rows = client.xrange(stream, min="-", max="+")
+        for raw_id, raw_fields in rows:
+            entry_id = str(raw_id)
+            fields = dict(raw_fields)
+            prompt_id = str(fields.get("prompt_id") or "").strip()
+            if not prompt_id or prompt_id in blocked or entry_id in dispatching:
+                continue
+            if pending_ids is not None and last_delivered is not None:
+                already_delivered = _stream_id_tuple(entry_id) <= last_delivered
+                if already_delivered and entry_id not in pending_ids:
+                    continue
+                state = "in-flight" if entry_id in pending_ids else "queued"
+            else:
+                # Visibility must fail safe: without consumer-group metadata, do not
+                # guess that an arbitrary historical stream row is live.
+                continue
+            selected = {"entry_id": entry_id, "prompt_id": prompt_id, "state": state}
+            break
+
+    if selected is None:
+        return {"status": "ok", "suppressed": False, "reason": "no active or queued ingress prompt"}
+
+    prompt_id = str(selected["prompt_id"])
+    client.sadd(suppressed_key, prompt_id)
+
+    # If this prompt is already parked/uncertain, make that record explicitly inert.
+    for uncertain_id, raw in client.hgetall(uncertain_key).items():
+        try:
+            record = json.loads(raw)
+        except Exception:
+            continue
+        if not isinstance(record, dict) or str(record.get("prompt_id") or "").strip() != prompt_id:
+            continue
+        record["auto_retry"] = False
+        record["suppressed"] = True
+        client.hset(uncertain_key, uncertain_id, json.dumps(record, ensure_ascii=False))
+
+    return {
+        "status": "ok",
+        "suppressed": True,
+        "delivery_only": True,
+        "prompt_id": prompt_id,
+        "entry_id": str(selected["entry_id"]),
+        "delivery_state": str(selected["state"]),
+        "title": f"ingress prompt {prompt_id[:8]} ({selected['state']})",
+    }
+
 def _flush_console_suppressed_state(config: dict, section: str, *, default_prefix: str, client_factory=redis.Redis) -> dict:
     """Remove user-facing suppressed delivery records without making them runnable again.
 
@@ -432,7 +549,25 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         worker_obj = resources.get("worker")
         if worker_obj is None:
             return {"status": "unavailable", "suppressed": False, "reason": "worker is still initializing"}
-        return worker_obj.request_suppress_task(task_id=task_id, reason=reason)
+        result = worker_obj.request_suppress_task(task_id=task_id, reason=reason)
+        if bool(result.get("suppressed")) or str(task_id or "").strip():
+            return result
+        if str(result.get("reason") or "") != "no active or queued task":
+            return result
+        try:
+            ingress = _suppress_console_prompt_state(config, "console_queue", default_prefix="norm:gui")
+        except Exception as exc:
+            logging.warning("Ingress-level suppression fallback failed: %s", exc)
+            return result
+        if bool(ingress.get("suppressed")):
+            if str(ingress.get("delivery_state") or "") == "dispatching":
+                OllamaClient.cancel_active()
+            logging.info(
+                "Suppressed pre-task ingress prompt prompt_id=%s entry_id=%s state=%s",
+                ingress.get("prompt_id"), ingress.get("entry_id"), ingress.get("delivery_state"),
+            )
+            return ingress
+        return result
 
     def request_flush_suppressed() -> dict:
         worker_obj = resources.get("worker")

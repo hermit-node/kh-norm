@@ -46,6 +46,7 @@ def version_resource(meta: dict[str,str], target: Path) -> None:
 def main() -> int:
     ap=argparse.ArgumentParser()
     ap.add_argument("--candidate",default="")
+    ap.add_argument("--clean", action="store_true", help="Discard the reusable PyInstaller analysis cache before building")
     args=ap.parse_args()
     meta=metadata()
     tag=meta["version"].replace(".","-")
@@ -55,7 +56,19 @@ def main() -> int:
     version_file=out/"version_info.txt"
     version_resource(meta,version_file)
     python=ROOT/".venv"/"Scripts"/"python.exe"
-    cmd=[str(python),"-m","PyInstaller","--noconfirm","--clean","--onefile","--name","norm","--paths",str(ROOT/"core"),"--collect-all","cryptography","--collect-all","cffi","--hidden-import","_cffi_backend","--version-file",str(version_file),"--distpath",str(out/"dist"),"--workpath",str(out/"work"),"--specpath",str(out/"spec"),str(ROOT/"core"/"norm_main.py")]
+    cache_root=ROOT/"state"/"build-cache"/"pyinstaller"
+    work_dir=cache_root/"work"
+    spec_dir=cache_root/"spec"
+    if args.clean and cache_root.exists():
+        shutil.rmtree(cache_root)
+    work_dir.mkdir(parents=True,exist_ok=True)
+    spec_dir.mkdir(parents=True,exist_ok=True)
+    cmd=[str(python),"-m","PyInstaller","--noconfirm"]
+    if args.clean:
+        cmd.append("--clean")
+    cmd += ["--onefile","--name","norm","--paths",str(ROOT/"core"),"--collect-all","cryptography","--collect-all","cffi","--hidden-import","_cffi_backend","--version-file",str(version_file),"--distpath",str(out/"dist"),"--workpath",str(work_dir),"--specpath",str(spec_dir),str(ROOT/"core"/"norm_main.py")]
+    print(f"pyinstaller_cache={cache_root}")
+    print(f"clean_build={args.clean}")
     cp=subprocess.run(cmd,cwd=str(ROOT))
     if cp.returncode: return cp.returncode
     candidate=Path(args.candidate) if args.candidate else ROOT/"core"/f"norm-{meta['version']}-candidate.exe"
