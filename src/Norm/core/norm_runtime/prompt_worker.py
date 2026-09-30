@@ -450,7 +450,7 @@ class PromptWorker:
                 if answer is None:
                     return
             if self._suppression_requested(job.task_id) or (self.durable and self.durable.task_status(job.task_id) == "suppressed"):
-                self._handle_suppressed(job, reason="Suppression requested during execution.")
+                self._handle_suppressed(redis_id, job, reason="Suppression requested during execution.")
                 return
             structured_summary = self._step_result_envelope(job, request_type, answer, resource_status=resource_status)
             result = StepResult(
@@ -488,7 +488,7 @@ class PromptWorker:
             logging.info("Prompt completed task=%s step=%s type=%s", job.task_id, job.step_id, request_type)
         except ModelGenerationCancelled as exc:
             if self._suppression_requested(job.task_id) or (self.durable and self.durable.task_status(job.task_id) == "suppressed"):
-                self._handle_suppressed(job, reason=str(exc) or "Suppression requested during model generation.")
+                self._handle_suppressed(redis_id, job, reason=str(exc) or "Suppression requested during model generation.")
             elif self._stop_all_now.is_set():
                 self._handle_stop_all_now(redis_id, job, name, started, str(exc))
             else:
@@ -499,7 +499,7 @@ class PromptWorker:
             return
         except Exception as exc:
             if self._suppression_requested(job.task_id) or (self.durable and self.durable.task_status(job.task_id) == "suppressed"):
-                self._handle_suppressed(job, reason=f"Suppression completed at safe boundary after {type(exc).__name__}.")
+                self._handle_suppressed(redis_id, job, reason=f"Suppression completed at safe boundary after {type(exc).__name__}.")
                 return
             error = f"{type(exc).__name__}: {exc}"
             terminal = self._recover_or_escalate(redis_id, job, error)
@@ -539,7 +539,7 @@ class PromptWorker:
             heartbeat_stop.set()
             heartbeat.join(timeout=1)
 
-    def _handle_suppressed(self, job: PromptJob, reason: str) -> None:
+    def _handle_suppressed(self, redis_id: str, job: PromptJob, reason: str) -> None:
         status = self.durable.task_status(job.task_id) if self.durable else None
         if self.durable and status is not None and status != "suppressed":
             payload = self.queue.snapshot_task_jobs(job.task_id)
@@ -547,7 +547,7 @@ class PromptWorker:
         # Preserve the entry in Redis: ack (remove from PEL) but do NOT delete
         # from the stream.  Suppressed tasks remain in the queue until explicit
         # /flush-queue or Redis shutdown.
-        self.queue.ack_preserve(job.message_id)
+        self.queue.ack_preserve(redis_id)
         if hasattr(self.live, "cleanup"):
             self.live.cleanup(job.task_id)
         self._clear_suppression_request(job.task_id)

@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-INSTALLER_VERSION = "1.4.9"
+INSTALLER_VERSION = "1.4.15"
 INSTALLER_TEMPLATE_FILENAME = "Norm-Installer.py"
 OUTPUT_EXE_FILENAME = f"Norm-Installer-{INSTALLER_VERSION}.exe"
 DEFAULT_PIP_VERSION = "26.2.1"
@@ -594,6 +594,77 @@ def _rewrite_requirements(text: str, selected: dict[str, str]) -> str:
     return "\n".join(lines) + ending
 
 
+def _rewrite_direct_requirements(text: str, selected: dict[str, str]) -> str:
+    """Rewrite exact direct pins while preserving extras such as psycopg[binary]."""
+    selected_by_canonical = {_canonical_name(name): version for name, version in selected.items()}
+    lines = text.splitlines()
+    pattern = re.compile(r"^(\s*)([A-Za-z0-9_.-]+)(\[[^\]]+\])?==([^\s;]+)(.*)$")
+    for index, raw in enumerate(lines):
+        match = pattern.match(raw)
+        if not match:
+            continue
+        canonical = _canonical_name(match.group(2))
+        version = selected_by_canonical.get(canonical)
+        if version:
+            lines[index] = f"{match.group(1)}{match.group(2)}{match.group(3) or ''}=={version}{match.group(5)}"
+    ending = "\n" if text.endswith("\n") else ""
+    return "\n".join(lines) + ending
+
+
+def persist_selected_requirements_to_source(
+    source_info: SourceInfo,
+    selected: dict[str, str],
+    *,
+    log,
+) -> SourceInfo:
+    """Atomically persist a resolved dependency set into the base portable source ZIP.
+
+    The full environment lock is authoritative for installation/build reproducibility.
+    Matching direct pins in core/requirements.txt are updated as well so source-mode
+    installs and the human-facing direct dependency list do not drift from the lock.
+    """
+    source_zip = source_info.zip_path
+    temp_root = Path(tempfile.mkdtemp(prefix=f"norm-source-lock-{INSTALLER_VERSION}-"))
+    try:
+        extracted_root = _extract_source(source_info, temp_root / "source")
+        lock_path = extracted_root / str(source_info.manifest["requirements_lock"])
+        new_lock = _rewrite_requirements(source_info.requirements_text, selected)
+        lock_path.write_text(new_lock, encoding="utf-8", newline="\n")
+
+        source_dir = Path(str(source_info.manifest.get("source_dir") or "core"))
+        direct_path = extracted_root / source_dir / "requirements.txt"
+        if direct_path.is_file():
+            direct_text = direct_path.read_text(encoding="utf-8-sig")
+            direct_path.write_text(
+                _rewrite_direct_requirements(direct_text, selected),
+                encoding="utf-8",
+                newline="\n",
+            )
+            log(f"Updated direct requirements: {direct_path.relative_to(extracted_root)}")
+
+        replacement = source_zip.with_name(source_zip.name + ".new")
+        _zip_tree(extracted_root, replacement)
+        # Validate the replacement before it can supersede the user's base source.
+        replacement_info = inspect_source(replacement)
+        expected = {_canonical_name(name): version for name, version in selected.items()}
+        actual = {_canonical_name(pin.name): pin.version for pin in replacement_info.pins}
+        mismatch = {name: version for name, version in expected.items() if actual.get(name) != version}
+        if mismatch:
+            raise BuilderError("Persisted source lock verification failed: " + ", ".join(
+                f"{name} expected {version}, got {actual.get(name)!r}" for name, version in sorted(mismatch.items())
+            ))
+
+        os.replace(replacement, source_zip)
+        digest = _sha256_file(source_zip)
+        sha_path = source_zip.with_name(source_zip.name + ".sha256")
+        sha_path.write_text(f"{digest}  {source_zip.name}\n", encoding="utf-8")
+        log(f"Persisted resolved versions into base source: {source_zip}")
+        log(f"Updated companion SHA-256: {sha_path}")
+        return inspect_source(source_zip)
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
 def _extract_source(info: SourceInfo, destination: Path) -> Path:
     with zipfile.ZipFile(info.zip_path, "r") as zf:
         zf.extractall(destination)
@@ -924,6 +995,75 @@ def launch_gui() -> int:
     root.geometry("980x720")
     root.minsize(840, 620)
 
+    def center_child_over_root(window, width: int, height: int) -> None:
+        """Place installer child dialogs over the builder window, not monitor center."""
+        root.update_idletasks()
+        x = root.winfo_rootx() + max(0, (root.winfo_width() - width) // 2)
+        y = root.winfo_rooty() + max(0, (root.winfo_height() - height) // 2)
+        window.geometry(f"{width}x{height}+{x}+{y}")
+
+    def ask_newest_compatible_scope(resolved: dict[str, str]) -> str | None:
+        """Return 'build', 'persist', or None after newest-compatible resolution."""
+        dialog = tk.Toplevel(root)
+        dialog.title("Newest compatible versions selected")
+        dialog.transient(root)
+        dialog.resizable(False, False)
+        answer = {"value": None}
+
+        frame = ttk.Frame(dialog, padding=(18, 16))
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text="Newest compatible dependency set is ready", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        changed = sum(1 for name, version in resolved.items() if current_versions.get(name) != version)
+        ttk.Label(
+            frame,
+            text=(
+                f"{changed} package pin(s) differ from the current base source.\n\n"
+                "Choose whether these versions apply only to the installer you build now, "
+                "or become the new requirements baseline for future builds."
+            ),
+            justify="left",
+            wraplength=540,
+        ).pack(anchor="w", pady=(10, 14))
+
+        persist_box = ttk.LabelFrame(frame, text="Update requirements + this build", padding=(10, 8))
+        persist_box.pack(fill="x", pady=(0, 8))
+        ttk.Label(
+            persist_box,
+            text=(
+                "Writes the resolved versions back into the base portable-source ZIP's "
+                "tools\\requirements-lock.txt and matching core\\requirements.txt pins, "
+                "then refreshes its .sha256. Future builder runs start from these versions."
+            ),
+            justify="left",
+            wraplength=520,
+        ).pack(anchor="w")
+
+        build_box = ttk.LabelFrame(frame, text="Update this build only", padding=(10, 8))
+        build_box.pack(fill="x", pady=(0, 14))
+        ttk.Label(
+            build_box,
+            text="Uses the resolved versions for this installer payload but leaves the base source ZIP unchanged.",
+            justify="left",
+            wraplength=520,
+        ).pack(anchor="w")
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill="x")
+
+        def choose(value: str | None) -> None:
+            answer["value"] = value
+            dialog.destroy()
+
+        ttk.Button(buttons, text="Update requirements + this build", command=lambda: choose("persist")).pack(side="left")
+        ttk.Button(buttons, text="This build only", command=lambda: choose("build")).pack(side="left", padx=(8, 0))
+        ttk.Button(buttons, text="Cancel", command=lambda: choose(None)).pack(side="right")
+        dialog.protocol("WM_DELETE_WINDOW", lambda: choose(None))
+        center_child_over_root(dialog, 610, 355)
+        dialog.grab_set()
+        dialog.focus_force()
+        root.wait_window(dialog)
+        return answer["value"]
+
     python_candidates = detect_python_candidates()
     python_default = python_candidates[0] if python_candidates else Path(sys.executable)
     python_var = tk.StringVar(value=str(python_default))
@@ -1040,7 +1180,7 @@ def launch_gui() -> int:
                 selected_versions[package] = value
             refresh_row(package)
         if unavailable:
-            messagebox.showinfo("Online version unavailable", "No eligible online version is loaded for: " + ", ".join(unavailable))
+            messagebox.showinfo("Online version unavailable", "No eligible online version is loaded for: " + ", ".join(unavailable), parent=root)
 
     ttk.Button(controls, text="Use requirements", command=lambda: choose_locked(selected_packages())).pack(side="left")
     ttk.Button(controls, text="Use online (manual)", command=lambda: choose_online(selected_packages())).pack(side="left", padx=(6, 0))
@@ -1089,7 +1229,7 @@ def launch_gui() -> int:
             return
         base_python = python_var.get().strip()
         if not base_python:
-            messagebox.showerror("Missing Python", "Choose the base Python before resolving newest dependencies.")
+            messagebox.showerror("Missing Python", "Choose the base Python before resolving newest dependencies.", parent=root)
             return
         pip_candidate = online_versions.get("__pip__", selected_pip["value"])
         busy["resolve"] = True
@@ -1191,7 +1331,7 @@ def launch_gui() -> int:
         output = output_var.get().strip()
         base_python = python_var.get().strip()
         if not output or not base_python:
-            messagebox.showerror("Missing information", "Choose the build output folder and base Python.")
+            messagebox.showerror("Missing information", "Choose the build output folder and base Python.", parent=root)
             return
         busy["build"] = True
         build_btn.configure(state="disabled")
@@ -1206,6 +1346,7 @@ def launch_gui() -> int:
     build_btn.configure(command=build_clicked)
 
     def pump_events() -> None:
+        nonlocal source_info
         try:
             while True:
                 kind, payload = events.get_nowait()
@@ -1232,7 +1373,7 @@ def launch_gui() -> int:
                     build_btn.configure(state="normal")
                     status_var.set("Newest-compatible resolution failed")
                     append_log(f"RESOLVER ERROR: {payload}")
-                    messagebox.showerror("Newest-compatible resolution failed", str(payload))
+                    messagebox.showerror("Newest-compatible resolution failed", str(payload), parent=root)
                 elif kind == "newest_done":
                     resolved, complete_online = payload  # type: ignore[misc]
                     online_versions.update({str(k): str(v) for k, v in complete_online.items()})
@@ -1247,17 +1388,42 @@ def launch_gui() -> int:
                     build_btn.configure(state="normal")
                     status_var.set("Newest mutually compatible dependency set selected")
                     append_log("Resolved newest compatible set and wrote it back to the dependency table.")
-                    messagebox.showinfo(
-                        "Newest compatible versions selected",
-                        "The dependency table now contains a mutually compatible newest stable/RC set.\n\n"
-                        "You can review the resolved versions and then build the installer.",
-                    )
+
+                    scope = ask_newest_compatible_scope({str(k): str(v) for k, v in resolved.items()})
+                    if scope == "persist":
+                        try:
+                            source_info = persist_selected_requirements_to_source(
+                                source_info,
+                                {str(k): str(v) for k, v in resolved.items()},
+                                log=append_log,
+                            )
+                            current_versions.clear()
+                            current_versions.update({pin.name: pin.version for pin in source_info.pins})
+                            for package in current_versions:
+                                if package in package_to_row:
+                                    refresh_row(package)
+                            status_var.set("Newest compatible set persisted as the new requirements baseline")
+                            append_log("Future builds will start from the newly persisted requirements baseline.")
+                        except Exception as exc:
+                            status_var.set("Resolved set selected, but source requirements update failed")
+                            append_log(f"SOURCE REQUIREMENTS UPDATE ERROR: {exc}")
+                            messagebox.showerror(
+                                "Could not update source requirements",
+                                str(exc),
+                                parent=root,
+                            )
+                    elif scope == "build":
+                        status_var.set("Newest compatible set selected for this build only")
+                        append_log("Base source requirements left unchanged; resolved versions apply to this build only.")
+                    else:
+                        status_var.set("Newest compatible set selected; no persistence choice made")
+                        append_log("Newest-compatible scope dialog cancelled; dependency table remains selected for review.")
                 elif kind == "build_error":
                     busy["build"] = False
                     build_btn.configure(state="normal")
                     status_var.set("Build failed")
                     append_log(f"ERROR: {payload}")
-                    messagebox.showerror("Installer build failed", str(payload))
+                    messagebox.showerror("Installer build failed", str(payload), parent=root)
                 elif kind == "build_done":
                     busy["build"] = False
                     build_btn.configure(state="normal")
@@ -1268,6 +1434,7 @@ def launch_gui() -> int:
                         "Installer build complete",
                         f"EXE: {result.exe_path}\n\nPayload: {result.source_zip}\nSHA-256: {result.payload_sha256}\n\n"
                         "At launch, the installer auto-selects the newest valid Norm portable-source ZIP beside it.",
+                        parent=root,
                     )
         except queue.Empty:
             pass
@@ -1291,7 +1458,7 @@ def self_test() -> int:
         raise BuilderError("Base requirements do not contain PyInstaller")
     template = (_app_dir() / INSTALLER_TEMPLATE_FILENAME).read_text(encoding="utf-8")
     patched = _patch_installer_template(template, pip_version=DEFAULT_PIP_VERSION)
-    if 'INSTALLER_VERSION = "1.4.9"' not in patched:
+    if 'INSTALLER_VERSION = "1.4.15"' not in patched:
         raise BuilderError("Installer version injection self-test failed")
     if 'find_latest_source()' not in patched:
         raise BuilderError("Installer auto-source discovery self-test failed")

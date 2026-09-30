@@ -1,10 +1,10 @@
 # Norm current status
 
-Updated 2026-09-29 for the clean **0.53.3** portable source line.
+Updated 2026-09-30 for the clean **0.53.4** portable source line.
 
 ## Source/layout
 
-- Version: **0.53.3**.
+- Version: **0.53.4**.
 - Runtime root: `C:\Norm` (relocatable by installer); the installed absolute path is written to `config\settings.ini` `[paths].runtime_root`.
 - Runtime source/executable directory: `core\`; compiled executable target is `core\norm.exe`.
 - Maintained docs: `C:\Norm\docs`.

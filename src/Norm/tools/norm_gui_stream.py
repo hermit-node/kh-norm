@@ -90,7 +90,10 @@ def _render(console: Console, event: dict) -> None:
     elif kind == "model_error":
         console._norm_model_line_open = False
         console.print()
-        console.print(Text(f"Ollama error: {text}", style="bold red"), soft_wrap=True)
+        if event.get("cancelled"):
+            console.print(Text(f"Ollama cancelled: {text}", style="yellow"), soft_wrap=True)
+        else:
+            console.print(Text(f"Ollama error: {text}", style="bold red"), soft_wrap=True)
 
 
 def main() -> int:

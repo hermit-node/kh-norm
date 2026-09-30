@@ -1,3 +1,11 @@
+## 0.53.4 — 2026-09-30 — suppression/cancellation reliability
+
+- Fixed mid-execution suppression acknowledgement to use the actual Redis Streams entry ID rather than the logical task-node UUID. This prevents `XACK` failures after a model generation is cancelled for `/suppress-task`.
+- Normalized intentional Ollama response-close races into `ModelGenerationCancelled` without retaining the underlying `http.client` exception chain, so deliberate cancellation no longer surfaces misleading `NoneType.peek` transport tracebacks.
+- Applied the same cancellation normalization to text generation, tool-chat generation, and vision streaming.
+- Operator consoles now render intentional model cancellation as a yellow cancellation notice instead of a red Ollama error; genuine failures remain red.
+- Suppression remains durable-first and preserves the queue entry in Redis after acknowledgement, matching the existing pre-execution suppression path.
+
 ## 0.53.3 — 2026-09-29 — about command and taskless manual memory condensation
 
 - Added `/about` to both operator prompt surfaces with current project/version, runtime/executable path, source/frozen mode, Python, package, and plugin summary.

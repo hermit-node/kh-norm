@@ -1,75 +1,10 @@
-Norm Installer Kit 1.4.9
-Norm runtime 0.53.2
+Norm Installer Kit 1.4.15 / Norm 0.53.7
 
-Rotor5 / StegoSplit separation + cryptography freeze support:
-- Rotor5 is now the independent first-party plugins\rotor5_cipher capability (R5E2).
-- StegoSplit Message 0.3.0 is only the paired-image carrier; it accepts arbitrary text/bytes and no longer owns Rotor5.
-- Rotor5 can use NORM_ROTOR5_SECRET from the configured Norm .env and older values from NORM_ROTOR5_PREVIOUS_SECRETS.
-- cryptography 46.0.4, cffi 2.0.0, and pycparser 3.0 are pinned in the runtime lock.
-- build_norm.py forces PyInstaller collection of cryptography/cffi/_cffi_backend so the frozen plugin host can import ChaCha20-Poly1305.
-- Existing 1.4.8 source discovery, aiohttp control-plane, ingress deduplication, venv reuse, and managed persistent plugin update behavior are retained.
+Norm 0.53.7 large-source/task-storage changes:
+- read_file no longer rejects a source because the whole file exceeds a tiny size cap.
+- source size is separate from processing buffer (24 MiB), model-facing tool result (384 KiB), internal note chunk (5 MiB), per-pass processing allowance (3 GiB), and task-owned storage ceiling (54 GiB).
+- reaching the 3 GiB pass or 54 GiB task-storage ceiling checkpoints and parks the same task for manual resume.
+- task-local reproducible image-analysis derivatives are cleaned after verified completion; compact lineage plus internal notes survive in workspace/.norm-task-retention.
+- human-facing final replies are capped at 384 KiB while the full durable summary remains in PostgreSQL and oversized complete text is spilled to workspace/large-responses.
 
-Validation performed in the packaging environment:
-- All Python source syntax-compiles.
-- Rotor5 text/binary round-trips, wrong-password rejection, compression, live-secret rollover, and authentication pass.
-- Rotor5 -> StegoSplit -> StegoSplit extraction -> Rotor5 decode chain passes.
-- StegoSplit all-16-formula permutation self-test passes.
-- Current PluginManager hydrates rotor5_cipher 0.1.0 and stegosplit_message 0.3.0 with no refresh errors.
-- Windows PyInstaller EXE compilation must run on Windows; this kit's installer performs that target-machine rebuild.
-
-Norm Installer Kit 1.4.8
-Norm runtime 0.53.1
-
-aiohttp startup/readiness regression repair:
-- Restores the old HTTP server's allow_reuse_address behavior with aiohttp TCPSite(reuse_address=True).
-- Preserves the known-good Run-Norm.bat dual-health gate and direct three-console launch block.
-- Startup timeout now reports chat and activity health separately before pointing to norm-runtime.log.
-- Does not reintroduce start_operator_consoles.py.
-- Repeated bind -> /health -> shutdown -> immediate rebind regression passed.
-- Abrupt-client disconnect handling from 0.53.0 remains in place.
-
-Norm Installer Kit 1.4.8
-Norm runtime 0.53.1
-
-aiohttp control-plane migration:
-- Replaced socketserver/ThreadingHTTPServer transports for chat and activity/control with aiohttp.web.
-- Pinned aiohttp 3.14.3 plus compatible transitive dependencies in the runtime install lock.
-- Preserved coordinator lifecycle methods and active-request accounting.
-- Blocking runtime callbacks execute through asyncio.to_thread.
-- SSE disconnect/reset/WinError 10053/10054 is treated as normal client departure.
-- Retained loopback/Tailscale-only binding.
-- Added graceful aiohttp AppRunner/event-loop cleanup.
-
-Regression validation:
-- Abrupt client disconnect during /status/busy leaves the activity server healthy.
-- Stub /api/chat POST round-trip returns 200 through aiohttp.
-- Server threads terminate cleanly.
-- All packaged Python files syntax-compile.
-
-Installer-builder reusable-venv behavior from 1.4.5 and ingress deduplication from 1.4.6 are retained.
-
-Norm Installer Kit 1.4.8
-Norm runtime 0.53.1
-
-Redis ingress state-machine repair:
-- Fixed a real duplicate-live-prompt race in uncertain HTTP recovery.
-- The original defer timer and startup recovery could both schedule the same uncertain record.
-- Previously each contender could XADD the same logical prompt before either HDEL removed the uncertain source.
-- Requeue is now serialized with a per-record Redis lock and re-reads the durable record after acquiring ownership.
-- Replacement XADD + uncertain HDEL execute in one Redis transaction.
-- Suppressed prompt IDs remain a hard retry gate.
-- /queue and /queue-full no longer call ACKed-but-preserved historical ingress rows "queued".
-- Queue visibility fails open if consumer-group metadata cannot be read.
-
-Audit findings:
-- Worker-side chain replacement, dependency parking, child parking and cooperative yield already use Redis MULTI/EXEC where atomic replacement is required.
-- Worker-side park_chain/revise_retry/escalate/reclaim paths still contain sequential XADD/ACK/XDEL operations. These are recoverability/hardening candidates, but they do not explain the duplicate GUI prompt IDs shown in the reproduced incident.
-- Suppression deliberately preserves some ACKed stream rows for inspection until explicit cleanup; those rows are storage, not executable live work.
-- The reproduced duplicate prompt IDs originate in the independent GUI ingress uncertain-retry layer.
-
-Regression tests:
-- Two concurrent retry contenders for one uncertain record produce exactly one live replacement.
-- ACKed historical rows are excluded from the LIVE QUEUE snapshot.
-- All packaged Python files syntax-compile.
-
-Installer-builder reusable-venv behavior from 1.4.5 is retained.
+Installer 1.4.15 retains 1.4.13+ dependency-persistence and runtime-window-centered package-resolution dialogs, the reusable PyInstaller cache behavior, and 0.53.6 recovery/provenance/interjection fixes.
