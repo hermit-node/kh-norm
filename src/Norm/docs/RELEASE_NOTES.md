@@ -1,3 +1,12 @@
+## 0.53.7 — 2026-09-30 — large-source streaming and semantic task storage
+
+- Removed the whole-source `read_file` size gate. Large UTF-8 sources are streamed with byte/line continuation cursors; the source itself is not limited by the model-result cap.
+- Reinterpreted `tools.max_read_bytes` as a 24 MiB processing buffer and added a separate 384 KiB per-tool-result ceiling so source size, processing window, and model-facing payload are distinct. Large sources skip full-file SHA-256 by default and expose a stable size/mtime/path fingerprint; callers can explicitly request a full SHA scan.
+- Added task storage accounting under `temp\tasks\<task_id>` with a 54 GiB managed-storage ceiling and 3 GiB per-pass processing allowance. Reaching the processing ceiling writes a continuation ZIP and parks/suppresses the same task for explicit manual resume; resume resets only the per-pass counter.
+- Added `append_task_note` for durable internal Markdown extraction/summary notes with automatic 5 MiB physical-file rotation. Aggregate logical notes remain unconstrained except by the task storage ceiling.
+- Task-scoped image-analysis derivatives are now written under task temp as reproducible cache rather than long-lived workspace clutter. Verified terminal cleanup retains compact source/recipe lineage and internal notes in `.norm-task-retention` while deleting reproducible derivative bytes.
+- Human-facing completed replies are capped at 384 KiB. The full durable PostgreSQL task summary remains intact, and oversized full replies are also spilled to `workspace\large-responses`.
+
 ## 0.53.6 — 2026-09-30 — recovery-state hygiene and prompt provenance
 
 - Restored `/inject-context` end-to-end: the activity API now receives a live injection callback, injections resolve to the current active task tree, persist in PostgreSQL, and are consumed by the worker at subsequent model-call boundaries without creating a new task.

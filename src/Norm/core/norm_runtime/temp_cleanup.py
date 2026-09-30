@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .task_storage import retain_task_manifest
+
 _TASK_LINE = re.compile(r"^### Task\s+([^\s/]+)", re.MULTILINE)
 _TERMINAL = {"completed", "failed", "cancelled"}
 
@@ -65,7 +67,7 @@ def _task_is_safely_terminal(durable: Any, task_id: str) -> bool:
         return False
 
 
-def cleanup_task_temp(temp_root: str | Path, task_id: str, durable: Any) -> dict[str, Any]:
+def cleanup_task_temp(temp_root: str | Path, task_id: str, durable: Any, *, retention_root: str | Path | None = None) -> dict[str, Any]:
     """Remove temp/tasks/<task_id> only after durable terminal verification."""
     root = Path(temp_root).resolve()
     target = root / "tasks" / str(task_id)
@@ -73,8 +75,18 @@ def cleanup_task_temp(temp_root: str | Path, task_id: str, durable: Any) -> dict
         return {"removed": False, "task_id": str(task_id), "path": str(target)}
     if not _task_is_safely_terminal(durable, str(task_id)):
         return {"removed": False, "task_id": str(task_id), "path": str(target), "reason": "task_not_verified_terminal"}
+    retained_manifest = None
+    if retention_root is not None:
+        try:
+            retained_manifest = retain_task_manifest(target, retention_root)
+        except Exception:
+            logging.exception("Could not retain compact task-storage manifest before cleanup task=%s", task_id)
     files, size = _safe_remove(target, root)
-    return {"removed": True, "task_id": str(task_id), "path": str(target), "files_removed": files, "bytes_removed": size}
+    return {
+        "removed": True, "task_id": str(task_id), "path": str(target),
+        "files_removed": files, "bytes_removed": size,
+        "retained_manifest": str(retained_manifest) if retained_manifest else None,
+    }
 
 
 def cleanup_temp_root(
@@ -83,6 +95,7 @@ def cleanup_temp_root(
     durable: Any | None = None,
     max_age_hours: int = 72,
     recovery_max_age_hours: int = 168,
+    retention_root: str | Path | None = None,
 ) -> dict[str, Any]:
     """Safely clean Norm's external disposable temp tree.
 
@@ -111,7 +124,7 @@ def cleanup_temp_root(
         for child in list(tasks_dir.iterdir()):
             if not child.is_dir():
                 continue
-            outcome = cleanup_task_temp(root, child.name, durable)
+            outcome = cleanup_task_temp(root, child.name, durable, retention_root=retention_root)
             if outcome.get("removed"):
                 result["task_dirs_removed"] += 1
                 result["files_removed"] += int(outcome.get("files_removed", 0))

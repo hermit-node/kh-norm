@@ -1,7 +1,7 @@
 {
   "package_schema": 1,
   "name": "Norm",
-  "version": "0.53.6",
+  "version": "0.53.7",
   "package_type": "portable-source",
   "source_dir": "core",
   "entrypoint": "core/norm_main.py",
@@ -97,5 +97,16 @@
     "postgres_retry_boundary": "normal startup performs PostgreSQL connection/schema initialization inside the bounded three-attempt psycopg retry loop",
     "postgres_connect_timeout_seconds": 5,
     "plugin_concurrency": "hydration, schema refresh, and execution are serialized by one process-global reentrant lock"
+  },
+  "large_source_processing": {
+    "source_size_limit": "none; filesystem/storage only",
+    "per_pass_process_bytes": 3221225472,
+    "task_storage_limit_bytes": 57982058496,
+    "text_processing_buffer_bytes": 25165824,
+    "tool_return_bytes": 393216,
+    "internal_note_chunk_bytes": 5242880,
+    "human_output_bytes": 393216,
+    "ceiling_behavior": "checkpoint + suppress/park same task; manual resume resets per-pass counter",
+    "terminal_cleanup": "delete reproducible task-local derivatives; retain source/recipe lineage and internal Markdown notes"
   }
 }

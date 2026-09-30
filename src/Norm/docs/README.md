@@ -1,6 +1,6 @@
 # Norm
 
-**Norm 0.53.6** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
+**Norm 0.53.7** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
 
 ## Canonical layout
 
@@ -26,6 +26,14 @@ C:\Norm\
 ```
 
 The installer treats `.venv`, `.ssh`, `plugins`, `logs`, and `state` as persistent local state during normal base updates. Package-managed files are synchronized in place: changed files are replaced and package-owned files removed from a newer base are deleted. A compatible `.venv` is reused.
+
+## Large-source and task-storage model
+
+Native file reads distinguish source size from processing/output size. A source file may be arbitrarily large within the backing filesystem. Text is streamed through a 24 MiB processing buffer, while one `read_file` result is bounded to 384 KiB and supplies byte/line continuation cursors. Large sources are not fully hashed unless explicitly requested.
+
+A task may process up to 3 GiB in one pass and own up to 54 GiB of temporary working storage. Reaching the per-pass ceiling writes a compact continuation ZIP and parks the same task for manual `/resume-task`; resume preserves lifetime progress and resets only the current pass allowance. Internal extraction/summary Markdown uses automatically rotated 5 MiB chunks. Task-local reproducible media/image derivatives are temporary; after verified completion Norm retains their lineage/recipes and useful internal notes but removes the reproducible bytes.
+
+Human-facing completed replies are capped at 384 KiB. The full terminal summary remains durable in PostgreSQL, and oversized complete reply text is also saved under `workspace\large-responses`.
 
 ## Runtime services
 
@@ -59,7 +67,7 @@ The GUI recognizes `help`/`/help`, `/about`, `/status`, `/status/busy`, `/queue-
 
 ## Build/update
 
-`tools\build_norm.py` is the repeatable PyInstaller path. Its analysis cache is reusable under `state\build-cache\pyinstaller`; use `--clean` only for an explicit cold rebuild. `package-manifest.json` defines the reusable installer contract. Normal updates should use the reusable Norm installer rather than deleting `C:\Norm`: it mirrors package-owned source files, preserves local/persistent state, reuses the venv when compatible, installs only missing/changed dependencies, and optionally rebuilds `core\norm.exe`. Installer 1.4.14 binds one exact source payload by filename and SHA-256. Its builder reads this package's requirements lock and can create a derived payload using either the locked version or the newest eligible stable/release-candidate version for each package; alpha, beta, and dev builds are excluded. The package schema remains 1.
+`tools\build_norm.py` is the repeatable PyInstaller path. Its analysis cache is reusable under `state\build-cache\pyinstaller`; use `--clean` only for an explicit cold rebuild. `package-manifest.json` defines the reusable installer contract. Normal updates should use the reusable Norm installer rather than deleting `C:\Norm`: it mirrors package-owned source files, preserves local/persistent state, reuses the venv when compatible, installs only missing/changed dependencies, and optionally rebuilds `core\norm.exe`. Installer 1.4.15 binds one exact source payload by filename and SHA-256. Its builder reads this package's requirements lock and can create a derived payload using either the locked version or the newest eligible stable/release-candidate version for each package; alpha, beta, and dev builds are excluded. The package schema remains 1.
 
 ## Documentation
 

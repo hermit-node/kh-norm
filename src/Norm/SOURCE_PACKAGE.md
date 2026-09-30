@@ -1,4 +1,4 @@
-# Norm 0.53.6 portable source package
+# Norm 0.53.7 portable source package
 
 This archive is the clean source baseline for installing or rebuilding Norm.
 
@@ -7,6 +7,12 @@ It intentionally contains **no `.venv` and no compiled `norm.exe`**. Those are g
 Machine-specific persistent data and secrets are external to this package. `config\settings.ini` retains the current Norm service topology while runtime-owned paths are relocatable.
 
 Use `package-manifest.json` as the installer's package contract.
+## 0.53.7 large-source streaming and semantic task storage
+
+Native `read_file` no longer rejects a source merely because the whole file is larger than a small byte cap. Sources may be arbitrarily large within the filesystem; reads stream through a 24 MiB processing buffer and return bounded model-facing chunks with byte/line continuation cursors. A 3 GiB per-pass processing allowance checkpoints and parks the same task for manual resume, while Norm-owned task working storage is capped at 54 GiB. Internal Markdown extraction/summary notes rotate at 5 MiB per physical file, and human-facing replies are capped at 384 KiB without truncating the durable task summary.
+
+Task-local image-analysis derivatives now live under task temp storage and are treated as reproducible cache. On verified terminal cleanup Norm keeps compact source/asset lineage and internal Markdown notes under the durable workspace retention area, but deletes reproducible brightness/contrast/analysis variants rather than preserving duplicate bytes. Source files are referenced by path/size/mtime/hash when practical and are not copied merely for task storage accounting.
+
 ## Dynamic plugins
 
 Norm automatically hydrates local plugins from the configured runtime `plugins\` directory. Public functions defined in non-hidden `.py` files become namespaced native tools and are rescanned/hot-reloaded without rebuilding `norm.exe`. Prefix helper files/functions with `_` to keep them private. Manifest `init.py`/`__init__.py` and `README.md` files remain supported as optional metadata. A failed plugin refresh leaves the last-known-good hydrated version active and records the error in `.registry.json`.
