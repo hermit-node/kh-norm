@@ -45,6 +45,7 @@ class PromptWorker:
         poll_ms: int = 5000,
         consumer: str | None = None,
         deferred_append_planner=None,
+        context_injections=None,
     ) -> None:
         self.queue = queue
         self.client = client
@@ -72,6 +73,7 @@ class PromptWorker:
         self._suppress_requested: set[str] = set()
         self._manual_memory_condense_mode = ""
         self.deferred_append_planner = deferred_append_planner
+        self.context_injections = context_injections
 
     def start(self) -> Thread:
         if self._thread and self._thread.is_alive():
@@ -103,6 +105,53 @@ class PromptWorker:
     def active_task_id(self) -> str:
         with self._state_lock:
             return self._active_task_id
+
+    def _consume_context_injections(self, job: PromptJob) -> list[dict]:
+        if self.context_injections is None:
+            return []
+        metadata = dict(job.metadata or {})
+        try:
+            after = int(metadata.get("context_injection_cursor") or 0)
+        except (TypeError, ValueError):
+            after = 0
+        entries = list(self.context_injections.read(job.task_id, after=after) or [])
+        if not entries:
+            return []
+        cursor = max(int(item.get("id") or 0) for item in entries)
+        applied = list(metadata.get("applied_context_injections") or [])
+        seen = {int(item.get("id") or 0) for item in applied if isinstance(item, dict)}
+        for item in entries:
+            iid = int(item.get("id") or 0)
+            if iid and iid not in seen:
+                applied.append({"id": iid, "content": str(item.get("content") or "")})
+                seen.add(iid)
+        metadata["context_injection_cursor"] = cursor
+        metadata["applied_context_injections"] = applied[-32:]
+        job.metadata = metadata
+        logging.info("Applied user context injection(s) task=%s step=%s ids=%s", job.task_id, job.step_id, [item.get("id") for item in entries])
+        return entries
+
+    @staticmethod
+    def _context_injection_block(entries: list[dict]) -> str:
+        if not entries:
+            return ""
+        parts = [
+            "[USER CONTEXT INTERJECTION FOR THE ACTIVE TASK]",
+            "The following text was supplied by the user after this task began. It is user-authored context, not a Norm-generated step. Incorporate it into the current task and adapt generated work when it changes the intended interpretation.",
+        ]
+        for item in entries:
+            parts.append(f"Injection {int(item.get('id') or 0)}:\n{str(item.get('content') or '').strip()}")
+        return "\n\n".join(parts)
+
+    def _prompt_with_context_injections(self, job: PromptJob, base_prompt: str, *, consume: bool = True) -> str:
+        if consume:
+            self._consume_context_injections(job)
+        metadata = job.metadata or {}
+        applied = list(metadata.get("applied_context_injections") or [])
+        block = self._context_injection_block(applied)
+        if not block:
+            return str(base_prompt)
+        return str(base_prompt).rstrip() + "\n\n" + block
 
     def _suppression_requested(self, task_id: str) -> bool:
         with self._state_lock:
@@ -249,8 +298,12 @@ class PromptWorker:
                 self.durable, self.client, runtime_root=self._runtime_root(), config=memory_cfg,
                 queue=self.queue, drain_event=self._drain,
             )
+            recovery_cleanup = maintainer.cleanup_recovery_state()
             summary = maintainer.rebuild_background_snapshot(incremental=not full)
-            details = {"status": "success", "mode": mode, "background_chars": len(summary or "")}
+            details = {
+                "status": "success", "mode": mode, "background_chars": len(summary or ""),
+                "recovery_cleanup": recovery_cleanup,
+            }
             self.durable.record_maintenance_note(
                 "manual_background_condensation",
                 "[manual_background_condensation] Manual background-memory condensation completed.",
@@ -649,17 +702,32 @@ class PromptWorker:
             "conclusion": "Synthesize prior task results into the direct final candidate; do not redo completed work unless verification requires it.",
             "final_verification": "Validate the final-candidate envelope and verify completion without redoing completed acquisition or mutation work.",
         }
+        metadata = job.metadata or {}
+        prompt_origin = str(metadata.get("prompt_origin") or ("user_prompt" if request_type == "prompt" else "norm_internal"))
+        is_user_prompt = request_type == "prompt" and prompt_origin in {"user_prompt", "prompt_interface", "gui_prompt", "ssh_prompt"}
+        original_user_prompt = str(metadata.get("original_user_prompt") or (job.prompt if is_user_prompt else "")).strip()
+        instruction = str(job.prompt or "")
+        if not is_user_prompt:
+            instruction = (
+                "[NORM-INTERNAL WORK ITEM; NOT USER-AUTHORED]\n"
+                f"type={request_type}; prompt_origin={prompt_origin}\n"
+                "Do not describe this generated instruction as something the user directly said or asked.\n\n"
+                + instruction
+            )
         payload = {
             "schema_version": PROTOCOL_VERSION,
             "kind": "work_request",
             "request_type": request_type,
+            "prompt_origin": prompt_origin,
+            "instruction_source": "user_prompt_interface" if is_user_prompt else "norm_internal",
             "processing_contract": directives[request_type],
             "persistent_instructions": list(self._runtime_config().get("persistent_instructions", [])),
             "task_id": job.task_id,
             "step_id": job.step_id,
             "project_id": job.project_id,
             "command": self._command_from_job(job),
-            "instruction": job.prompt,
+            "original_user_request": original_user_prompt,
+            "instruction": instruction,
             "context": {
                 "task_working_memory": task_memory,
                 "postgres_prior_steps": prior,
@@ -1319,7 +1387,8 @@ class PromptWorker:
         steps.append(TaskStep("final-verify", "Verify merged child result", "Independently verify the merged child result.", f"Merged child result satisfies parent step and contains exactly {count} valid items.", depends_on=(merge_id,)))
         plan = TaskPlan(task_id=child_id, title=f"Child decomposition for {job.task_id}/{job.step_id}", steps=tuple(steps))
         self.live.start_task(child_id, plan.title, plan.as_dict())
-        self.durable.start_child_task(plan, job.task_id, job.step_id, original_request=job.prompt)
+        original_user_prompt = str((job.metadata or {}).get("original_user_prompt") or job.prompt).strip()
+        self.durable.start_child_task(plan, job.task_id, job.step_id, original_request=original_user_prompt)
         now = _utc_now()
         for step in steps[:2]:
             result = StepResult(child_id, step.id, step.name, StepStatus.COMPLETED, step.description, verification=step.verify, started_at=now, completed_at=now)
@@ -1343,7 +1412,8 @@ class PromptWorker:
                 attempt=0, created_at=__import__("time").time(), metadata={
                     "step_name": step.name, "verification": step.verify,
                     "prompt_origin": "runtime_child_subtask", "context_id": child_id,
-                    "original_user_prompt": child_request, "command_envelope": command,
+                    "original_user_prompt": original_user_prompt,
+                    "norm_generated_instruction": child_request, "command_envelope": command,
                     "is_final_candidate": index == len(action_steps) - 1,
                     "final_verification_step_id": "final-verify", "final_verification_node_id": final_verify_step.node_id,
                     "task_uuid": plan.task_uuid, "node_id": step.node_id, "subtask_depth": depth + 1,
@@ -1392,7 +1462,11 @@ class PromptWorker:
         plan = TaskPlan(task_id=child_id, title=title, steps=steps)
         self.live.start_task(child_id, plan.title, plan.as_dict())
         child_kind = "recovery" if "recovery" in str(prompt_origin or "").lower() else "child"
-        self.durable.start_child_task(plan, parent_job.task_id, parent_job.step_id, original_request=instruction, task_kind=child_kind)
+        original_user_prompt = str((parent_job.metadata or {}).get("original_user_prompt") or parent_job.prompt).strip()
+        self.durable.start_child_task(
+            plan, parent_job.task_id, parent_job.step_id,
+            original_request=original_user_prompt, task_kind=child_kind,
+        )
         now = _utc_now()
         for step in steps[:2]:
             result = StepResult(
@@ -1420,7 +1494,8 @@ class PromptWorker:
             attempt=0, created_at=__import__("time").time(), metadata={
                 "step_name": title, "verification": verify,
                 "prompt_origin": prompt_origin, "context_id": child_id,
-                "original_user_prompt": instruction, "command_envelope": command,
+                "original_user_prompt": original_user_prompt,
+                "norm_generated_instruction": instruction, "command_envelope": command,
                 "is_final_candidate": True, "final_verification_step_id": "final-verify",
                 "final_verification_node_id": final_verify_step.node_id,
                 "task_uuid": plan.task_uuid, "node_id": work_step.node_id,
@@ -2022,6 +2097,8 @@ class PromptWorker:
         name: str,
         started_clock: float,
     ) -> str | None:
+        base_prompt = str(prompt)
+        prompt = self._prompt_with_context_injections(job, base_prompt)
         tools = self._worker_tools()
         metadata = job.metadata or {}
         if tools is None or not hasattr(self.client, "chat_with_tools"):
@@ -2043,6 +2120,7 @@ class PromptWorker:
 
         historical_evidence = self.live.task_evidence(job.task_id) if hasattr(self.live, "task_evidence") else []
         outcome = self._run_tool_slice(job, prompt, tools)
+        prompt = self._prompt_with_context_injections(job, base_prompt, consume=False)
         local_evidence = list(outcome.get("evidence") or [])
         if outcome["yielded"]:
             self._checkpoint_yield(redis_id, job, name, started, outcome)
@@ -2183,6 +2261,9 @@ class PromptWorker:
         long_form = request_type == "conclusion" or bool(metadata.get("is_final_candidate")) or bool(re.search(r"\bexactly\s+\d+\b", prompt, re.I))
         output_budget = int(metadata.get("num_predict") or (27000 if long_form else 16000))
         while step_rounds < step_limit and task_rounds < task_limit:
+            new_context = self._consume_context_injections(job)
+            if new_context:
+                messages.append({"role": "user", "content": self._context_injection_block(new_context)})
             if self._suppression_requested(job.task_id) or (self.durable and self.durable.task_status(job.task_id) == "suppressed"):
                 raise ModelGenerationCancelled("task suppressed by operator")
             if self._drain.is_set():
@@ -2862,12 +2943,15 @@ class PromptWorker:
             purge = {"files_removed": 0, "bytes_removed": 0, "skipped": "disabled"}
             if bool(maint_cfg.get("weekly_cleanup_purge_image_analysis", True)):
                 purge = self._purge_image_analysis_outputs()
-            marker["phase"] = "deep_history" if mode == "deep" else "background_memory"
-            client.set(active_key, json.dumps(marker, sort_keys=True))
             maintainer = DeepHistoryMaintainer(
                 self.durable, self.client, runtime_root=self._runtime_root(), config=memory_cfg,
                 queue=self.queue, drain_event=self._drain,
             )
+            marker["phase"] = "recovery_state_cleanup"
+            client.set(active_key, json.dumps(marker, sort_keys=True))
+            recovery_cleanup = maintainer.cleanup_recovery_state()
+            marker["phase"] = "deep_history" if mode == "deep" else "background_memory"
+            client.set(active_key, json.dumps(marker, sort_keys=True))
             if mode == "deep":
                 result = maintainer.run()
                 if result is None:
@@ -2884,7 +2968,8 @@ class PromptWorker:
             self.durable.record_maintenance_note(
                 "weekly_cleanup", f"{mode.capitalize()} cleanup completed successfully.",
                 details={"status": "success", "mode": mode, "run_id": run_id,
-                         "resumed": resumed, "temp_cleanup": temp_cleanup, "image_analysis_purge": purge, "maintenance_result": result},
+                         "resumed": resumed, "temp_cleanup": temp_cleanup, "image_analysis_purge": purge,
+                         "recovery_cleanup": recovery_cleanup, "maintenance_result": result},
             )
             client.delete(active_key)
             logging.info("Weekly maintenance completed run_id=%s mode=%s temp=%s purge=%s result=%s", run_id, mode, temp_cleanup, purge, result)

@@ -4,7 +4,7 @@ import hashlib
 import json
 import logging
 import re
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -164,6 +164,156 @@ class DeepHistoryMaintainer:
         temp = path.with_suffix(path.suffix + ".tmp")
         temp.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
         temp.replace(path)
+
+    def _summarize_dangling_group(self, group: list[dict]) -> dict:
+        if not group:
+            raise ValueError("dangling recovery group must not be empty")
+        primary = min(group, key=lambda item: (int(item.get("task_depth") or 0), item.get("started_at"), item.get("task_id")))
+        payload = []
+        for item in group:
+            payload.append({
+                "task_id": item["task_id"], "status": item["status"], "title": item["title"],
+                "request": item.get("original_request", ""), "task_kind": item.get("task_kind", "root"),
+                "parent_task_id": item.get("parent_task_id", ""), "parent_step_id": item.get("parent_step_id", ""),
+                "task_depth": item.get("task_depth", 0), "latest_summary": item.get("terminal_summary", "")[:4000],
+                "effectiveness_note": item.get("effectiveness_note", "")[:1200],
+                "steps": item.get("steps", [])[:20], "evidence": item.get("evidence", [])[:12],
+                "recovery_notes": item.get("recovery_notes", [])[:12],
+            })
+        prompt = (
+            "This Norm task tree is stale recovery state: PostgreSQL still marks work nonterminal, but no live Redis queue entry remains and the tree has exceeded the configured stale threshold. "
+            "Create one compact salvage record before the stale task rows are deleted. Outcome: preserve what the original user was trying to accomplish and the most useful work/results already established; explicitly say the task was recovered from dangling state rather than pretending it completed normally. "
+            "Lessons: preserve reusable technical findings, constraints, artifact pointers, and recovery lessons from the task and recovery notes. Future_note: say how a future attempt should resume or avoid repeating completed work. "
+            "Ignore routine verifier chatter and transient execution narration. Do not invent completion. Return only the structured JSON required by the schema.\n\nDANGLING TASK TREE:\n"
+            + json.dumps(payload, ensure_ascii=False, default=str)
+        )
+        raw = self.client.generate(prompt, think=False, temperature=0.0, num_predict=1800, response_format=self._archive_schema())
+        parsed = self.client.parse_json(raw)
+        if not all(str(parsed.get(key) or "").strip() for key in ("outcome", "lessons", "future_note")):
+            raise ValueError("dangling recovery summary contained blank required fields")
+        request = str(primary.get("original_request") or "").strip() or f"Recovered dangling task: {primary.get('title') or primary['task_id']}"
+        return {
+            "primary_task_id": primary["task_id"], "task_date": primary["started_at"].date(),
+            "title": str(primary.get("title") or "Recovered dangling task"), "status": "failed",
+            "original_request": request, "outcome": str(parsed["outcome"]).strip(),
+            "lessons": str(parsed["lessons"]).strip(), "future_note": str(parsed["future_note"]).strip(),
+            "source_task_ids": [item["task_id"] for item in group],
+            "task_kind": str(primary.get("task_kind") or "root"),
+            "parent_task_id": str(primary.get("parent_task_id") or ""),
+            "parent_step_id": str(primary.get("parent_step_id") or ""),
+            "task_depth": int(primary.get("task_depth") or 0),
+        }
+
+    def cleanup_recovery_state(self) -> dict:
+        """Prune recovery plumbing that no longer protects live work.
+
+        Terminal verified trees lose only their recovery notes. Truly stale nonterminal
+        trees are compacted into replay-validated task_history before the task rows are
+        removed. Suppressed or queued trees are never treated as dangling.
+        """
+        stale_hours = max(1, int(self.config.get("recovery_stale_hours", 24)))
+        max_trees = max(1, int(self.config.get("recovery_cleanup_max_trees", 20)))
+        active_ids = self.queue.task_ids() if self.queue is not None else set()
+        note_task_ids = self.durable.recovery_note_task_ids()
+        roots: list[str] = []
+        seen: set[str] = set()
+        for task_id in note_task_ids:
+            root = self.durable.root_task_id(task_id) or task_id
+            if root not in seen:
+                seen.add(root)
+                roots.append(root)
+        # Do not restrict dangling cleanup to trees that happened to create a
+        # recovery note. A nonterminal root with no Redis membership can be just
+        # as stale after a crash or interrupted migration.
+        for task_id in self.durable.nonterminal_root_task_ids(limit=max_trees * 10):
+            root = self.durable.root_task_id(task_id) or task_id
+            if root not in seen:
+                seen.add(root)
+                roots.append(root)
+        terminal_note_task_ids: set[str] = set()
+        superseded_descendants_deleted = 0
+        dangling_archived = 0
+        dangling_deleted = 0
+        replay_failed = 0
+        skipped_live = 0
+        skipped_due_limit = 0
+        dangling_considered = 0
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=stale_hours)
+        terminal = {"completed", "failed", "cancelled"}
+        for root in roots:
+            tree = self.durable.task_tree(root)
+            if not tree:
+                continue
+            tree_ids = {item["task_id"] for item in tree}
+            statuses = {str(item.get("status") or "") for item in tree}
+            root_row = next((item for item in tree if item.get("task_id") == root), tree[0])
+            root_status = str(root_row.get("status") or "")
+            if root_status in terminal and self.durable.terminal_summary_verified(root):
+                # A verified terminal root supersedes unfinished recovery/child plumbing.
+                # Keep the authoritative root result; remove descendant work that can
+                # no longer affect it and delete all recovery handoff notes for the tree.
+                superseded = [
+                    item["task_id"] for item in tree
+                    if item["task_id"] != root and str(item.get("status") or "") not in terminal
+                ]
+                if superseded:
+                    superseded_descendants_deleted += self.durable.delete_superseded_descendants(root, superseded)
+                terminal_note_task_ids.update(tree_ids)
+                continue
+            if statuses and statuses.issubset(terminal):
+                if all(self.durable.terminal_summary_verified(task_id) for task_id in tree_ids):
+                    terminal_note_task_ids.update(tree_ids)
+                continue
+            if tree_ids & active_ids or "suppressed" in statuses:
+                skipped_live += 1
+                continue
+            nonterminal = [item for item in tree if str(item.get("status") or "") not in terminal]
+            if not nonterminal:
+                continue
+            if any(item.get("updated_at") is None or item["updated_at"] > cutoff for item in nonterminal):
+                continue
+            if dangling_considered >= max_trees:
+                skipped_due_limit += 1
+                continue
+            dangling_considered += 1
+            group = self.durable.recovery_group_snapshot(root)
+            if not group:
+                continue
+            try:
+                record = self._summarize_dangling_group(group)
+                primary_ids = self.durable.upsert_task_history([record], validated=False)
+                passed, verdict, replay = self._replay_one(record)
+                if not passed:
+                    replay_failed += 1
+                    self.durable.record_maintenance_note(
+                        "recovery_state_cleanup",
+                        "Dangling recovery task was summarized but replay validation failed; raw task state was preserved.",
+                        task_id=root,
+                        details={"status": "replay_failed", "verdict": verdict, "replay": replay[:1600]},
+                    )
+                    continue
+                self.durable.mark_task_history_validated(primary_ids)
+                deleted = self.durable.delete_validated_archived_tasks(record["source_task_ids"])
+                dangling_archived += 1
+                dangling_deleted += deleted
+            except Exception as exc:
+                replay_failed += 1
+                self.durable.record_maintenance_note(
+                    "recovery_state_cleanup",
+                    "Dangling recovery cleanup failed; raw task state was preserved.",
+                    task_id=root,
+                    details={"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:1200]},
+                )
+        terminal_notes_deleted = self.durable.delete_recovery_notes(sorted(terminal_note_task_ids))
+        orphan_archives = self.durable.delete_orphan_task_archives()
+        return {
+            "status": "success", "stale_hours": stale_hours, "trees_checked": len(roots),
+            "terminal_notes_deleted": terminal_notes_deleted, "superseded_descendants_deleted": superseded_descendants_deleted,
+            "dangling_trees_considered": dangling_considered,
+            "dangling_trees_archived": dangling_archived, "dangling_tasks_deleted": dangling_deleted,
+            "replay_failed": replay_failed, "skipped_live_or_suppressed": skipped_live,
+            "skipped_due_limit": skipped_due_limit, "orphan_archives_deleted": orphan_archives,
+        }
 
     def rebuild_background_snapshot(self, *, incremental: bool = False) -> str:
         all_records = self.durable.background_memory_source()

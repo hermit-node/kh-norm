@@ -1,6 +1,6 @@
 # Norm
 
-**Norm 0.53.5** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
+**Norm 0.53.6** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
 
 ## Canonical layout
 
@@ -33,13 +33,19 @@ The installer treats `.venv`, `.ssh`, `plugins`, `logs`, and `state` as persiste
 
 ## Tool and plugin model
 
-The runtime lock includes `cryptography 46.0.4`/`cffi 2.0.0`, and `tools\build_norm.py` explicitly collects those packages into the one-file executable so dynamic plugins can use ChaCha20-Poly1305 from the frozen process.
+The runtime lock includes `cryptography 50.0.2`/`cffi 2.0.0`, and `tools\build_norm.py` explicitly collects those packages into the one-file executable so dynamic plugins can use ChaCha20-Poly1305 from the frozen process.
 
 `core\norm_runtime\plugin_manager.py` automatically rescans `C:\Norm\plugins` before native tool schema use/dispatch. Public functions in non-underscore Python files become namespaced native tools; helper files/functions beginning with `_` stay private. Multi-file plugins and sibling imports are supported. If a changed plugin fails to load, the last-known-good hydrated version remains active and `.registry.json` records the refresh error.
 
 First-party plugins currently ship under `plugins\backup`, `plugins\verbatim_lines`, `plugins\stegosplit_key`, `plugins\stegosplit_message`, and `plugins\rotor5_cipher`. The StegoSplit plugins bundle their Python implementation so a `.venv` rebuild no longer depends on an external editable checkout. `stegosplit_message` is the two-image authenticated carrier; `rotor5_cipher` is an independent optional pre-encoding layer; `stegosplit_key` remains the password/map-key protected 256-bit key prototype.
 
 The backup plugin supports two package types. `/backup` creates a portable installer/source ZIP without private state. `/backup full` creates a sensitive full-state ZIP containing source/runtime, docs, all plugins, `.ssh`, configured secrets, external workspace, selected recovery/log/state, PostgreSQL, and environment rebuild metadata. `.venv` itself is intentionally omitted. Older backup aliases remain accepted for compatibility but are not advertised in help.
+
+## Recovery-state hygiene and work provenance
+
+The weekly maintenance cycle and manual `/memory-condense` / `/memory-condense -full` passes first clean recovery plumbing. Fully terminal verified trees lose obsolete recovery notes. Stale nonterminal trees are never deleted merely because they are old: Norm requires no live Redis membership and no suppression, summarizes the surviving task/recovery state into compact `task_history`, replay-validates that compact record, and only then prunes the stale task tree. Orphan archive rows are removed only when validated history already covers them.
+
+Queued work keeps its existing first-class `request_type` and `prompt_origin`. Only real prompt-interface input is treated as user-authored. Planner steps, child tasks, recovery work, verification, and maintenance are explicitly labelled as Norm-internal instructions in model envelopes, while `original_user_prompt` remains the immutable user request carried through descendants.
 
 ## External workspace and temp policy
 
@@ -53,7 +59,7 @@ The GUI recognizes `help`/`/help`, `/about`, `/status`, `/status/busy`, `/queue-
 
 ## Build/update
 
-`tools\build_norm.py` is the repeatable PyInstaller path. Its analysis cache is reusable under `state\build-cache\pyinstaller`; use `--clean` only for an explicit cold rebuild. `package-manifest.json` defines the reusable installer contract. Normal updates should use the reusable Norm installer rather than deleting `C:\Norm`: it mirrors package-owned source files, preserves local/persistent state, reuses the venv when compatible, installs only missing/changed dependencies, and optionally rebuilds `core\norm.exe`. Installer 1.4.12 binds one exact source payload by filename and SHA-256. Its builder reads this package's requirements lock and can create a derived payload using either the locked version or the newest eligible stable/release-candidate version for each package; alpha, beta, and dev builds are excluded. The package schema remains 1.
+`tools\build_norm.py` is the repeatable PyInstaller path. Its analysis cache is reusable under `state\build-cache\pyinstaller`; use `--clean` only for an explicit cold rebuild. `package-manifest.json` defines the reusable installer contract. Normal updates should use the reusable Norm installer rather than deleting `C:\Norm`: it mirrors package-owned source files, preserves local/persistent state, reuses the venv when compatible, installs only missing/changed dependencies, and optionally rebuilds `core\norm.exe`. Installer 1.4.14 binds one exact source payload by filename and SHA-256. Its builder reads this package's requirements lock and can create a derived payload using either the locked version or the newest eligible stable/release-candidate version for each package; alpha, beta, and dev builds are excluded. The package schema remains 1.
 
 ## Documentation
 

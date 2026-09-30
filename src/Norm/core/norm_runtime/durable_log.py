@@ -374,6 +374,19 @@ class PostgresTaskLog:
             cur.execute(sql.SQL("INSERT INTO {}.task_dependency_edges(edge_id,source_task_uuid,source_node_id,target_task_uuid,target_node_id,edge_type,metadata) VALUES (%s::uuid,%s::uuid,%s::uuid,%s::uuid,%s::uuid,%s,%s)").format(sql.Identifier(self.schema)), (eid,su,sn,tu,tn,str(edge_type),Jsonb(metadata or {})))
             return eid
 
+    def nonterminal_root_task_ids(self, limit: int = 1000) -> list[str]:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                SELECT tr.task_id
+                FROM {}.task_runs tr
+                LEFT JOIN {}.task_runs parent ON parent.task_id=tr.parent_task_id
+                WHERE tr.status NOT IN ('completed','failed','cancelled','suppressed')
+                  AND (tr.parent_task_id IS NULL OR parent.task_id IS NULL)
+                ORDER BY tr.updated_at ASC
+                LIMIT %s
+            """).format(sql.Identifier(self.schema), sql.Identifier(self.schema)), (max(1, int(limit)),))
+            return [str(row[0]) for row in cur.fetchall()]
+
     def running_tasks(self, limit: int = 20) -> list[dict]:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(sql.SQL("""
@@ -433,23 +446,23 @@ class PostgresTaskLog:
             return []
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(sql.SQL("""
-                WITH RECURSIVE tree(task_id,status,task_kind,parent_task_id,parent_step_id,task_depth,started_at,path) AS (
-                    SELECT task_id,status,task_kind,parent_task_id,parent_step_id,task_depth,started_at,ARRAY[task_id]
+                WITH RECURSIVE tree(task_id,status,task_kind,parent_task_id,parent_step_id,task_depth,started_at,updated_at,path) AS (
+                    SELECT task_id,status,task_kind,parent_task_id,parent_step_id,task_depth,started_at,updated_at,ARRAY[task_id]
                     FROM {}.task_runs WHERE task_id=%s
                     UNION ALL
-                    SELECT c.task_id,c.status,c.task_kind,c.parent_task_id,c.parent_step_id,c.task_depth,c.started_at,t.path || c.task_id
+                    SELECT c.task_id,c.status,c.task_kind,c.parent_task_id,c.parent_step_id,c.task_depth,c.started_at,c.updated_at,t.path || c.task_id
                     FROM {}.task_runs c
                     JOIN tree t ON c.parent_task_id=t.task_id
                     WHERE NOT c.task_id = ANY(t.path)
                 )
-                SELECT task_id,status,task_kind,parent_task_id,parent_step_id,task_depth
+                SELECT task_id,status,task_kind,parent_task_id,parent_step_id,task_depth,updated_at
                 FROM tree ORDER BY task_depth ASC, started_at ASC, task_id ASC
             """).format(sql.Identifier(self.schema), sql.Identifier(self.schema)), (root_task_id,))
             rows = cur.fetchall()
         return [{
             "task_id": str(row[0]), "status": str(row[1]), "task_kind": str(row[2] or "root"),
             "parent_task_id": str(row[3] or ""), "parent_step_id": str(row[4] or ""),
-            "task_depth": int(row[5] or 0),
+            "task_depth": int(row[5] or 0), "updated_at": row[6],
         } for row in rows]
 
     def suppress_task_tree(self, root_task_id: str, task_ids: list[str], reason: str, resume_payload: dict) -> dict:
@@ -777,6 +790,136 @@ class PostgresTaskLog:
             ), (task_id, step_id))
             row = cur.fetchone()
         return str(row[0] or "") if row else ""
+
+    def recovery_note_task_ids(self) -> list[str]:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("SELECT DISTINCT task_id FROM {}.task_recovery_notes ORDER BY task_id").format(
+                sql.Identifier(self.schema)
+            ))
+            return [str(row[0]) for row in cur.fetchall()]
+
+    def delete_recovery_notes(self, task_ids: list[str]) -> int:
+        task_ids = [str(value) for value in dict.fromkeys(task_ids) if str(value or "").strip()]
+        if not task_ids:
+            return 0
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("DELETE FROM {}.task_recovery_notes WHERE task_id=ANY(%s)").format(
+                sql.Identifier(self.schema)
+            ), (task_ids,))
+            return int(cur.rowcount or 0)
+
+    def recovery_group_snapshot(self, root_task_id: str) -> list[dict]:
+        root_task_id = str(root_task_id or "").strip()
+        if not root_task_id:
+            return []
+        with self._connect() as conn, conn.cursor() as cur:
+            s = sql.Identifier(self.schema)
+            cur.execute(sql.SQL("""
+                WITH RECURSIVE tree(task_id,path) AS (
+                    SELECT task_id,ARRAY[task_id] FROM {}.task_runs WHERE task_id=%s
+                    UNION ALL
+                    SELECT c.task_id,t.path || c.task_id
+                    FROM {}.task_runs c JOIN tree t ON c.parent_task_id=t.task_id
+                    WHERE NOT c.task_id = ANY(t.path)
+                )
+                SELECT tr.task_id,tr.title,tr.status,tr.plan,tr.started_at,tr.updated_at,tr.effectiveness_note,
+                       tr.task_kind,tr.parent_task_id,tr.parent_step_id,tr.task_depth,
+                       (SELECT ts.summary FROM {}.task_summaries ts WHERE ts.task_id=tr.task_id ORDER BY ts.created_at DESC LIMIT 1)
+                FROM {}.task_runs tr JOIN tree ON tree.task_id=tr.task_id
+                ORDER BY tr.task_depth,tr.started_at,tr.task_id
+            """).format(s, s, s, s), (root_task_id,))
+            task_rows = cur.fetchall()
+            task_ids = [str(row[0]) for row in task_rows]
+            if not task_ids:
+                return []
+            cur.execute(sql.SQL("SELECT task_id,step_id,name,status,summary,error FROM {}.task_steps WHERE task_id=ANY(%s) ORDER BY task_id,completed_at").format(s), (task_ids,))
+            step_rows = cur.fetchall()
+            cur.execute(sql.SQL("SELECT task_id,step_id,tool,result FROM {}.task_evidence WHERE task_id=ANY(%s) ORDER BY task_id,id").format(s), (task_ids,))
+            evidence_rows = cur.fetchall()
+            cur.execute(sql.SQL("SELECT task_id,step_id,scope_items,note,updated_at FROM {}.task_recovery_notes WHERE task_id=ANY(%s) ORDER BY task_id,updated_at").format(s), (task_ids,))
+            recovery_rows = cur.fetchall()
+        steps: dict[str, list[dict]] = {}
+        for task_id, step_id, name, status, summary, error in step_rows:
+            steps.setdefault(str(task_id), []).append({
+                "step_id": str(step_id), "name": str(name), "status": str(status),
+                "summary": str(summary or "")[:1800], "error": str(error or "")[:800],
+            })
+        evidence: dict[str, list[dict]] = {}
+        for task_id, step_id, tool, result in evidence_rows:
+            bucket = evidence.setdefault(str(task_id), [])
+            if len(bucket) >= 12:
+                continue
+            bucket.append({
+                "step_id": str(step_id), "tool": str(tool),
+                "result": json.dumps(result or {}, ensure_ascii=False)[:1200],
+            })
+        recovery: dict[str, list[dict]] = {}
+        for task_id, step_id, scope_items, note, updated_at in recovery_rows:
+            recovery.setdefault(str(task_id), []).append({
+                "step_id": str(step_id), "scope_items": list(scope_items or []),
+                "note": str(note or "")[:5000], "updated_at": updated_at,
+            })
+        out: list[dict] = []
+        for task_id, title, status, plan, started_at, updated_at, effectiveness_note, task_kind, parent_task_id, parent_step_id, task_depth, summary in task_rows:
+            plan_data = plan if isinstance(plan, dict) else {}
+            out.append({
+                "task_id": str(task_id), "title": str(title), "status": str(status),
+                "task_kind": str(task_kind or "root"), "parent_task_id": str(parent_task_id or ""),
+                "parent_step_id": str(parent_step_id or ""), "task_depth": int(task_depth or 0),
+                "plan": plan_data, "original_request": self._original_request_from_plan(plan_data),
+                "started_at": started_at, "updated_at": updated_at,
+                "terminal_summary": str(summary or ""), "effectiveness_note": str(effectiveness_note or ""),
+                "steps": steps.get(str(task_id), []), "evidence": evidence.get(str(task_id), []),
+                "recovery_notes": recovery.get(str(task_id), []),
+            })
+        return out
+
+    def delete_orphan_task_archives(self) -> dict[str, int]:
+        result: dict[str, int] = {}
+        with self._connect() as conn, conn.cursor() as cur:
+            s = sql.Identifier(self.schema)
+            for table in ("task_evidence_archive", "task_step_archive"):
+                cur.execute("SELECT to_regclass(%s)", (f"{self.schema}.{table}",))
+                row = cur.fetchone()
+                if not row or row[0] is None:
+                    result[f"{table}_deleted"] = 0
+                    result[f"{table}_preserved_uncovered"] = 0
+                    continue
+                cur.execute(
+                    "SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=%s AND table_name=%s AND column_name='task_id')",
+                    (self.schema, table),
+                )
+                if not bool(cur.fetchone()[0]):
+                    result[f"{table}_deleted"] = 0
+                    result[f"{table}_preserved_uncovered"] = 0
+                    continue
+                cur.execute(sql.SQL("""
+                    DELETE FROM {}.{} a
+                    WHERE NOT EXISTS (SELECT 1 FROM {}.task_runs tr WHERE tr.task_id=a.task_id)
+                      AND EXISTS (
+                          SELECT 1 FROM {}.task_history h
+                          WHERE h.validated=true
+                            AND (h.primary_task_id=a.task_id OR EXISTS (
+                                SELECT 1 FROM jsonb_array_elements_text(h.source_task_ids) src(task_id)
+                                WHERE src.task_id=a.task_id
+                            ))
+                      )
+                """).format(s, sql.Identifier(table), s, s))
+                result[f"{table}_deleted"] = int(cur.rowcount or 0)
+                cur.execute(sql.SQL("""
+                    SELECT COUNT(*) FROM {}.{} a
+                    WHERE NOT EXISTS (SELECT 1 FROM {}.task_runs tr WHERE tr.task_id=a.task_id)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM {}.task_history h
+                          WHERE h.validated=true
+                            AND (h.primary_task_id=a.task_id OR EXISTS (
+                                SELECT 1 FROM jsonb_array_elements_text(h.source_task_ids) src(task_id)
+                                WHERE src.task_id=a.task_id
+                            ))
+                      )
+                """).format(s, sql.Identifier(table), s, s))
+                result[f"{table}_preserved_uncovered"] = int(cur.fetchone()[0] or 0)
+        return result
 
     def compact_task_evidence(self, task_id: str, max_result_chars: int = 2400) -> dict:
         archived = 0
@@ -1279,6 +1422,24 @@ class PostgresTaskLog:
             cur.execute(sql.SQL("UPDATE {}.task_history SET validated=true, archived_at=now() WHERE primary_task_id=ANY(%s)").format(
                 sql.Identifier(self.schema)
             ), (primary_task_ids,))
+
+    def delete_superseded_descendants(self, root_task_id: str, task_ids: list[str]) -> int:
+        root_task_id = str(root_task_id or "").strip()
+        task_ids = [str(v) for v in dict.fromkeys(task_ids) if str(v or "").strip() and str(v) != root_task_id]
+        if not root_task_id or not task_ids:
+            return 0
+        if self.task_status(root_task_id) not in {"completed", "failed", "cancelled"}:
+            raise RuntimeError("refusing to prune descendants of a nonterminal root")
+        if not self.terminal_summary_verified(root_task_id):
+            raise RuntimeError("refusing to prune descendants before root terminal summary verification")
+        tree_ids = {item["task_id"] for item in self.task_tree(root_task_id)}
+        invalid = sorted(set(task_ids) - tree_ids)
+        if invalid:
+            raise RuntimeError(f"refusing to prune tasks outside terminal root tree: {invalid[:5]}")
+        with self._connect() as conn, conn.cursor() as cur:
+            prepare_task_prune_cur(cur, self.schema, task_ids)
+            cur.execute(sql.SQL("DELETE FROM {}.task_runs WHERE task_id=ANY(%s)").format(sql.Identifier(self.schema)), (task_ids,))
+            return int(cur.rowcount or 0)
 
     def delete_validated_archived_tasks(self, task_ids: list[str]) -> int:
         task_ids = [str(v) for v in dict.fromkeys(task_ids)]

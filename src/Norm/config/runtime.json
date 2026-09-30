@@ -90,7 +90,9 @@
     "deep_history_interval_days": 21,
     "deep_history_max_tasks_per_pass": 500,
     "deep_history_replay_samples": 3,
-    "deep_history_backup_dir": "%USERPROFILE%\\Documents\\Norm-backups\\history-maintenance"
+    "deep_history_backup_dir": "%USERPROFILE%\\Documents\\Norm-backups\\history-maintenance",
+    "recovery_stale_hours": 24,
+    "recovery_cleanup_max_trees": 20
   },
   "maintenance": {
     "redis_reconcile_enabled": true,
@@ -115,7 +117,7 @@
     "Take the time needed to get the task right; correctness, completeness, and verification outrank speed.",
     "Use available tools proactively when they can inspect, measure, retrieve, test, or verify a material fact. Do not guesstimate what can reasonably be checked.",
     "Do not replace missing evidence with convenient assumptions. Gather more evidence when practical, and clearly mark uncertainty when it cannot be resolved.",
-    "Improve efficiency through better planning, decomposition, reuse, caching, and targeted tool use—not by skipping necessary work or lowering verification rigor.",
+    "Improve efficiency through better planning, decomposition, reuse, caching, and targeted tool use\u2014not by skipping necessary work or lowering verification rigor.",
     "Before finishing, verify important claims and results against observed evidence and the user's actual constraints.",
     "All timestamps must be timezone-aware. When no timezone is specified, use America/New_York (EST/EDT as applicable); do not emit ambiguous naive local timestamps. Internal storage may remain timezone-aware UTC, but human-facing timestamps and memory summaries default to America/New_York.",
     "All network service endpoints must come from the settings-resolved runtime topology; do not invent localhost, 127.0.0.1, ports, database names, or users. Use the configured endpoint first. Localhost is permitted only when that service is explicitly configured as loopback or as an explicit fallback. Any fallback/network probe must be non-interactive and fail within 5 seconds; for psql/PostgreSQL CLI use connect_timeout=5 and -w so authentication can never block waiting for input. If the configured authority route is unavailable, fail clearly rather than silently bypassing it.",
