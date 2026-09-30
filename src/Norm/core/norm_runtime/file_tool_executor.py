@@ -21,6 +21,7 @@ from .deletion_queue import RedisDeletionQueue
 from .resource_status import full_context_status, impaired_context_status
 from .storage_context import StorageContext
 from .plugin_manager import PluginManager
+from .task_storage import TaskStorageLimitReached, TaskStorageManager
 
 
 class StagedWriteError(PermissionError):
@@ -43,6 +44,7 @@ class FileToolExecutor:
         "vision_image",
         "check_connection",
         "run_command",
+        "append_task_note",
     }
 
     def __init__(
@@ -51,8 +53,9 @@ class FileToolExecutor:
         *,
         backup_root: str,
         audit_log: str,
-        max_read_bytes: int = 262_144,
-        max_write_bytes: int = 1_048_576,
+        max_read_bytes: int = 25_165_824,
+        max_tool_return_bytes: int = 393_216,
+        max_write_bytes: int = 5_242_880,
         blocked_write_staging_root: str | None = None,
         write_retry_count: int = 3,
         write_retry_delay_seconds: float = 0.25,
@@ -73,14 +76,20 @@ class FileToolExecutor:
         verbatim_helper: str | None = None,
         plugin_root: str | None = None,
         plugin_registry_file: str | None = None,
+        temp_root: str | None = None,
+        workspace_root: str | None = None,
+        task_storage_config: dict[str, Any] | None = None,
     ) -> None:
         if not allowed_roots:
             raise ValueError("at least one file-tool root is required")
         self.allowed_roots = tuple(Path(item).resolve() for item in allowed_roots)
         self.backup_root = Path(backup_root).resolve()
         self.audit_log = Path(audit_log).resolve()
-        self.max_read_bytes = int(max_read_bytes)
+        # max_read_bytes is now a processing-buffer size, not a source-file ceiling.
+        self.max_read_bytes = max(1_048_576, int(max_read_bytes))
+        self.max_tool_return_bytes = max(16_384, int(max_tool_return_bytes))
         self.max_write_bytes = int(max_write_bytes)
+        self._hash_cache: dict[tuple[str, int, int], str] = {}
         default_stage = self.backup_root.parent.parent / "docs" / "blocked-writes"
         self.blocked_write_staging_root = Path(blocked_write_staging_root).resolve() if blocked_write_staging_root else default_stage.resolve()
         self.write_retry_count = max(0, int(write_retry_count))
@@ -101,6 +110,10 @@ class FileToolExecutor:
         self.shell_max_output_chars = max(1000, int(shell_max_output_chars))
         self.verbatim_helper = Path(verbatim_helper).resolve() if verbatim_helper else None
         self.plugin_manager = PluginManager(plugin_root, plugin_registry_file) if plugin_root else None
+        self.task_storage = (
+            TaskStorageManager(temp_root, workspace_root, task_storage_config)
+            if temp_root and workspace_root else None
+        )
         self._storage_context_for_call: dict[str, Any] | None = None
         defaults = {
             "light": {"target_seconds": 300, "max_seconds": 480},
@@ -149,7 +162,8 @@ class FileToolExecutor:
             "Never dump .env or credential files. Load credentials internally and pass them through process environment variables; never echo literal secrets.\n"
             "Available tools:\n"
             "- list_directory(path): bounded directory listing.\n"
-            "- read_file(path, start_line?, end_line?): returns text and sha256.\n"
+            "- read_file(path, start_line?, end_line?, start_byte?, max_bytes?): streams UTF-8 text from arbitrarily large source files; results are bounded and return continuation cursors plus sha256.\n"
+            "- append_task_note(content, category?): append durable internal Markdown notes in automatically rotated <=5 MiB chunks for the active task.\n"
             "- make_directory(path): creates a directory inside an allowed root.\n"
             "- write_file(path, content, expected_sha256?): creates a UTF-8 file; existing files "
             "require the sha256 returned by read_file.\n"
@@ -192,13 +206,25 @@ class FileToolExecutor:
             ),
             tool(
                 "read_file",
-                "Read bounded UTF-8 text and return its observed SHA-256 hash.",
+                "Stream bounded UTF-8 text from an arbitrarily large source file and return continuation cursors plus its observed SHA-256 hash. Source size is not the response limit.",
                 {
                     "path": path,
-                    "start_line": {"type": "integer"},
-                    "end_line": {"type": "integer"},
+                    "start_line": {"type": "integer", "minimum": 1},
+                    "end_line": {"type": "integer", "minimum": 1},
+                    "start_byte": {"type": "integer", "minimum": 0},
+                    "max_bytes": {"type": "integer", "minimum": 1024},
+                    "include_sha256": {"type": "boolean", "description": "Force a full-file SHA-256 scan. Large sources omit it by default to preserve streaming behavior."},
                 },
                 ["path"],
+            ),
+            tool(
+                "append_task_note",
+                "Append internal Markdown notes for the active task. Notes automatically rotate before 5 MiB per physical file and are suitable for durable extraction/summary chunks.",
+                {
+                    "content": {"type": "string"},
+                    "category": {"type": "string"},
+                },
+                ["content"],
             ),
             tool(
                 "make_directory",
@@ -277,6 +303,10 @@ class FileToolExecutor:
             schemas.extend(self.plugin_manager.schemas())
         return schemas
 
+    def set_task_context(self, task_id: str | None, step_id: str | None = None) -> None:
+        if self.task_storage is not None:
+            self.task_storage.bind(task_id, step_id)
+
     def _require_authority(self) -> None:
         if not bool(self.authority_config.get("required", False)):
             return
@@ -304,6 +334,16 @@ class FileToolExecutor:
             else:
                 raise ValueError(f"unsupported tool: {name}; deletion is not available")
             result.update({"ok": True, "tool": name})
+        except TaskStorageLimitReached as exc:
+            result = {
+                "ok": False,
+                "tool": name,
+                "error": f"{type(exc).__name__}: {exc}",
+                "park_required": True,
+                "park_reason": "task_storage_limit",
+                "checkpoint_zip": exc.checkpoint_zip,
+                "task_storage": {"used_bytes": exc.used_bytes, "limit_bytes": exc.limit_bytes, "full": True},
+            }
         except StagedWriteError as exc:
             result = {
                 "ok": False,
@@ -431,13 +471,22 @@ class FileToolExecutor:
                 return {"target": target, "configured": True, "queried": True, "responsive": False, "error": f"{type(exc).__name__}: {exc}"}
         raise ValueError("unknown connection target")
 
-    @staticmethod
-    def _sha256(path: Path) -> str:
+    def _sha256(self, path: Path) -> str:
+        stat = path.stat()
+        key = (str(path), int(stat.st_size), int(stat.st_mtime_ns))
+        cached = self._hash_cache.get(key)
+        if cached:
+            return cached
         digest = hashlib.sha256()
-        with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(131_072), b""):
+        with path.open("rb", buffering=self.max_read_bytes) as handle:
+            for chunk in iter(lambda: handle.read(self.max_read_bytes), b""):
                 digest.update(chunk)
-        return digest.hexdigest()
+        value = digest.hexdigest()
+        # Keep cache bounded and invalidate naturally on size/mtime changes.
+        if len(self._hash_cache) > 128:
+            self._hash_cache.clear()
+        self._hash_cache[key] = value
+        return value
 
     def _list_directory(self, arguments: dict[str, Any]) -> dict[str, Any]:
         path = self._resolve(arguments.get("path", "."))
@@ -460,23 +509,133 @@ class FileToolExecutor:
             raise PermissionError("Secret files must be loaded internally; raw reads are disabled")
         if not path.is_file():
             raise FileNotFoundError(path)
-        size = path.stat().st_size
-        if size > self.max_read_bytes:
-            raise ValueError(f"file exceeds read limit ({size} > {self.max_read_bytes} bytes)")
-        text = path.read_text(encoding="utf-8")
-        lines = text.splitlines(keepends=True)
-        start = max(1, int(arguments.get("start_line", 1)))
-        end = min(len(lines), int(arguments.get("end_line", min(len(lines), start + 999))))
-        if end < start:
+
+        stat = path.stat()
+        size = int(stat.st_size)
+        force_hash = bool(arguments.get("include_sha256", False))
+        sha = self._sha256(path) if (force_hash or size <= self.max_read_bytes) else None
+        source_fingerprint = hashlib.sha256(
+            f"{path}\0{size}\0{int(stat.st_mtime_ns)}".encode("utf-8", errors="surrogatepass")
+        ).hexdigest()
+        if self.task_storage is not None and self.task_storage.task_id:
+            self.task_storage.register_source(path, sha256=sha)
+
+        requested = int(arguments.get("max_bytes") or self.max_tool_return_bytes)
+        return_cap = max(1024, min(requested, self.max_tool_return_bytes))
+        start_byte_arg = arguments.get("start_byte")
+        start_line = max(1, int(arguments.get("start_line", 1)))
+        end_line_raw = arguments.get("end_line")
+        end_line = int(end_line_raw) if end_line_raw is not None else None
+        if end_line is not None and end_line < start_line:
             raise ValueError("end_line must be at or after start_line")
+
+        chunks: list[bytes] = []
+        returned = 0
+        lines_returned = 0
+        truncated = False
+        next_start_line: int | None = None
+        total_lines: int | None = None
+
+        with path.open("rb", buffering=self.max_read_bytes) as handle:
+            if start_byte_arg is not None:
+                requested_start_byte = max(0, int(start_byte_arg))
+                handle.seek(min(requested_start_byte, size))
+                effective_start_byte = handle.tell()
+                data = handle.read(min(return_cap, max(0, size - effective_start_byte)))
+                chunks.append(data)
+                returned = len(data)
+                next_byte = handle.tell()
+                truncated = next_byte < size
+                # Byte-cursor mode deliberately does not pretend to know source line numbers.
+                effective_start_line = None
+            else:
+                effective_start_byte = 0
+                current_line = 1
+                while current_line < start_line:
+                    line = handle.readline()
+                    if not line:
+                        break
+                    current_line += 1
+                effective_start_byte = handle.tell()
+                effective_start_line = current_line
+                while True:
+                    if end_line is not None and current_line > end_line:
+                        break
+                    line_start = handle.tell()
+                    line = handle.readline()
+                    if not line:
+                        break
+                    if returned and returned + len(line) > return_cap:
+                        handle.seek(line_start)
+                        truncated = True
+                        next_start_line = current_line
+                        break
+                    if not returned and len(line) > return_cap:
+                        line = line[:return_cap]
+                        handle.seek(line_start + len(line))
+                        truncated = True
+                    chunks.append(line)
+                    returned += len(line)
+                    lines_returned += 1
+                    current_line += 1
+                    if returned >= return_cap:
+                        truncated = handle.tell() < size
+                        if truncated:
+                            next_start_line = current_line
+                        break
+                next_byte = handle.tell()
+                if not truncated and next_byte < size and (end_line is None or current_line <= end_line):
+                    truncated = True
+                    next_start_line = current_line
+
+        raw = b"".join(chunks)
+        text = raw.decode("utf-8", errors="replace")
+        # Counting an entire gigantic source on every chunk defeats streaming. For files
+        # within one processing buffer, expose total_lines; otherwise leave it unknown.
+        if size <= self.max_read_bytes:
+            try:
+                with path.open("rb", buffering=self.max_read_bytes) as counter:
+                    total_lines = sum(1 for _ in counter)
+            except OSError:
+                total_lines = None
+
+        processing = {"park_required": False}
+        if self.task_storage is not None and self.task_storage.task_id:
+            processing = self.task_storage.add_processed_bytes(returned)
+
         return {
             "path": str(path),
-            "sha256": self._sha256(path),
+            "sha256": sha,
+            "source_fingerprint": source_fingerprint,
             "size": size,
-            "start_line": start,
-            "end_line": end,
-            "total_lines": len(lines),
-            "content": "".join(lines[start - 1:end]),
+            "source_size_bytes": size,
+            "source_size_limited": False,
+            "processing_buffer_bytes": self.max_read_bytes,
+            "max_return_bytes": self.max_tool_return_bytes,
+            "returned_bytes": returned,
+            "start_byte": int(effective_start_byte),
+            "next_byte": int(next_byte),
+            "start_line": effective_start_line,
+            "end_line": (effective_start_line + lines_returned - 1) if effective_start_line is not None and lines_returned else None,
+            "next_start_line": next_start_line,
+            "total_lines": total_lines,
+            "truncated": bool(truncated),
+            "content": text,
+            **processing,
+        }
+
+    def _append_task_note(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self.task_storage is None or not self.task_storage.task_id:
+            raise RuntimeError("append_task_note requires an active worker task context")
+        content = arguments.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("content must be a non-empty string")
+        category = str(arguments.get("category") or "notes").strip() or "notes"
+        path = self.task_storage.append_note(content, category=category)
+        return {
+            "path": str(path),
+            "bytes": len(content.encode("utf-8")),
+            "task_storage": self.task_storage.capacity(),
         }
 
     def _make_directory(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -499,8 +658,11 @@ class FileToolExecutor:
         path = self._resolve(arguments.get("path"))
         if not path.is_file():
             raise FileNotFoundError(path)
-        if path.stat().st_size > self.image_max_input_bytes:
-            raise ValueError(f"image exceeds input limit ({path.stat().st_size} > {self.image_max_input_bytes} bytes)")
+        # Source-file size is not a hard ceiling. Image decoding is handled by the
+        # analyzer; the configured image value is a processing-buffer hint only.
+        source_sha = self._sha256(path)
+        if self.task_storage is not None and self.task_storage.task_id:
+            self.task_storage.register_source(path, sha256=source_sha)
         if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
             raise ValueError(f"unsupported image extension: {path.suffix}")
         profile = str(arguments.get("profile") or "light").strip().lower()
@@ -508,7 +670,12 @@ class FileToolExecutor:
             raise ValueError("profile must be light, medium, or high")
         budget = self.image_profile_budgets[profile]
         stamp = time.strftime("%Y%m%d-%H%M%S")
-        output = self.image_output_root / f"{stamp}-{uuid.uuid4().hex[:8]}-{path.stem}-{profile}"
+        if self.task_storage is not None and self.task_storage.task_id:
+            self.task_storage.ensure_capacity()
+            output_base = self.task_storage.task_root / "assets" / "image-analysis"
+        else:
+            output_base = self.image_output_root
+        output = output_base / f"{stamp}-{uuid.uuid4().hex[:8]}-{path.stem}-{profile}"
         output.mkdir(parents=True, exist_ok=False)
         completed = subprocess.run(
             [str(self.image_python), str(self.image_analyzer_script), str(path), "--output", str(output), "--profile", profile],
@@ -531,6 +698,20 @@ class FileToolExecutor:
         result["path"] = str(path)
         result["output_dir"] = str(output)
         result["budget"] = budget
+        if self.task_storage is not None and self.task_storage.task_id:
+            self.task_storage.register_asset(
+                output, role="image_analysis_derivatives", source=path, reproducible=True,
+                recipe=f"image_analyzer profile={profile}", retention="reproducible_cache",
+            )
+            capacity = self.task_storage.capacity()
+            processing = self.task_storage.add_processed_bytes(path.stat().st_size)
+            result["task_storage"] = capacity
+            result.update(processing)
+            if capacity.get("full") and not result.get("park_required"):
+                checkpoint = self.task_storage.create_checkpoint_zip(reason="task_storage_limit")
+                result["park_required"] = True
+                result["checkpoint_zip"] = str(checkpoint)
+                result["park_reason"] = "task_storage_limit"
         return result
 
     def _vision_image(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -576,17 +757,32 @@ class FileToolExecutor:
             if not isinstance(expected, str) or expected.lower() != actual:
                 raise ValueError("existing file requires its current expected_sha256")
             self._backup(path, actual)
+        if self.task_storage is not None and self.task_storage.task_id:
+            try:
+                path.relative_to(self.task_storage.task_root)
+                self.task_storage.ensure_capacity(len(encoded))
+            except ValueError:
+                pass
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(f".{path.name}.normtmp-{uuid.uuid4().hex}")
         temporary.write_bytes(encoded)
         context = arguments.get("_write_context") if isinstance(arguments.get("_write_context"), dict) else {"operation": "write_file"}
         self._replace_with_retries(temporary, path, expected, context)
-        return {
+        result = {
             "path": str(path),
             "created": created,
             "bytes": len(encoded),
             "sha256": self._sha256(path),
         }
+        if self.task_storage is not None and self.task_storage.task_id:
+            try:
+                path.relative_to(self.task_storage.task_root)
+            except ValueError:
+                pass
+            else:
+                self.task_storage.register_asset(path, role="task_file", reproducible=False, retention="review")
+                result["task_storage"] = self.task_storage.capacity()
+        return result
 
     def _replace_text(self, arguments: dict[str, Any]) -> dict[str, Any]:
         path = self._resolve(arguments.get("path"))

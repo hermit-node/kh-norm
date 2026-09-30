@@ -60,6 +60,40 @@ class ConversationService:
         self.wait_timeout_seconds = max(1.0, float(wait_timeout_seconds))
         self.persistent_instructions = tuple(str(v).strip() for v in persistent_instructions if str(v).strip())
 
+    def _limit_human_reply(self, task_id: str, reply: str) -> str:
+        storage = getattr(self.file_tools, "task_storage", None) if self.file_tools is not None else None
+        limit = 384 * 1024
+        workspace = None
+        if storage is not None:
+            try:
+                limit = max(16_384, int(storage.config.get("human_output_bytes", limit)))
+                workspace = storage.workspace_root
+            except Exception:
+                workspace = None
+        encoded = str(reply).encode("utf-8")
+        if len(encoded) <= limit:
+            return str(reply)
+        artifact = None
+        if workspace is not None:
+            try:
+                outdir = workspace / "large-responses"
+                outdir.mkdir(parents=True, exist_ok=True)
+                artifact = outdir / f"{task_id}.md"
+                tmp = artifact.with_name(f".{artifact.name}.tmp")
+                tmp.write_text(str(reply), encoding="utf-8")
+                tmp.replace(artifact)
+            except Exception:
+                logging.exception("Could not persist oversized human reply artifact task=%s", task_id)
+                artifact = None
+        notice = (
+            "\n\n[Human-facing reply capped at 384 KiB. Full durable task summary remains in PostgreSQL"
+            + (f" and was written to {artifact}.]" if artifact else ".]")
+        )
+        notice_bytes = notice.encode("utf-8")
+        prefix_budget = max(0, limit - len(notice_bytes))
+        prefix = encoded[:prefix_budget].decode("utf-8", errors="ignore")
+        return prefix + notice
+
     def _persistent_instruction_text(self) -> str:
         return "\n".join(f"- {item}" for item in self.persistent_instructions)
 
@@ -117,6 +151,17 @@ class ConversationService:
             self.durable.resume_suppressed_tree(task_id, member_ids)
         else:
             self.durable.resume_suppressed_task(task_id)
+        # A manual resume starts a fresh large-source processing allowance while
+        # preserving lifetime byte accounting and the same task identity.
+        try:
+            storage = getattr(self.file_tools, "task_storage", None) if self.file_tools is not None else None
+            if storage is not None:
+                reset_ids = member_ids if member_ids else [task_id]
+                for reset_id in reset_ids:
+                    storage.bind(reset_id, None)
+                    storage.reset_pass()
+        except Exception:
+            logging.exception("Could not reset task processing-pass counter task=%s", task_id)
         try:
             restored = self.prompt_queue.restore_task_jobs(payload)
             if not restored:
@@ -1013,7 +1058,7 @@ class ConversationService:
                     if hasattr(self.durable, "task_resource_status")
                     else full_context_status()
                 )
-                return task_id, reply, merge_resource_status(resource_status, task_resource_status)
+                return task_id, self._limit_human_reply(task_id, reply), merge_resource_status(resource_status, task_resource_status)
             if status == "failed":
                 raise RuntimeError(f"queued task failed: {task_id}")
             if status == "cancelled":

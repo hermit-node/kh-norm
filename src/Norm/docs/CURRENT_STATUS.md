@@ -1,10 +1,10 @@
 # Norm current status
 
-Updated 2026-09-30 for the clean **0.53.6** portable source line.
+Updated 2026-09-30 for the clean **0.53.7** portable source line.
 
 ## Source/layout
 
-- Version: **0.53.6**.
+- Version: **0.53.7**.
 - Runtime root: `C:\Norm` (relocatable by installer); the installed absolute path is written to `config\settings.ini` `[paths].runtime_root`.
 - Runtime source/executable directory: `core\`; compiled executable target is `core\norm.exe`.
 - Maintained docs: `C:\Norm\docs`.
@@ -14,6 +14,14 @@ Updated 2026-09-30 for the clean **0.53.6** portable source line.
 - Durable generated workspace: `%USERPROFILE%\Documents\Norm\workspace`.
 - Disposable/recovery root: `%USERPROFILE%\Documents\Norm\temp`.
 - `.venv` is generated/reusable and is intentionally omitted from source and full backup ZIPs.
+
+## 0.53.7 large-source/task-storage contract
+
+Source files no longer have a Norm-imposed size ceiling. `read_file` streams arbitrarily large UTF-8 files through a 24 MiB processing buffer and returns at most 384 KiB per tool result, with `next_byte` / `next_start_line` continuation metadata. Full-file SHA-256 is automatic for sources within one processing buffer and optional for larger sources so reading the first chunk of a very large file does not first require hashing the entire object.
+
+Large-source work has three independent limits: 3 GiB processed per task pass, 54 GiB of Norm-owned task working storage, and 5 MiB per internal Markdown note file. Hitting the 3 GiB pass ceiling creates a continuation ZIP and parks the same task through the existing suppression/resume machinery; manual resume keeps the task identity and lifetime progress but resets the pass counter. The 54 GiB storage ceiling also checkpoints before refusing further task-local growth. Source files referenced outside task temp do not count as copied task storage.
+
+Terminal cleanup is lineage-aware. Task-local image-analysis variants and other reproducible cache are disposable once the terminal result verifies. Norm retains a compact manifest containing source identity, transformation recipes, and asset lineage plus internal Markdown extraction/summary notes under `workspace\.norm-task-retention\<task_id>`. Durable user-requested artifacts written outside task temp are not swept merely because a task ended. Human-facing replies are limited to 384 KiB while the full durable terminal summary remains available; oversized replies are additionally written under `workspace\large-responses`.
 
 ## 0.53.6 recovery-state cleanup and work-item provenance
 
@@ -63,7 +71,7 @@ Portable base/source ZIPs remain secrets-free and safe to treat separately from 
 
 ## Installer behavior
 
-The reusable installer performs an in-place managed sync. Changed package files are replaced and package-owned files no longer present are removed. Persistent local directories (`.venv`, `.ssh`, plugins, logs/state) survive normal base updates. Existing compatible venvs are reused. Recommended Installer 1.4.14 binds one exact source payload by filename and SHA-256 and can build a derived payload from locked or newest eligible stable/RC dependency versions. Alpha, beta, and dev releases are excluded. Full-backup packages additionally restore their private state payload.
+The reusable installer performs an in-place managed sync. Changed package files are replaced and package-owned files no longer present are removed. Persistent local directories (`.venv`, `.ssh`, plugins, logs/state) survive normal base updates. Existing compatible venvs are reused. Recommended Installer 1.4.15 binds one exact source payload by filename and SHA-256 and can build a derived payload from locked or newest eligible stable/RC dependency versions. Alpha, beta, and dev releases are excluded. Full-backup packages additionally restore their private state payload.
 
 ## Current validation boundary
 

@@ -38,15 +38,15 @@
     ],
     "backup_root": "{runtime_root}\\state\\file-backups",
     "audit_log": "{runtime_root}\\logs\\tool-audit.jsonl",
-    "max_read_bytes": 131072,
-    "max_write_bytes": 1048576,
+    "max_read_bytes": 25165824,
+    "max_write_bytes": 5242880,
     "max_rounds": 8,
     "write_retry_count": 3,
     "write_retry_delay_seconds": 0.25,
     "image_enabled": true,
     "image_python": "{runtime_root}\\.venv\\Scripts\\python.exe",
     "image_analyzer_script": "{runtime_root}\\tools\\image_analyzer_v3.py",
-    "image_max_input_bytes": 25000000,
+    "image_max_input_bytes": 100663296,
     "image_profile_budgets": {
       "light": {
         "target_seconds": 300,
@@ -71,7 +71,8 @@
     "shell_enabled": true,
     "shell_executable": "powershell.exe",
     "shell_timeout_seconds": 180,
-    "shell_max_output_chars": 20000
+    "shell_max_output_chars": 20000,
+    "max_tool_return_bytes": 393216
   },
   "postgres": {
     "schema": "norm_runtime"
@@ -117,7 +118,7 @@
     "Take the time needed to get the task right; correctness, completeness, and verification outrank speed.",
     "Use available tools proactively when they can inspect, measure, retrieve, test, or verify a material fact. Do not guesstimate what can reasonably be checked.",
     "Do not replace missing evidence with convenient assumptions. Gather more evidence when practical, and clearly mark uncertainty when it cannot be resolved.",
-    "Improve efficiency through better planning, decomposition, reuse, caching, and targeted tool use\u2014not by skipping necessary work or lowering verification rigor.",
+    "Improve efficiency through better planning, decomposition, reuse, caching, and targeted tool use—not by skipping necessary work or lowering verification rigor.",
     "Before finishing, verify important claims and results against observed evidence and the user's actual constraints.",
     "All timestamps must be timezone-aware. When no timezone is specified, use America/New_York (EST/EDT as applicable); do not emit ambiguous naive local timestamps. Internal storage may remain timezone-aware UTC, but human-facing timestamps and memory summaries default to America/New_York.",
     "All network service endpoints must come from the settings-resolved runtime topology; do not invent localhost, 127.0.0.1, ports, database names, or users. Use the configured endpoint first. Localhost is permitted only when that service is explicitly configured as loopback or as an explicit fallback. Any fallback/network probe must be non-interactive and fail within 5 seconds; for psql/PostgreSQL CLI use connect_timeout=5 and -w so authentication can never block waiting for input. If the configured authority route is unavailable, fail clearly rather than silently bypassing it.",
@@ -136,5 +137,16 @@
     "console_dispatching_key": "norm:gui:dispatching",
     "console_uncertain_key": "norm:gui:uncertain",
     "console_suppressed_prompt_ids_key": "norm:gui:suppressed-prompt-ids"
+  },
+  "task_storage": {
+    "per_pass_process_bytes": 3221225472,
+    "task_storage_limit_bytes": 57982058496,
+    "text_processing_buffer_bytes": 25165824,
+    "tool_return_bytes": 393216,
+    "internal_note_chunk_bytes": 5242880,
+    "image_processing_buffer_bytes": 100663296,
+    "media_processing_buffer_bytes": 268435456,
+    "retention_manifest_dir": ".norm-task-retention",
+    "human_output_bytes": 393216
   }
 }

@@ -1031,7 +1031,9 @@ class PromptWorker:
         self._clear_processed_sos(task_id)
         try:
             from norm_runtime.settings import load_path_settings
-            temp_result = cleanup_task_temp(load_path_settings(self._runtime_root())["temp_root"], task_id, self.durable)
+            _paths = load_path_settings(self._runtime_root())
+            _retention = Path(_paths["workspace_root"]) / str(self._runtime_config().get("task_storage", {}).get("retention_manifest_dir", ".norm-task-retention"))
+            temp_result = cleanup_task_temp(_paths["temp_root"], task_id, self.durable, retention_root=_retention)
             if temp_result.get("removed"):
                 logging.info("Removed verified terminal task temp task=%s files=%s bytes=%s", task_id, temp_result.get("files_removed", 0), temp_result.get("bytes_removed", 0))
         except Exception:
@@ -1248,7 +1250,8 @@ class PromptWorker:
         path_cfg = load_path_settings(root)
         plugin_cfg = load_plugin_settings(root)
         workspace_root = path_cfg["workspace_root"]
-        allowed_roots = [str(workspace_root), str(root / "docs"), str(plugin_cfg["plugin_root"]), *list(tools.get("allowed_roots", []))]
+        temp_root = path_cfg["temp_root"]
+        allowed_roots = [str(workspace_root), str(temp_root), str(root / "docs"), str(plugin_cfg["plugin_root"]), *list(tools.get("allowed_roots", []))]
         redis_cfg = self._runtime_config().get("redis", {})
         dq = self._runtime_config().get("deletion_queue", {})
         deletion_queue = RedisDeletionQueue(
@@ -1262,8 +1265,9 @@ class PromptWorker:
             allowed_roots,
             backup_root=str(tools.get("backup_root", root / "state" / "file-backups")),
             audit_log=str(tools.get("audit_log", root / "logs" / "tool-audit.jsonl")),
-            max_read_bytes=int(tools.get("max_read_bytes", 131_072)),
-            max_write_bytes=int(tools.get("max_write_bytes", 1_048_576)),
+            max_read_bytes=int(tools.get("max_read_bytes", 25_165_824)),
+            max_tool_return_bytes=int(tools.get("max_tool_return_bytes", 393_216)),
+            max_write_bytes=int(tools.get("max_write_bytes", 5_242_880)),
             blocked_write_staging_root=str(tools.get("blocked_write_staging_root", root / "docs" / "blocked-writes")),
             write_retry_count=int(tools.get("write_retry_count", 3)),
             write_retry_delay_seconds=float(tools.get("write_retry_delay_seconds", 0.25)),
@@ -1283,6 +1287,9 @@ class PromptWorker:
             verbatim_helper=str(path_cfg["verbatim_writer"]),
             plugin_root=str(plugin_cfg["plugin_root"]),
             plugin_registry_file=str(plugin_cfg["registry_file"]),
+            temp_root=str(path_cfg["temp_root"]),
+            workspace_root=str(workspace_root),
+            task_storage_config=dict(self._runtime_config().get("task_storage", {})),
             connection_config={
                 "postgres": self._runtime_config().get("postgres", {}),
                 "redis": self._runtime_config().get("redis", {}),
@@ -2100,6 +2107,8 @@ class PromptWorker:
         base_prompt = str(prompt)
         prompt = self._prompt_with_context_injections(job, base_prompt)
         tools = self._worker_tools()
+        if tools is not None and hasattr(tools, "set_task_context"):
+            tools.set_task_context(job.task_id, job.step_id)
         metadata = job.metadata or {}
         if tools is None or not hasattr(self.client, "chat_with_tools"):
             answer = self._generate_complete_text(
@@ -2411,6 +2420,17 @@ class PromptWorker:
                 self._persist_evidence_now(job, [evidence_item])
                 if self._suppression_requested(job.task_id) or (self.durable and self.durable.task_status(job.task_id) == "suppressed"):
                     raise ModelGenerationCancelled("task suppressed by operator after current tool boundary")
+
+                if result.get("park_required"):
+                    checkpoint = str(result.get("checkpoint_zip") or "").strip()
+                    reason = (
+                        "Automatic park: the task reached its 3 GiB per-pass source-processing allowance. "
+                        "All task state and notes were preserved"
+                        + (f" in {checkpoint}." if checkpoint else ".")
+                        + " Resume this same task manually to continue with a fresh processing allowance."
+                    )
+                    self.request_suppress_task(reason=reason)
+                    raise ModelGenerationCancelled(reason)
 
                 if result.get("ok"):
                     observed_path = str(result.get("path") or "")
@@ -2861,11 +2881,13 @@ class PromptWorker:
         settings = load_settings(self._runtime_root())
         if not settings.getboolean("temp", "cleanup_enabled", fallback=True):
             return {"path": str(paths["temp_root"]), "skipped": "disabled"}
+        retention = Path(paths["workspace_root"]) / str(self._runtime_config().get("task_storage", {}).get("retention_manifest_dir", ".norm-task-retention"))
         return cleanup_temp_root(
             paths["temp_root"],
             durable=self.durable,
             max_age_hours=settings.getint("temp", "max_age_hours", fallback=72),
             recovery_max_age_hours=settings.getint("temp", "recovery_max_age_hours", fallback=168),
+            retention_root=retention,
         )
 
     @staticmethod
