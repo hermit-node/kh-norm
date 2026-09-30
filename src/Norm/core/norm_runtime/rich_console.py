@@ -173,7 +173,10 @@ class NormConsole:
             self.console.print()
             self.console.print(Rule("Ollama complete"))
         elif kind == "model_error":
-            self.console.print(f"\n[bold red]Ollama call ended: {text}[/]")
+            if event.get("cancelled"):
+                self.console.print(f"\n[yellow]Ollama cancelled: {text}[/]")
+            else:
+                self.console.print(f"\n[bold red]Ollama call ended: {text}[/]")
 
     def _cancel_ollama(self) -> None:
         req = request.Request(self.control_url, data=b"{}", method="POST")

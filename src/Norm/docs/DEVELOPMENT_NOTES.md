@@ -546,3 +546,10 @@ The plan verifier was tightened around blocking execution correctness while redu
 - `/memory-condense` schedules incremental background-memory condensation; `/memory-condense -full` uses the same checkpointed full-source rebuild with `incremental=False`. Pending full mode dominates an incremental request.
 - The worker consumes the request only at an idle point in its own loop, preventing a competing Ollama maintenance call and avoiding the new-task/task-lineage problem. Completion/failure is recorded as `[manual_background_condensation]` maintenance state and excluded from future condensation input to prevent recursive self-summary.
 - The previously documented `/condense-memories` command remains separate future work because its intended semantics include destructive curated-memory reconciliation/pruning that this safe snapshot operation does not perform.
+
+## 2026-09-30 - 0.53.4 suppression/cancellation tune-up
+- Live screenshot showed an intentional Ollama cancellation closing a chunked HTTP response while `http.client` was inside `_peek_chunked`, producing an internal `AttributeError` before the client normalized it to `ModelGenerationCancelled`.
+- The actual worker-loop failure occurred one layer later: `_handle_suppressed()` acknowledged `job.message_id`, which is the logical UUID node identity, while Redis Streams `XACK` requires the claimed stream entry ID (`redis_id`).
+- `_handle_suppressed()` now receives and acknowledges the claimed Redis ID, matching the already-correct pre-execution suppression path.
+- Ollama cancellation paths now suppress intentional transport exception chaining (`raise ... from None`) and vision streaming receives the same normalization as text/tool streaming.
+- Runtime/embedded Rich consoles now distinguish event `cancelled=true` from genuine `model_error` failures when rendering operator output.

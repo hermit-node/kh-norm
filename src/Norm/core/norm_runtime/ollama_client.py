@@ -200,14 +200,12 @@ class OllamaClient:
                 if cancel_event.is_set():
                     raise ModelGenerationCancelled("generation cancelled")
         except Exception as exc:
-            if cancel_event.is_set() and not isinstance(exc, ModelGenerationCancelled):
-                exc = ModelGenerationCancelled("generation cancelled")
-            self._emit(
-                "model_error",
-                text=str(exc),
-                cancelled=isinstance(exc, ModelGenerationCancelled),
-            )
-            raise exc
+            if cancel_event.is_set():
+                cancelled_exc = exc if isinstance(exc, ModelGenerationCancelled) else ModelGenerationCancelled("generation cancelled")
+                self._emit("model_error", text=str(cancelled_exc), cancelled=True)
+                raise cancelled_exc from None
+            self._emit("model_error", text=str(exc), cancelled=False)
+            raise
         finally:
             self._flush_crash()
             with self._active_lock:
@@ -328,14 +326,12 @@ class OllamaClient:
                 if cancel_event.is_set():
                     raise ModelGenerationCancelled("generation cancelled")
         except Exception as exc:
-            if cancel_event.is_set() and not isinstance(exc, ModelGenerationCancelled):
-                exc = ModelGenerationCancelled("generation cancelled")
-            self._emit(
-                "model_error",
-                text=str(exc),
-                cancelled=isinstance(exc, ModelGenerationCancelled),
-            )
-            raise exc
+            if cancel_event.is_set():
+                cancelled_exc = exc if isinstance(exc, ModelGenerationCancelled) else ModelGenerationCancelled("generation cancelled")
+                self._emit("model_error", text=str(cancelled_exc), cancelled=True)
+                raise cancelled_exc from None
+            self._emit("model_error", text=str(exc), cancelled=False)
+            raise
         finally:
             self._flush_crash()
             with self._active_lock:
@@ -404,6 +400,15 @@ class OllamaClient:
                     if content:
                         parts.append(content)
                         self._emit("answer", text=content)
+                if cancel_event.is_set():
+                    raise ModelGenerationCancelled("generation cancelled")
+        except Exception as exc:
+            if cancel_event.is_set():
+                cancelled_exc = exc if isinstance(exc, ModelGenerationCancelled) else ModelGenerationCancelled("generation cancelled")
+                self._emit("model_error", text=str(cancelled_exc), cancelled=True)
+                raise cancelled_exc from None
+            self._emit("model_error", text=str(exc), cancelled=False)
+            raise
         finally:
             self._flush_crash()
             with self._active_lock:

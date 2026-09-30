@@ -1,4 +1,4 @@
-# Norm 0.53.3 portable source package
+# Norm 0.53.4 portable source package
 
 This archive is the clean source baseline for installing or rebuilding Norm.
 

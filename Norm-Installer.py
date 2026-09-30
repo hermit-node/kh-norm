@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable
 
-INSTALLER_VERSION = "1.4.9"
+INSTALLER_VERSION = "1.4.15"
 PIP_VERSION = "26.2.1"
 PIP_MIN_VERSION = PIP_VERSION  # backward-compatible internal print helper
 PIP_SPEC = f"pip=={PIP_VERSION}"
@@ -507,6 +507,36 @@ def _installed_version(python_exe: Path, distribution: str, log: LogFn) -> str |
     return value[-1].strip() if value else None
 
 
+def _exact_requirement_pins(requirements: Path) -> dict[str, str]:
+    pins: dict[str, str] = {}
+    for raw in requirements.read_text(encoding="utf-8-sig").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = re.fullmatch(r"([A-Za-z0-9_.-]+)==([^;\s]+)(?:\s*;.*)?", line)
+        if not match:
+            return {}
+        pins[match.group(1)] = match.group(2)
+    return pins
+
+
+def _requirements_exactly_satisfied(python_exe: Path, requirements: Path, log: LogFn) -> bool:
+    pins = _exact_requirement_pins(requirements)
+    if not pins:
+        return False
+    mismatched: list[str] = []
+    for name, expected in pins.items():
+        installed = _installed_version(python_exe, name, log)
+        if installed != expected:
+            mismatched.append(f"{name}: installed={installed or 'missing'} expected={expected}")
+    if mismatched:
+        log("Pinned dependency reconciliation required: " + "; ".join(mismatched[:12]))
+        if len(mismatched) > 12:
+            log(f"... and {len(mismatched) - 12} more mismatch(es)")
+        return False
+    return True
+
+
 def _external_path(settings: configparser.ConfigParser, key: str, default: str) -> Path:
     raw_docs = settings.get("paths", "documents_root", fallback="").strip()
     docs = Path(_expand_windows_vars(raw_docs)).expanduser() if raw_docs else (Path.home() / "Documents" / "Norm")
@@ -808,13 +838,17 @@ def install_norm(
                     cmd.extend(["--index-url", index_url])
                 _run(cmd, cwd=target, log=log)
 
-    progress(52, "Installing pinned dependencies")
     requirements = target / str(manifest["requirements_lock"])
-    _run(
-        [str(venv_python), "-m", "pip", "install", "--disable-pip-version-check", "-r", str(requirements)],
-        cwd=target,
-        log=log,
-    )
+    if _requirements_exactly_satisfied(venv_python, requirements, log):
+        progress(52, "Pinned dependencies already satisfied")
+        log("Every locked distribution already matches exactly; skipping pip dependency reconciliation.")
+    else:
+        progress(52, "Installing pinned dependencies")
+        _run(
+            [str(venv_python), "-m", "pip", "install", "--disable-pip-version-check", "-r", str(requirements)],
+            cwd=target,
+            log=log,
+        )
 
     progress(68, "Checking installed environment")
     _run([str(venv_python), "-m", "pip", "check"], cwd=target, log=log)
