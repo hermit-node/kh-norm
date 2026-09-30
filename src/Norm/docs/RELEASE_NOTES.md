@@ -1,3 +1,16 @@
+## 0.53.6 — 2026-09-30 — recovery-state hygiene and prompt provenance
+
+- Restored `/inject-context` end-to-end: the activity API now receives a live injection callback, injections resolve to the current active task tree, persist in PostgreSQL, and are consumed by the worker at subsequent model-call boundaries without creating a new task.
+- Injected text is explicitly framed as a user-authored context interjection, while generated steps/recovery/verifier work remain Norm-internal.
+
+- Weekly maintenance and manual `/memory-condense` now run recovery-state cleanup before background-memory condensation.
+- Fully terminal task trees with verified summaries automatically drop obsolete `task_recovery_notes`; recovery notes no longer accumulate indefinitely after they have served their handoff purpose.
+- Stale nonterminal recovery trees are eligible only when absent from live Redis, not suppressed, and older than the configured stale threshold. Norm summarizes task state plus recovery notes into compact `task_history`, replay-validates that summary, and only then prunes the dangling tree. Any summarize/replay failure preserves the original rows.
+- Added conservative orphan archive cleanup: `task_evidence_archive` and legacy `task_step_archive` rows are deleted only when a validated compact-history record already covers the missing task; uncovered orphan archives remain preserved for inspection.
+- Enforced the existing `request_type` / `prompt_origin` provenance in worker prompts. Norm-generated steps, recovery jobs, verification, and maintenance are explicitly labelled internal and cannot masquerade as user-authored prompts.
+- Runtime child/recovery tasks now inherit the true `original_user_prompt`; generated child instructions are retained separately instead of overwriting the user request.
+- Added `memory.recovery_stale_hours=24` and `memory.recovery_cleanup_max_trees=20` defaults. The dangling-tree cap does not limit cheap terminal-note cleanup.
+
 ## 0.53.5 — 2026-09-30 — pre-task suppression and incremental rebuild cache
 
 - `/suppress-task` now covers the canonical DB3 ingress gap before a durable task UUID exists: it suppresses the currently dispatching prompt first, otherwise the oldest live queued prompt, and prevents uncertain retry resurrection.

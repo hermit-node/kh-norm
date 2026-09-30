@@ -24,6 +24,7 @@ from runtime_bootstrap import build_conversation_service, build_deletion_queue, 
 from norm_runtime.activity_stream import ActivityHub, ActivityLogHandler, start_activity_server
 from norm_runtime.busy_status import collect_busy_status
 from norm_runtime.context_snapshot import collect_context_snapshot
+from norm_runtime.context_injections import ContextInjections
 from norm_runtime.http_api import start_chat_api
 from norm_runtime.ollama_client import ModelOutputTruncated, OllamaClient
 from norm_runtime.ollama_lifecycle import shutdown_ollama
@@ -605,6 +606,27 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             return {"status": "unavailable", "scheduled": False, "reason": "worker is still initializing"}
         return worker_obj.request_memory_condense(full=bool(full))
 
+    def request_inject_context(task_id: str | None, content: str, request_id: str) -> dict:
+        worker_obj = resources.get("worker")
+        injections = resources.get("context_injections")
+        prompt_queue_obj = resources.get("prompt_queue")
+        if worker_obj is None or injections is None:
+            raise ValueError("Context injection is still initializing")
+        target = str(task_id or "").strip()
+        if not target:
+            target = str(worker_obj.active_task_id() or "").strip()
+        if not target and prompt_queue_obj is not None:
+            target = str(prompt_queue_obj.oldest_task_id() or "").strip()
+        if not target:
+            running = resources.get("durable").running_tasks(limit=2) if resources.get("durable") is not None else []
+            if len(running) == 1:
+                target = str(running[0].get("task_id") or "").strip()
+        if not target:
+            raise ValueError("No active task is available for context injection")
+        result = injections.save(target, content, request_id)
+        logging.info("Context injection saved task=%s injection_id=%s", result.get("task_id"), result.get("injection_id"))
+        return result
+
     activity_cfg = config.get("activity", {})
     activity_host = resolve_bind_host(str(activity_cfg.get("host", "127.0.0.1")))
     activity_port = int(ports['activity'])
@@ -647,6 +669,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             suppress_task=request_suppress_task,
             flush_suppressed=request_flush_suppressed,
             memory_condense=request_memory_condense,
+            inject_context=request_inject_context,
             busy_status=request_busy_status,
             context_status=request_context_status,
             health_status=request_activity_health,
@@ -667,6 +690,9 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         coordinator, live, durable = build_runtime(root, ensure_schema=True)
         resources["durable"] = durable
         durable.set_runtime_state("deployed_version", load_project_metadata(root)["version"])
+        context_injections = ContextInjections(durable)
+        context_injections.ensure_schema()
+        resources["context_injections"] = context_injections
 
         if shutdown_requested.is_set():
             logging.info("Shutdown requested during startup; stopping after durable initialization")
@@ -725,6 +751,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
                 claim_idle_seconds=int(queue_cfg.get("claim_idle_seconds", 900)),
                 poll_ms=int(worker_cfg.get("poll_ms", 5000)),
                 deferred_append_planner=service.materialize_deferred_append,
+                context_injections=resources.get("context_injections"),
             )
             worker.start()
             resources["worker"] = worker

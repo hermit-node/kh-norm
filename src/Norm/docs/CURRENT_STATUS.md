@@ -1,10 +1,10 @@
 # Norm current status
 
-Updated 2026-09-30 for the clean **0.53.5** portable source line.
+Updated 2026-09-30 for the clean **0.53.6** portable source line.
 
 ## Source/layout
 
-- Version: **0.53.5**.
+- Version: **0.53.6**.
 - Runtime root: `C:\Norm` (relocatable by installer); the installed absolute path is written to `config\settings.ini` `[paths].runtime_root`.
 - Runtime source/executable directory: `core\`; compiled executable target is `core\norm.exe`.
 - Maintained docs: `C:\Norm\docs`.
@@ -14,6 +14,17 @@ Updated 2026-09-30 for the clean **0.53.5** portable source line.
 - Durable generated workspace: `%USERPROFILE%\Documents\Norm\workspace`.
 - Disposable/recovery root: `%USERPROFILE%\Documents\Norm\temp`.
 - `.venv` is generated/reusable and is intentionally omitted from source and full backup ZIPs.
+
+## 0.53.6 recovery-state cleanup and work-item provenance
+
+`/inject-context` is wired to the live worker again. Without an explicit `--task`, the control path targets the worker's current active task first, then the oldest queued task only as a between-step fallback. Context is persisted in `task_context_injections` and delivered at the next model boundary without creating a new task.
+
+- Weekly maintenance and both manual `/memory-condense` modes now run recovery-state cleanup before memory condensation.
+- Recovery notes for an entirely terminal task tree are deleted once every surviving task in the tree has a verified terminal summary.
+- A nonterminal recovery tree is considered dangling only when it has no live Redis task membership, is not suppressed, and every nonterminal member is older than `memory.recovery_stale_hours` (default 24 hours). Dangling trees are summarized from task state plus recovery notes into `task_history`, replay-validated, and only then hard-pruned; failed validation preserves the raw task tree.
+- Orphan `task_evidence_archive` / legacy `task_step_archive` rows are deleted only when a validated `task_history` record already covers the task ID. Uncovered orphan archives remain preserved and are counted in maintenance results.
+- Existing `request_type` / `prompt_origin` provenance is now enforced in worker model envelopes. Norm-generated work is explicitly marked internal/non-user-authored, while the true original user prompt remains separate. Runtime child/recovery tasks no longer overwrite `original_user_prompt` with their generated instruction.
+- Cleanup bounds are configurable with `memory.recovery_stale_hours` (24) and `memory.recovery_cleanup_max_trees` (20 dangling trees per pass). Terminal-note cleanup is not capped by that dangling-tree limit.
 
 ## 0.53.5 suppression and rebuild tuning
 
@@ -52,7 +63,7 @@ Portable base/source ZIPs remain secrets-free and safe to treat separately from 
 
 ## Installer behavior
 
-The reusable installer performs an in-place managed sync. Changed package files are replaced and package-owned files no longer present are removed. Persistent local directories (`.venv`, `.ssh`, plugins, logs/state) survive normal base updates. Existing compatible venvs are reused. Recommended Installer 1.4.12 binds one exact source payload by filename and SHA-256 and can build a derived payload from locked or newest eligible stable/RC dependency versions. Alpha, beta, and dev releases are excluded. Full-backup packages additionally restore their private state payload.
+The reusable installer performs an in-place managed sync. Changed package files are replaced and package-owned files no longer present are removed. Persistent local directories (`.venv`, `.ssh`, plugins, logs/state) survive normal base updates. Existing compatible venvs are reused. Recommended Installer 1.4.14 binds one exact source payload by filename and SHA-256 and can build a derived payload from locked or newest eligible stable/RC dependency versions. Alpha, beta, and dev releases are excluded. Full-backup packages additionally restore their private state payload.
 
 ## Current validation boundary
 

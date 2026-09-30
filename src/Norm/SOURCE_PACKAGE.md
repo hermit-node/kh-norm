@@ -1,4 +1,4 @@
-# Norm 0.53.5 portable source package
+# Norm 0.53.6 portable source package
 
 This archive is the clean source baseline for installing or rebuilding Norm.
 
@@ -63,6 +63,14 @@ Suppressed operator cleanup is two-layer: `/flush-suppressed` removes suppressed
 
 Chat and activity/control HTTP are served by pinned aiohttp 3.14.3 on dedicated asyncio loops. Existing coordinator lifecycle semantics remain compatible; blocking runtime callbacks are offloaded with asyncio.to_thread. SSE disconnects are benign transport events.
 
+
+## 0.53.6 recovery cleanup and prompt-origin enforcement
+
+- Restores the existing `/inject-context` architecture end-to-end: current active task resolution, PostgreSQL persistence, and next-model-boundary delivery.
+
+Weekly cleanup and manual `/memory-condense` now run a recovery-state cleanup before rebuilding background memory. Verified terminal task trees shed obsolete `task_recovery_notes`; stale nonterminal trees with no live Redis membership are summarized from their task/recovery state into compact `task_history`, replay-validated, and only then pruned. Orphan archive rows are deleted only when a validated compact history record already covers their task ID; uncovered orphans are preserved and reported.
+
+The worker now enforces the existing `request_type`/`prompt_origin` provenance instead of treating every queued instruction as user-authored text. Norm-generated steps/recovery/verifier work are explicitly labelled internal in the model envelope, runtime child tasks inherit the true original user prompt, and generated child instructions no longer overwrite `original_user_prompt`.
 
 ## 0.53.5 tuning
 
