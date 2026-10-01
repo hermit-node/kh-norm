@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable
 
-INSTALLER_VERSION = "1.4.16"
+INSTALLER_VERSION = "1.5.0-unified"
 PIP_VERSION = "26.2.1"
 PIP_MIN_VERSION = PIP_VERSION  # backward-compatible internal print helper
 PIP_SPEC = f"pip=={PIP_VERSION}"
@@ -58,6 +58,7 @@ class InstallOptions:
     install_torch: bool = True
     replace_existing: bool = False
     recreate_venv: bool = False
+    dependency_mode: str = "package"
 
 
 @dataclass
@@ -839,16 +840,47 @@ def install_norm(
                 _run(cmd, cwd=target, log=log)
 
     requirements = target / str(manifest["requirements_lock"])
-    if _requirements_exactly_satisfied(venv_python, requirements, log):
-        progress(52, "Pinned dependencies already satisfied")
-        log("Every locked distribution already matches exactly; skipping pip dependency reconciliation.")
-    else:
-        progress(52, "Installing pinned dependencies")
+    dependency_mode = (options.dependency_mode or "package").strip().lower()
+    if dependency_mode == "package":
+        if _requirements_exactly_satisfied(venv_python, requirements, log):
+            progress(52, "Package requirements already satisfied")
+            log("Every package-locked distribution already matches exactly; skipping pip dependency reconciliation.")
+        else:
+            progress(52, "Installing package requirements")
+            _run(
+                [str(venv_python), "-m", "pip", "install", "--disable-pip-version-check", "-r", str(requirements)],
+                cwd=target,
+                log=log,
+            )
+    elif dependency_mode == "newest":
+        progress(52, "Resolving newest available requirements")
+        pins = _exact_requirement_pins(requirements)
+        if not pins:
+            raise InstallerError(f"No exact package requirements were found in {requirements}")
+        requested = sorted(pins)
+        log(
+            "Newest-available mode: resolving the newest non-prerelease releases pip accepts "
+            "for the package's locked distribution set: " + ", ".join(requested)
+        )
         _run(
-            [str(venv_python), "-m", "pip", "install", "--disable-pip-version-check", "-r", str(requirements)],
+            [str(venv_python), "-m", "pip", "install", "--disable-pip-version-check", "--upgrade", *requested],
             cwd=target,
             log=log,
         )
+        evidence_dir = target / "state" / "installer"
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+        freeze = _run(
+            [str(venv_python), "-m", "pip", "freeze", "--all"],
+            cwd=target,
+            log=log,
+        )
+        (evidence_dir / "resolved-requirements.txt").write_text(
+            freeze.stdout if freeze.stdout.endswith("\n") else freeze.stdout + "\n",
+            encoding="utf-8",
+        )
+        log(f"Recorded resolved environment: {evidence_dir / 'resolved-requirements.txt'}")
+    else:
+        raise InstallerError(f"Unknown dependency mode: {options.dependency_mode!r}")
 
     progress(68, "Checking installed environment")
     _run([str(venv_python), "-m", "pip", "check"], cwd=target, log=log)
@@ -963,12 +995,12 @@ def _peek_norm_source(path: Path) -> tuple[str, str] | None:
     return str(manifest.get("version") or "0"), package_type
 
 
-def find_latest_source(directory: Path | None = None) -> Path | None:
-    """Pick the newest Norm portable-source ZIP beside the installer.
+def list_local_sources(directory: Path | None = None) -> list[Path]:
+    """Return valid local Norm source ZIPs, highest package version first.
 
-    Version comes from package-manifest.json rather than the filename. If multiple
-    packages declare the same version, the most recently modified one wins so a
-    freshly rebuilt/customized package naturally supersedes an older copy.
+    Every candidate is inspected from its package manifest. Modification time is
+    only a same-version tie-breaker, so copying an older ZIP later cannot make it
+    outrank a newer Norm release.
     """
     root = Path(directory).resolve() if directory else _source_directory()
     candidates: list[tuple[tuple, int, str, Path]] = []
@@ -978,15 +1010,72 @@ def find_latest_source(directory: Path | None = None) -> Path | None:
         meta = _peek_norm_source(path)
         if meta is None:
             continue
-        version, _package_type = meta
+        version, _ = meta
         try:
             mtime = path.stat().st_mtime_ns
         except OSError:
             mtime = 0
         candidates.append((_version_key(version), mtime, path.name.lower(), path.resolve()))
-    if not candidates:
-        return None
-    return max(candidates, key=lambda item: (item[0], item[1], item[2]))[3]
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    return [item[3] for item in candidates]
+
+def find_latest_source(directory: Path | None = None) -> Path | None:
+    sources = list_local_sources(directory)
+    return sources[0] if sources else None
+
+
+def _normalized_requirements_text(text: str) -> str:
+    lines: list[str] = []
+    for raw in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        lines.append(line)
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _source_requirements_text(source_zip: Path) -> str:
+    with zipfile.ZipFile(source_zip, "r") as zf:
+        manifests = [
+            name for name in zf.namelist()
+            if PurePosixPath(name).name == "package-manifest.json" and not name.endswith("/")
+        ]
+        if len(manifests) != 1:
+            raise InstallerError(f"Expected exactly one package-manifest.json in {source_zip.name}")
+        manifest_member = manifests[0]
+        manifest = json.loads(zf.read(manifest_member).decode("utf-8-sig"))
+        root = PurePosixPath(manifest_member).parent
+        rel = PurePosixPath(str(manifest.get("requirements_lock") or "").replace("\\", "/"))
+        if not rel.parts:
+            raise InstallerError("Selected source package has no requirements_lock entry")
+        member = str(root / rel)
+        try:
+            return zf.read(member).decode("utf-8-sig")
+        except KeyError as exc:
+            raise InstallerError(f"Selected source package is missing {rel}") from exc
+
+
+def compare_companion_requirements(source_zip: Path) -> tuple[bool, str]:
+    companion = _source_directory() / "requirements.txt"
+    if not companion.is_file():
+        return False, f"Missing companion requirements.txt beside the installer: {companion}"
+    local_text = _normalized_requirements_text(companion.read_text(encoding="utf-8-sig"))
+    source_text = _normalized_requirements_text(_source_requirements_text(source_zip))
+    if local_text == source_text:
+        count = len([line for line in local_text.splitlines() if line.strip()])
+        return True, f"requirements.txt matches selected source ({count} pinned distributions)"
+    local_lines = set(local_text.splitlines())
+    source_lines = set(source_text.splitlines())
+    only_local = sorted(local_lines - source_lines)
+    only_source = sorted(source_lines - local_lines)
+    detail: list[str] = ["requirements.txt does not match the selected source lock"]
+    if only_local:
+        detail.append("Only beside installer: " + ", ".join(only_local[:5]))
+    if only_source:
+        detail.append("Only in source ZIP: " + ", ".join(only_source[:5]))
+    if len(only_local) > 5 or len(only_source) > 5:
+        detail.append("Additional differences omitted")
+    return False, "; ".join(detail)
 
 
 def _which_file(name: str) -> list[Path]:
@@ -1095,91 +1184,168 @@ def launch_gui(initial_source: Path | None = None) -> int:
     except Exception as exc:
         raise InstallerError(f"Tkinter is required for the GUI installer: {exc}") from exc
 
-    source = Path(initial_source).expanduser().resolve() if initial_source else find_latest_source()
-    if source is None:
-        raise InstallerError(
-            f"No Norm portable-source ZIP was found beside the installer in {_source_directory()}. "
-            "Put the desired Norm source ZIP in the same folder and launch the installer again."
-        )
-    info = inspect_package(source)
-
     root = tk.Tk()
     root.title(f"Norm Installer {INSTALLER_VERSION}")
-    root.geometry("810x545")
-    root.minsize(720, 500)
+    root.geometry("900x650")
+    root.minsize(760, 560)
 
-    python_default = choose_default_python(source)
     target_var = tk.StringVar(value=r"C:\Norm" if os.name == "nt" else str(Path.home() / "Norm"))
-    python_var = tk.StringVar(value=str(python_default or ""))
-    package_var = tk.StringVar(
-        value=f"{info.label}  •  auto-selected newest local package  •  {source.name}"
-    )
-    progress_var = tk.DoubleVar(value=0)
+    python_var = tk.StringVar(value="")
+    dependency_var = tk.StringVar(value="newest")
+    package_var = tk.StringVar(value="Searching for the newest Norm package…")
+    package_detail_var = tk.StringVar(value="")
     status_var = tk.StringVar(value="Ready")
+    progress_var = tk.DoubleVar(value=0)
 
-    outer = ttk.Frame(root, padding=(14, 12))
-    outer.pack(fill="both", expand=True)
-    outer.columnconfigure(1, weight=1)
-    outer.rowconfigure(7, weight=1)
+    selected_source: Path | None = None
+    selected_info: PackageInfo | None = None
+    busy = False
+    events: queue.Queue[tuple[str, object]] = queue.Queue()
 
-    ttk.Label(outer, text="Norm Installer", font=("Segoe UI", 16, "bold")).grid(
-        row=0, column=0, columnspan=3, sticky="w", pady=(0, 4)
+    shell = ttk.Frame(root, padding=(18, 14))
+    shell.pack(fill="both", expand=True)
+    shell.columnconfigure(0, weight=1)
+    shell.rowconfigure(2, weight=1)
+
+    ttk.Label(shell, text="Norm Installer", font=("Segoe UI", 18, "bold")).grid(row=0, column=0, sticky="w")
+    step_var = tk.StringVar(value="● Package & Requirements     ○ Install     ○ Complete")
+    ttk.Label(shell, textvariable=step_var, font=("Segoe UI", 10)).grid(row=1, column=0, sticky="w", pady=(4, 14))
+
+    pages = ttk.Frame(shell)
+    pages.grid(row=2, column=0, sticky="nsew")
+    pages.rowconfigure(0, weight=1)
+    pages.columnconfigure(0, weight=1)
+
+    page_setup = ttk.Frame(pages)
+    page_install = ttk.Frame(pages)
+    page_complete = ttk.Frame(pages)
+    for page in (page_setup, page_install, page_complete):
+        page.grid(row=0, column=0, sticky="nsew")
+
+    actions = ttk.Frame(shell)
+    actions.grid(row=3, column=0, sticky="ew", pady=(14, 0))
+    actions.columnconfigure(0, weight=1)
+
+    cancel_btn = ttk.Button(actions, text="Cancel", command=root.destroy)
+    cancel_btn.grid(row=0, column=1, padx=(8, 0))
+    next_btn = ttk.Button(actions, text="Next >", state="disabled")
+    next_btn.grid(row=0, column=2, padx=(8, 0))
+    finish_btn = ttk.Button(actions, text="Finish", command=root.destroy)
+
+    # Page 1
+    page_setup.columnconfigure(0, weight=1)
+    package_box = ttk.LabelFrame(page_setup, text="Package", padding=12)
+    package_box.grid(row=0, column=0, sticky="ew")
+    package_box.columnconfigure(0, weight=1)
+    ttk.Label(package_box, textvariable=package_var, font=("Segoe UI", 11, "bold")).grid(row=0, column=0, sticky="w")
+    ttk.Label(package_box, textvariable=package_detail_var, wraplength=800, justify="left").grid(
+        row=1, column=0, sticky="w", pady=(5, 0)
     )
-    ttk.Label(outer, textvariable=package_var).grid(
-        row=1, column=0, columnspan=3, sticky="w", pady=(0, 14)
+
+    def browse_source() -> None:
+        nonlocal selected_source
+        path = filedialog.askopenfilename(
+            title="Select Norm portable source ZIP",
+            initialdir=str(_source_directory()),
+            filetypes=[("Norm source ZIP", "*.zip"), ("All files", "*.*")],
+        )
+        if path:
+            selected_source = Path(path).resolve()
+            analyze_source()
+
+    ttk.Button(package_box, text="Advanced: choose another package…", command=browse_source).grid(
+        row=2, column=0, sticky="w", pady=(10, 0)
     )
 
-    ttk.Label(outer, text="Install/update to").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
-    ttk.Entry(outer, textvariable=target_var).grid(row=2, column=1, sticky="ew", pady=4)
+    req_box = ttk.LabelFrame(page_setup, text="Requirements", padding=12)
+    req_box.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+    ttk.Radiobutton(
+        req_box,
+        text="Newest available packages",
+        variable=dependency_var,
+        value="newest",
+    ).grid(row=0, column=0, sticky="w")
+    ttk.Label(
+        req_box,
+        text="Upgrade the distributions named by the selected package lock and let pip resolve the newest normal releases.",
+        wraplength=790,
+    ).grid(row=1, column=0, sticky="w", padx=(24, 0), pady=(0, 8))
+    ttk.Radiobutton(
+        req_box,
+        text="Use package requirements",
+        variable=dependency_var,
+        value="package",
+    ).grid(row=2, column=0, sticky="w")
+    ttk.Label(
+        req_box,
+        text="Install the exact tools/requirements-lock.txt shipped inside the selected Norm package.",
+        wraplength=790,
+    ).grid(row=3, column=0, sticky="w", padx=(24, 0))
 
+    target_box = ttk.LabelFrame(page_setup, text="Install location", padding=12)
+    target_box.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+    target_box.columnconfigure(0, weight=1)
+    ttk.Entry(target_box, textvariable=target_var).grid(row=0, column=0, sticky="ew")
     def browse_target() -> None:
         path = filedialog.askdirectory(title="Select Norm installation directory")
         if path:
             target_var.set(path)
+    ttk.Button(target_box, text="Browse…", command=browse_target).grid(row=0, column=1, padx=(8, 0))
 
-    ttk.Button(outer, text="Browse…", command=browse_target).grid(row=2, column=2, padx=(8, 0), pady=4)
-
-    ttk.Label(outer, text="Base Python").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=4)
-    ttk.Entry(outer, textvariable=python_var).grid(row=3, column=1, sticky="ew", pady=4)
-
+    python_box = ttk.LabelFrame(page_setup, text="Base Python", padding=12)
+    python_box.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+    python_box.columnconfigure(0, weight=1)
+    ttk.Entry(python_box, textvariable=python_var).grid(row=0, column=0, sticky="ew")
     def browse_python() -> None:
         path = filedialog.askopenfilename(
-            title="Select Python executable used for the Norm venv",
+            title="Select Python executable",
             filetypes=[("Python", "python.exe" if os.name == "nt" else "python*"), ("All files", "*.*")],
         )
         if path:
             python_var.set(path)
+    ttk.Button(python_box, text="Browse…", command=browse_python).grid(row=0, column=1, padx=(8, 0))
 
-    ttk.Button(outer, text="Browse…", command=browse_python).grid(row=3, column=2, padx=(8, 0), pady=4)
+    # Page 2
+    page_install.columnconfigure(1, weight=1)
+    page_install.rowconfigure(0, weight=1)
+    timeline_box = ttk.LabelFrame(page_install, text="Timeline", padding=10)
+    timeline_box.grid(row=0, column=0, sticky="nsw", padx=(0, 10))
+    timeline_steps = [
+        ("validate", "Validate package", 0, 14),
+        ("sync", "Synchronize Norm", 15, 24),
+        ("venv", "Python environment", 25, 37),
+        ("deps", "Requirements", 38, 67),
+        ("check", "Validate environment", 68, 75),
+        ("build", "Build norm.exe", 76, 91),
+        ("final", "Finalize", 92, 100),
+    ]
+    timeline_labels: dict[str, tk.Label] = {}
+    timeline_state = {key: "pending" for key, _, _, _ in timeline_steps}
+    for row, (key, label, _, _) in enumerate(timeline_steps):
+        w = tk.Label(timeline_box, text=f"○  {label}", anchor="w", font=("Segoe UI", 9))
+        w.grid(row=row, column=0, sticky="w", pady=5)
+        timeline_labels[key] = w
 
-    behavior = ttk.LabelFrame(outer, text="Package selection", padding=(10, 7))
-    behavior.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(8, 7))
-    ttk.Label(
-        behavior,
-        text=(
-            f"Selected automatically: {source.name}\n"
-            "The installer uses the newest Norm portable-source ZIP beside this EXE. "
-            "A compatible existing .venv is reused; .ssh, user plugins, logs, and state are preserved on normal updates."
-        ),
-        justify="left",
-        wraplength=750,
-    ).grid(row=0, column=0, sticky="w")
-
-    progress = ttk.Progressbar(outer, maximum=100, variable=progress_var)
-    progress.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(6, 2))
-    ttk.Label(outer, textvariable=status_var).grid(row=6, column=0, columnspan=3, sticky="w", pady=(0, 5))
-
-    log_box = ScrolledText(outer, height=14, wrap="word", font=("Consolas", 9))
-    log_box.grid(row=7, column=0, columnspan=3, sticky="nsew")
+    output_box = ttk.LabelFrame(page_install, text="Installer output", padding=6)
+    output_box.grid(row=0, column=1, sticky="nsew")
+    output_box.rowconfigure(0, weight=1)
+    output_box.columnconfigure(0, weight=1)
+    log_box = ScrolledText(output_box, wrap="word", font=("Consolas", 9))
+    log_box.grid(row=0, column=0, sticky="nsew")
     log_box.configure(state="disabled")
+    ttk.Progressbar(page_install, maximum=100, variable=progress_var).grid(
+        row=1, column=0, columnspan=2, sticky="ew", pady=(10, 3)
+    )
+    status_label = tk.Label(page_install, textvariable=status_var, anchor="w")
+    status_label.grid(row=2, column=0, columnspan=2, sticky="ew")
 
-    actions = ttk.Frame(outer)
-    actions.grid(row=8, column=0, columnspan=3, sticky="e", pady=(10, 0))
-    install_btn = ttk.Button(actions, text="Install / Update Norm")
-    install_btn.pack(side="left")
-
-    events: queue.Queue[tuple[str, object]] = queue.Queue()
-    busy = False
+    # Page 3
+    page_complete.columnconfigure(0, weight=1)
+    ttk.Label(page_complete, text="✓  Norm was successfully installed / updated", font=("Segoe UI", 16, "bold")).grid(
+        row=0, column=0, sticky="w", pady=(8, 16)
+    )
+    completion_var = tk.StringVar(value="")
+    ttk.Label(page_complete, textvariable=completion_var, justify="left", wraplength=820).grid(row=1, column=0, sticky="nw")
 
     def append_log(text: str) -> None:
         log_box.configure(state="normal")
@@ -1187,10 +1353,92 @@ def launch_gui(initial_source: Path | None = None) -> int:
         log_box.see("end")
         log_box.configure(state="disabled")
 
-    def set_busy(value: bool) -> None:
-        nonlocal busy
-        busy = value
-        install_btn.configure(state="disabled" if value else "normal")
+    def render_timeline() -> None:
+        symbols = {"pending": "○", "active": "▶", "done": "✓", "error": "×"}
+        colors = {"pending": "#666666", "active": "#1557a0", "done": "#087f23", "error": "#a00000"}
+        for key, label, _, _ in timeline_steps:
+            timeline_labels[key].configure(text=f"{symbols[timeline_state[key]]}  {label}", foreground=colors[timeline_state[key]])
+
+    def update_timeline(value: int) -> None:
+        for key, _, lo, hi in timeline_steps:
+            if value > hi:
+                timeline_state[key] = "done"
+            elif lo <= value <= hi:
+                timeline_state[key] = "active"
+            elif timeline_state[key] != "done":
+                timeline_state[key] = "pending"
+        if value >= 100:
+            for key in timeline_state:
+                timeline_state[key] = "done"
+        render_timeline()
+
+    def analyze_source() -> None:
+        nonlocal selected_source, selected_info
+        if selected_source is None:
+            selected_source = find_latest_source()
+        if selected_source is None:
+            selected_info = None
+            package_var.set("No Norm portable-source package found")
+            package_detail_var.set("Place Norm-*-portable-source.zip beside this installer.")
+            next_btn.configure(state="disabled")
+            return
+        try:
+            _verify_companion_sha256(selected_source)
+            selected_info = inspect_package(selected_source)
+            package_var.set(f"{selected_info.label}  •  {selected_source.name}")
+            package_detail_var.set(
+                "✓ Highest valid package version found beside installer  •  ✓ SHA-256 verified"
+            )
+            default_py = choose_default_python(selected_source)
+            if default_py:
+                python_var.set(str(default_py))
+            next_btn.configure(state="normal")
+        except Exception as exc:
+            selected_info = None
+            package_var.set(selected_source.name)
+            package_detail_var.set(f"Package validation failed: {exc}")
+            next_btn.configure(state="disabled")
+
+    def build_options() -> InstallOptions:
+        if selected_source is None or selected_info is None:
+            raise InstallerError("No valid Norm package is selected.")
+        target_text = target_var.get().strip()
+        python_text = python_var.get().strip()
+        if not target_text:
+            raise InstallerError("Choose an install location.")
+        if not python_text or not Path(python_text).expanduser().is_file():
+            raise InstallerError("Choose a valid Base Python executable.")
+        target = Path(target_text).expanduser()
+        replace = False
+        recreate = False
+        if target.exists() and any(target.iterdir()):
+            looks_norm = (target / "package-manifest.json").is_file() or (target / "config" / "settings.ini").is_file()
+            if not looks_norm:
+                raise InstallerError(f"Target is non-empty but does not look like a Norm installation: {target}")
+            replace = True
+            try:
+                manifest_path = target / "package-manifest.json"
+                if manifest_path.is_file():
+                    installed_manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+                    settings = _read_settings(target, installed_manifest)
+                    venv_rel = settings.get("environment", "venv_path", fallback=".venv").strip() or ".venv"
+                    existing_py = target / venv_rel / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+                    expected = _expected_python(settings)
+                    if existing_py.is_file() and expected:
+                        existing_ver = _python_version(existing_py, _noop_log)
+                        recreate = existing_ver[:2] != expected
+            except Exception as exc:
+                append_log(f"Existing environment probe was inconclusive; repair path will continue: {exc}")
+        return InstallOptions(
+            source_zip=selected_source,
+            target_dir=target,
+            python_exe=Path(python_text).expanduser(),
+            compile_exe=True,
+            install_torch=True,
+            replace_existing=replace,
+            recreate_venv=recreate,
+            dependency_mode=dependency_var.get(),
+        )
 
     def worker(options: InstallOptions) -> None:
         try:
@@ -1203,119 +1451,84 @@ def launch_gui(initial_source: Path | None = None) -> int:
         except Exception as exc:
             events.put(("error", exc))
 
-    def install_clicked() -> None:
+    def start_install() -> None:
+        nonlocal busy
         if busy:
             return
-        target_text = target_var.get().strip()
-        python_text = python_var.get().strip()
-        if not target_text or not python_text:
-            messagebox.showerror("Missing information", "Choose the install/update folder and base Python executable.")
-            return
         try:
-            current_info = inspect_package(source)
+            options = build_options()
         except Exception as exc:
-            messagebox.showerror("Payload validation failed", str(exc))
+            messagebox.showerror("Norm Installer", str(exc), parent=root)
             return
-
-        target = Path(target_text).expanduser()
-        replace = False
-        recreate_venv = False
-        if target.exists():
-            try:
-                nonempty = any(target.iterdir())
-            except Exception as exc:
-                messagebox.showerror("Target error", str(exc))
-                return
-            if nonempty:
-                replace = messagebox.askyesno(
-                    "Update existing Norm installation?",
-                    f"{target} is not empty.\n\n"
-                    f"Synchronize package-owned files to {current_info.label}?\n\n"
-                    "The existing compatible .venv, .ssh, user plugins, logs/state, local secrets, and compiled executable are preserved until their normal update/rebuild step.",
-                    icon="question",
-                )
-                if not replace:
-                    return
-                try:
-                    settings = _read_settings(target, json.loads((target / "package-manifest.json").read_text(encoding="utf-8-sig")))
-                    venv_rel = settings.get("environment", "venv_path", fallback=".venv").strip() or ".venv"
-                    existing_py = target / venv_rel / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-                    expected = _expected_python(settings)
-                    if existing_py.is_file() and expected:
-                        existing_ver = _python_version(existing_py, _noop_log)
-                        if existing_ver[:2] != expected:
-                            recreate_venv = messagebox.askyesno(
-                                "Recreate incompatible .venv?",
-                                f"The existing venv uses Python {existing_ver[0]}.{existing_ver[1]}.{existing_ver[2]}, "
-                                f"but this package expects {expected[0]}.{expected[1]}.x.\n\nRecreate the venv using the selected Base Python?",
-                            )
-                            if not recreate_venv:
-                                return
-                except Exception:
-                    # A partial/older install can still be repaired by the normal installer path.
-                    pass
-
+        busy = True
+        step_var.set("✓ Package & Requirements     ● Install     ○ Complete")
+        page_install.tkraise()
+        next_btn.grid_remove()
+        cancel_btn.configure(text="Close", state="disabled")
         log_box.configure(state="normal")
         log_box.delete("1.0", "end")
         log_box.configure(state="disabled")
+        append_log(f"Package: {selected_info.label if selected_info else selected_source.name}")
+        append_log(f"Source: {selected_source}")
+        append_log(f"Requirements mode: {dependency_var.get()}")
+        append_log(f"Target: {options.target_dir}")
+        status_var.set("Installing…")
         progress_var.set(0)
-        status_var.set("Starting installation…")
-        set_busy(True)
-        opts = InstallOptions(
-            source_zip=source,
-            target_dir=target,
-            python_exe=Path(python_text),
-            compile_exe=True,
-            install_torch=True,
-            replace_existing=replace,
-            recreate_venv=recreate_venv,
-        )
-        threading.Thread(target=worker, args=(opts,), daemon=True).start()
+        update_timeline(0)
+        threading.Thread(target=worker, args=(options,), daemon=True).start()
 
-    install_btn.configure(command=install_clicked)
-
-    def pump_events() -> None:
+    def poll_events() -> None:
+        nonlocal busy
         try:
             while True:
                 kind, payload = events.get_nowait()
                 if kind == "log":
                     append_log(str(payload))
                 elif kind == "progress":
-                    value, text = payload  # type: ignore[misc]
-                    progress_var.set(float(value))
+                    value, text = payload
+                    progress_var.set(value)
                     status_var.set(str(text))
-                elif kind == "error":
-                    set_busy(False)
-                    status_var.set("Installation failed")
-                    append_log(f"ERROR: {payload}")
-                    messagebox.showerror("Norm installation failed", str(payload))
+                    update_timeline(int(value))
                 elif kind == "done":
-                    result: InstallResult = payload  # type: ignore[assignment]
-                    set_busy(False)
+                    result = payload
+                    busy = False
                     progress_var.set(100)
-                    status_var.set("Installation complete")
-                    lines = [
-                        f"Installed {result.package.name} {result.package.version}",
-                        f"Target: {result.target_dir}",
-                        f"Virtual environment: {result.venv_python}",
-                    ]
-                    if result.compiled_exe:
-                        lines.append(f"Executable: {result.compiled_exe}")
-                    if result.warnings:
-                        lines.append("")
-                        lines.append("Warnings:")
-                        lines.extend(f"• {item}" for item in result.warnings)
-                    messagebox.showinfo("Norm installation complete", "\n".join(lines))
+                    update_timeline(100)
+                    step_var.set("✓ Package & Requirements     ✓ Install     ● Complete")
+                    completion_var.set(
+                        f"Package: {result.package.label}\n"
+                        f"Installed to: {result.target_dir}\n"
+                        f"Requirements: {'Newest available' if dependency_var.get() == 'newest' else 'Package lock'}\n"
+                        f"Python environment: {result.venv_python}\n"
+                        f"norm.exe: {result.compiled_exe or 'not built'}\n\n"
+                        "Package integrity, environment validation, build, and finalization completed successfully."
+                    )
+                    page_complete.tkraise()
+                    cancel_btn.grid_remove()
+                    finish_btn.grid(row=0, column=2, padx=(8, 0))
+                elif kind == "error":
+                    busy = False
+                    active = next((key for key, state in timeline_state.items() if state == "active"), "validate")
+                    timeline_state[active] = "error"
+                    render_timeline()
+                    status_var.set(f"Installation failed: {payload}")
+                    append_log(f"ERROR: {payload}")
+                    cancel_btn.configure(text="Close", state="normal")
+                    next_btn.configure(text="Retry", command=start_install, state="normal")
+                    next_btn.grid(row=0, column=2, padx=(8, 0))
         except queue.Empty:
             pass
-        root.after(100, pump_events)
+        root.after(100, poll_events)
 
-    root.after(100, pump_events)
+    next_btn.configure(command=start_install)
+    analyze_source()
+    page_setup.tkraise()
+    root.after(100, poll_events)
     root.mainloop()
     return 0
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Norm installer using the newest local Norm source package")
+    parser = argparse.ArgumentParser(description="Reusable local Norm installer; source package is selected at runtime")
     parser.add_argument("--source", help=argparse.SUPPRESS)
     parser.add_argument("--target", help="Installation directory")
     parser.add_argument("--python", dest="python_exe", help="Python executable used to create the Norm venv")
@@ -1352,7 +1565,7 @@ def main() -> int:
         info = inspect_package(source)
         print(json.dumps({
             "installer_version": INSTALLER_VERSION,
-            "source_selection": "explicit --source" if args.source else "newest local package",
+            "source_selection": "explicit --source" if args.source else "most recently modified local package",
             "source": str(info.source_zip),
             "name": info.name,
             "version": info.version,
@@ -1388,16 +1601,9 @@ def main() -> int:
 
 
 def _show_fatal_error(message: str) -> None:
-    """Best-effort visible error for --windowed builds where stderr is invisible."""
-    try:
-        import tkinter as tk
-        from tkinter import messagebox
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showerror("Norm Installer", message)
-        root.destroy()
-    except Exception:
-        pass
+    # The local installer keeps normal validation/errors inside its main window.
+    # This hook remains only for CLI compatibility; it intentionally creates no popup.
+    return None
 
 
 if __name__ == "__main__":
