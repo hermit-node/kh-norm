@@ -1,0 +1,16 @@
+{
+  "name": "norm",
+  "base_model": "qwen3.8:27b-q4_K_M",
+  "context_length": 84000,
+  "phase": "general-assistant",
+  "safety": {
+    "network_scope": "tailscale-only",
+    "confirm_before_file_deletion": false
+  },
+  "future_roles": [
+    "prompt-interpretation-and-refinement",
+    "verification",
+    "persistent-moving-context",
+    "branching-threads"
+  ]
+}

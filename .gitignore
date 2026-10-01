@@ -1,0 +1,28 @@
+# Local/private operator configuration
+norm-imprint.local.json
+norm-imprint.*.local.json
+.env
+.env.*
+!.env.example
+secrets/
+.ssh/
+*.key
+*.pem
+*.pfx
+*.p12
+
+# Installer/build output
+Norm-Installer.exe
+build/
+dist/
+*.spec
+.installer-build/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
