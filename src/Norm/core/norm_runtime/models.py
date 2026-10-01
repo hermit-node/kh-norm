@@ -37,6 +37,11 @@ class TaskPlan:
     steps: tuple[TaskStep, ...]
     created_at: datetime = field(default_factory=utc_now)
     task_uuid: str = field(default_factory=lambda: str(uuid.uuid4()))
+    original_request: str = ""
+    source_prompt_id: str = ""
+    source_user_message_id: str = ""
+    ingrained_detail_count: int = 0
+    ingrained_task_context: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         node_by_legacy = {s.id: s.node_id for s in self.steps}
@@ -45,6 +50,11 @@ class TaskPlan:
             "task_uuid": self.task_uuid,
             "title": self.title,
             "created_at": self.created_at.isoformat(),
+            "original_request": self.original_request,
+            "source_prompt_id": self.source_prompt_id,
+            "source_user_message_id": self.source_user_message_id,
+            "ingrained_detail_count": int(self.ingrained_detail_count or 0),
+            "ingrained_task_context": list(self.ingrained_task_context),
             "steps": [
                 {
                     "id": s.id,

@@ -1,4 +1,4 @@
-# Norm 0.53.7 portable source package
+# Norm 0.53.8 portable source package
 
 This archive is the clean source baseline for installing or rebuilding Norm.
 
@@ -7,6 +7,12 @@ It intentionally contains **no `.venv` and no compiled `norm.exe`**. Those are g
 Machine-specific persistent data and secrets are external to this package. `config\settings.ini` retains the current Norm service topology while runtime-owned paths are relocatable.
 
 Use `package-manifest.json` as the installer's package contract.
+## 0.53.8 Ingrained Details and unresolved bits
+
+Norm now interprets a mixed user turn into one actionable primary request plus optional **Ingrained Details** without altering the verbatim conversation message. Confident details are routed directly to existing durable homes (fact, preference, decision, constraint, task/backlog, assumption, or current-task context); only genuinely unplaced details enter PostgreSQL `unresolved_bits`. `unresolved_bit_trials` records later bounded attempts to fit those bits to real tasks. Promotion/application removes the temporary unresolved state; broad repeated irrelevance can garbage-collect a singly-mentioned bit after the configured trial/domain thresholds. Background-memory condensation sees unresolved state and aggregate trial evidence.
+
+DB3 prompt IDs are also carried through the chat API into durable task provenance, allowing `/queue` and `/queue-full` to report the actual matched task/current step rather than treating the first characters of the original mixed message as the runtime activity description.
+
 ## 0.53.7 large-source streaming and semantic task storage
 
 Native `read_file` no longer rejects a source merely because the whole file is larger than a small byte cap. Sources may be arbitrarily large within the filesystem; reads stream through a 24 MiB processing buffer and return bounded model-facing chunks with byte/line continuation cursors. A 3 GiB per-pass processing allowance checkpoints and parks the same task for manual resume, while Norm-owned task working storage is capped at 54 GiB. Internal Markdown extraction/summary notes rotate at 5 MiB per physical file, and human-facing replies are capped at 384 KiB without truncating the durable task summary.
@@ -43,7 +49,7 @@ Package-managed built-in plugin subtrees are `plugins\backup`, `plugins\verbatim
 
 ## 0.53.1 operator console launcher
 
-`norm.exe` remains detached in service mode. `Run-Norm.bat` now starts three explicit visible operator consoles (Prompt, Runtime, Replies) through a small console host. If a helper exits during startup, that console stays open and shows the exit/error instead of disappearing.
+`norm.exe --service` is launched headlessly with Windows `CREATE_NO_WINDOW` plus a hidden startup window, so the service process no longer leaves an inert console on the desktop. `Run-Norm.bat` still opens the three operator surfaces, but **Norm Runtime** prefers a separate Windows Terminal (`wt.exe`) window for the more compact/refined terminal host and falls back to the classic console when Windows Terminal is unavailable. Norm Prompt and Norm Replies keep their existing explicit console behavior. The Runtime stream already exits when `norm.exe` exits, so shutting Norm down also closes that terminal naturally.
 
 ## 0.52.6 proportional plan verification
 

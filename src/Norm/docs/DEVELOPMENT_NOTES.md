@@ -1,3 +1,15 @@
+## 2026-09-30 — Ingrained Details / unresolved-bits pipeline
+- Mixed user turns were exposing a semantic-loss bug: a correction or aside at the beginning of a turn could dominate `/queue` display while the planner actually worked on a later request, and side information not needed for execution could be silently lost.
+- The full user message remains immutable conversation provenance. A structured turn-interpretation pass now emits a separate primary task request plus zero or more **Ingrained Details**. This replaces the initial command-classification call for normal turns rather than stacking another classifier on top.
+- Ingrained Details are not synonymous with memory candidates. They can be terminology/factual corrections, preferences, decisions, reusable constraints, future work/backlog, tentative assumptions, or context that belongs only to the current task. Confident details go directly to the existing final home; only genuinely unplaced information enters `unresolved_bits`.
+- `unresolved_bits` is deliberately temporary PostgreSQL holding state, not a resolved-history ledger. `unresolved_bit_trials` records where Norm tried to fit each bit while it remained uncertain. Successful task-only application or durable promotion deletes the bit and cascades the temporary trials.
+- Candidate testing is bounded (`test_limit=3`). Token overlap gives plausible bits first chance; otherwise deterministic exploration occurs roughly every fourth task. Trials record a concise task domain, outcome, reason, and useful flag. The default discard gate is 15 trials across 3 domains with zero useful trials and only one user mention. This makes broad demonstrated irrelevance, not age, the garbage-collection signal.
+- Exact repeated unresolved content is deduplicated by normalized SHA-256, increments `mention_count`, and merges source-thread provenance. Repeated user mention protects a bit from the automatic irrelevance prune.
+- Background-memory condensation now includes unresolved-bit state plus aggregate trial evidence. This allows uncertain information to be compressed with the surviving knowledge base without falsely declaring it a curated memory.
+- Task plans now persist both `original_user_prompt` semantics (the complete mixed turn in queued metadata) and `original_request` as the actionable primary task request, plus source prompt/message IDs and relevant Ingrained Details. Child/recovery jobs inherit both views.
+- DB3 prompt ingress now forwards `prompt_id` to `/api/chat`; task-plan provenance carries it into PostgreSQL. `/queue` joins on that ID and, where root/child tasks share it, deliberately keeps the newest updated running task so the displayed current step reflects actual execution rather than an older root snapshot.
+- Debugging principle: if side-context routing becomes a problem, trace the source message -> turn interpretation -> final memory/current-task write or `unresolved_bits` row -> `unresolved_bit_trials`. Do not add a second permanent history table solely to remember that an already-resolved item used to be unresolved.
+
 ## 2026-09-28 — Rotor5 separation and cryptography freeze support
 - Corrected the temporary combined StegoSplit/Rotor5 design: Rotor5 is now an independent plugin and StegoSplit accepts its output as arbitrary bytes through the normal `embed_base64`/`extract_base64` carrier path.
 - Added process-environment export for only `NORM_ROTOR5_SECRET` and `NORM_ROTOR5_PREVIOUS_SECRETS` after the configured `.env` has been loaded/redaction-registered.
@@ -553,3 +565,13 @@ The plan verifier was tightened around blocking execution correctness while redu
 - `_handle_suppressed()` now receives and acknowledges the claimed Redis ID, matching the already-correct pre-execution suppression path.
 - Ollama cancellation paths now suppress intentional transport exception chaining (`raise ... from None`) and vision streaming receives the same normalization as text/tool streaming.
 - Runtime/embedded Rich consoles now distinguish event `cancelled=true` from genuine `model_error` failures when rendering operator output.
+### 2026-09-30 same-version launcher presentation refresh (0.53.8)
+
+- Automatic `norm.exe --service` startup now uses `CREATE_NO_WINDOW` plus hidden Windows startup info instead of relying on detached-console semantics alone. The service remains the same process and still terminates through the existing Norm shutdown path; it simply has no inert visible terminal.
+- `Run-Norm.bat` prefers `wt.exe -w new new-tab` for the read-only **Norm Runtime** activity stream, which restores the more compact/refined terminal host. If Windows Terminal is unavailable it falls back to the existing classic console. Prompt and Replies retain their current consoles.
+- `tools\start_operator_consoles.py` mirrors the same Runtime preference for manual/alternate launcher use. No project or installer version increment was made for this presentation-only switch.
+
+## 2026-09-30 - 0.53.8 same-version startup temp-cleanup hotfix
+- Live runtime startup exposed `NameError: name 'Path' is not defined` from `PromptWorker._purge_temp_outputs()`. The same module also used `Path` in terminal task-temp cleanup while only a few unrelated helper methods imported it locally.
+- Added one module-level `from pathlib import Path`; no behavior/schema/version change. Startup cleanup can again inspect/preserve/remove task temp according to the existing retention policy instead of failing closed on every launch.
+- Kept the failure-safe behavior intact: any future cleanup exception still logs and preserves temp material rather than deleting uncertain state.

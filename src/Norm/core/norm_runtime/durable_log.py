@@ -390,14 +390,46 @@ class PostgresTaskLog:
     def running_tasks(self, limit: int = 20) -> list[dict]:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(sql.SQL("""
-                SELECT task_id,title,status,started_at,updated_at
+                SELECT task_id,title,status,started_at,updated_at,plan
                 FROM {}.task_runs WHERE status='running'
                 ORDER BY updated_at DESC LIMIT %s
             """).format(sql.Identifier(self.schema)), (max(1, int(limit)),))
-            return [{
-                "task_id": str(r[0]), "title": str(r[1]), "status": str(r[2]),
-                "started_at": r[3].isoformat(), "updated_at": r[4].isoformat(),
-            } for r in cur.fetchall()]
+            rows = cur.fetchall()
+            task_ids = [str(r[0]) for r in rows]
+            statuses: dict[str, dict[str, str]] = {task_id: {} for task_id in task_ids}
+            if task_ids:
+                cur.execute(sql.SQL("SELECT task_id,step_id,status FROM {}.task_steps WHERE task_id=ANY(%s)").format(
+                    sql.Identifier(self.schema)
+                ), (task_ids,))
+                for task_id, step_id, status in cur.fetchall():
+                    statuses.setdefault(str(task_id), {})[str(step_id)] = str(status)
+        result: list[dict] = []
+        for row in rows:
+            task_id = str(row[0])
+            plan = row[5] if isinstance(row[5], dict) else {}
+            step_rows = list(plan.get("steps") or []) if isinstance(plan, dict) else []
+            current_step = None
+            for index, item in enumerate(step_rows, start=1):
+                step_id = str(item.get("id") or "")
+                observed = statuses.get(task_id, {}).get(step_id, "pending")
+                if observed not in {"completed", "skipped", "cancelled"}:
+                    current_step = {
+                        "id": step_id,
+                        "name": str(item.get("name") or "")[:160],
+                        "status": observed,
+                        "index": index,
+                        "total": len(step_rows),
+                    }
+                    break
+            result.append({
+                "task_id": task_id, "title": str(row[1]), "status": str(row[2]),
+                "started_at": row[3].isoformat(), "updated_at": row[4].isoformat(),
+                "source_prompt_id": str(plan.get("source_prompt_id") or ""),
+                "original_request": self._original_request_from_plan(plan),
+                "ingrained_detail_count": int(plan.get("ingrained_detail_count") or 0),
+                "current_step": current_step,
+            })
+        return result
 
     def suppress_task(self, task_id: str, reason: str, resume_payload: dict | None = None) -> dict:
         reason = str(reason or "Suppressed by explicit user request.").strip()
@@ -1644,6 +1676,26 @@ class PostgresTaskLog:
             for updated_at, memory_id, memory_type, status, content, superseded_by in cur.fetchall():
                 suffix = f"; superseded_by={superseded_by}" if superseded_by else ""
                 records.append({"at": updated_at, "source": "memory_item", "text": f"Memory {memory_id} [{memory_type}/{status}]{suffix}: {content}"})
+            cur.execute(sql.SQL("""
+                SELECT b.updated_at,b.bit_id,b.normalized,b.why_separate,b.mention_count,
+                       COUNT(t.trial_id)::int,
+                       COUNT(DISTINCT NULLIF(t.task_domain,''))::int,
+                       COALESCE(SUM(CASE WHEN t.useful THEN 1 ELSE 0 END),0)::int,
+                       COALESCE(ARRAY_AGG(DISTINCT t.outcome) FILTER (WHERE t.outcome IS NOT NULL), ARRAY[]::text[])
+                FROM {}.unresolved_bits b
+                LEFT JOIN {}.unresolved_bit_trials t ON t.bit_id=b.bit_id
+                GROUP BY b.bit_id
+                ORDER BY b.updated_at
+            """).format(s, s))
+            for updated_at, bit_id, normalized, why_separate, mentions, trials, domains, useful, outcomes in cur.fetchall():
+                records.append({
+                    "at": updated_at, "source": "unresolved_bit",
+                    "text": (
+                        f"Unresolved bit {bit_id} [ingrained_detail]; mentions={int(mentions or 0)}; "
+                        f"trials={int(trials or 0)}; domains={int(domains or 0)}; useful_trials={int(useful or 0)}; "
+                        f"outcomes={list(outcomes or [])}; detail={normalized}; why_separate={why_separate or ''}"
+                    ),
+                })
             cur.execute(sql.SQL("""
                 SELECT completed_at, task_id, step_id, name, status, summary, verification, error
                 FROM {}.task_steps

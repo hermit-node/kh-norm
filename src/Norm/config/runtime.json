@@ -95,6 +95,13 @@
     "recovery_stale_hours": 24,
     "recovery_cleanup_max_trees": 20
   },
+  "ingrained_details": {
+    "enabled": true,
+    "test_limit": 3,
+    "explore_every_tasks": 4,
+    "delete_after_trials": 15,
+    "delete_after_distinct_domains": 3
+  },
   "maintenance": {
     "redis_reconcile_enabled": true,
     "redis_reconcile_seconds": 14400,

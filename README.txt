@@ -1,12 +1,22 @@
-Norm Installer Kit 1.4.15
+Norm Installer Kit 1.4.16
 =========================
+
+Same-version launcher presentation refresh:
+- automatic norm.exe --service startup is now fully headless (CREATE_NO_WINDOW + hidden startup info), eliminating the inert service console while keeping the same shutdown-owned process lifecycle.
+- Run-Norm.bat prefers a dedicated Windows Terminal window for Norm Runtime when wt.exe is available; Prompt and Replies are unchanged and Runtime falls back to the classic console if needed.
+- this is intentionally still Norm 0.53.8 / Installer Kit 1.4.16.
 
 Included Norm source
 --------------------
-Norm 0.53.7 portable source.
+Norm 0.53.8 portable source.
 
 What changed
 ------------
+- Norm 0.53.8 adds mixed-turn Ingrained Details routing: the full user turn is preserved while the executable primary task is separated from meaningful side information.
+- Confident side details go directly to their final memory/task-context home; genuinely unclear details temporarily enter PostgreSQL unresolved_bits with bounded later test-fit trials.
+- Broad repeated irrelevance, not age, can garbage-collect unresolved bits (default 15 trials across 3 domains, only for singly-mentioned bits with no useful trial).
+- /queue and /queue-full now join the DB3 prompt ID to durable running-task provenance and show the actual current task/step when available instead of treating the first prompt fragment as runtime status.
+- Background-memory condensation sees unresolved-bit state and aggregate trial evidence.
 - Adds /about to both operator prompt surfaces.
 - Adds /memory-condense for incremental consolidated-background-memory refresh.
 - Adds /memory-condense -full for a full-source consolidated-background-memory rebuild.
@@ -18,7 +28,7 @@ What changed
 
 Typical update
 --------------
-1. Put the built Norm-Installer-1.4.15.exe beside Norm-0.53.7-portable-source.zip and its .sha256 file, or run Norm-Installer.py directly with Python.
+1. Put the built Norm-Installer-1.4.16.exe beside Norm-0.53.8-portable-source.zip and its .sha256 file, or run Norm-Installer.py directly with Python.
 2. Update C:\Norm in place.
 3. Leave "compile norm.exe" enabled. The installer reuses/repairs C:\Norm\.venv, installs pinned dependencies, then rebuilds core\norm.exe with cryptography bundled.
 
@@ -40,18 +50,18 @@ Note
 ----
 The kit itself contains source and the installer builder; a Windows norm.exe is produced on the target Windows machine by the normal installer/build path.
 
-0.53.7 / 1.4.15 tuning:
+0.53.8 / 1.4.16 tuning:
 - pre-task /suppress-task now covers active/queued DB3 ingress before a task UUID exists
 - runtime PyInstaller analysis cache is persistent and normal builds are incremental
 - cryptography is pinned to 50.0.2
 - exact already-satisfied dependency locks skip pip reconciliation
 
-1.4.15 builder UX / dependency persistence:
+1.4.16 builder UX / dependency persistence:
 - After "All newest (resolve)" finishes, choose either "This build only" or "Update requirements + this build".
 - The persistent choice rewrites tools\requirements-lock.txt inside the base portable source ZIP, updates matching core\requirements.txt direct pins, validates the new ZIP, and refreshes its .sha256 so later builder runs start from the versions you already approved.
 - The choice popup is a child of the Make Norm Installer window and is centered over that window rather than the physical monitor.
 
-0.53.7 recovery/interjection additions:
+0.53.8 recovery/interjection additions:
 - /inject-context is restored to the current active task tree; injected text is persisted and delivered at the next model-call boundary without creating a new task.
 - Weekly and manual memory-condense maintenance remove verified terminal recovery notes, summarize/replay-validate genuinely dangling nonterminal task trees before pruning, and remove unfinished descendants superseded by an already verified terminal root.
 - Existing request_type/prompt_origin metadata is enforced so Norm-generated work is not described as user-authored.

@@ -98,11 +98,20 @@ def start_norm_detached() -> subprocess.Popen:
     exe = ROOT / "core" / "norm.exe"
     if not exe.is_file():
         raise RuntimeError(f"Norm executable not found: {exe}")
+
+    # Service mode is intentionally headless.  CREATE_NO_WINDOW avoids leaving
+    # an inert norm.exe console behind while the three operator windows are open.
+    # STARTF_USESHOWWINDOW/SW_HIDE is a second guard for Windows launch paths that
+    # would otherwise briefly materialize a console before the child settles.
     flags = 0
-    if hasattr(subprocess, "DETACHED_PROCESS"):
-        flags |= subprocess.DETACHED_PROCESS
-    if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
-        flags |= subprocess.CREATE_NEW_PROCESS_GROUP
+    startupinfo = None
+    if os.name == "nt":
+        flags |= getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        flags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
+        startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
+
     return subprocess.Popen(
         [str(exe), "--service"],
         cwd=str(ROOT),
@@ -110,4 +119,5 @@ def start_norm_detached() -> subprocess.Popen:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         creationflags=flags,
+        startupinfo=startupinfo,
     )

@@ -841,6 +841,7 @@ class GuiPromptDispatcher:
             "message": message,
             "project_id": project_id,
             "thread_id": thread_id,
+            "prompt_id": prompt_id,
         }
         logger.info(
             "Prompt ingress dispatch started source=%s prompt_id=%s entry_id=%s project=%s thread=%s",
