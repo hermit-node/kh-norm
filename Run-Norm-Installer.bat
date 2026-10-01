@@ -1,21 +1,16 @@
 @echo off
-setlocal EnableExtensions
+setlocal
 cd /d "%~dp0"
-
-where py >nul 2>&1
+where pyw >nul 2>nul
 if not errorlevel 1 (
-  py -3.14 "%~dp0Norm-Installer.py"
-  if not errorlevel 1 exit /b 0
-  py -3 "%~dp0Norm-Installer.py"
-  if not errorlevel 1 exit /b 0
+  start "" pyw -3.14 "%~dp0Norm-Installer.py"
+  exit /b 0
 )
-
-where python >nul 2>&1
+where pythonw >nul 2>nul
 if not errorlevel 1 (
-  python "%~dp0Norm-Installer.py"
-  exit /b %errorlevel%
+  start "" pythonw "%~dp0Norm-Installer.py"
+  exit /b 0
 )
-
-echo Python was not found. Use the compiled Norm-Installer-1.4.16.exe or install Python.
+echo Python 3.14 with Tkinter is required to launch the Norm Installer.
 pause
 exit /b 1
