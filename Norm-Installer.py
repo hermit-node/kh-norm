@@ -16,9 +16,9 @@ import time
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 
-INSTALLER_VERSION = "1.5.0-unified"
+INSTALLER_VERSION = "1.6.0-unified"
 PIP_VERSION = "26.2.1"
 PIP_MIN_VERSION = PIP_VERSION  # backward-compatible internal print helper
 PIP_SPEC = f"pip=={PIP_VERSION}"
@@ -59,6 +59,8 @@ class InstallOptions:
     replace_existing: bool = False
     recreate_venv: bool = False
     dependency_mode: str = "package"
+    imprint: dict[str, Any] | None = None
+    secret_values: dict[str, str] | None = None
 
 
 @dataclass
@@ -775,6 +777,19 @@ def install_norm(
             (target / "package-manifest.json").write_text(json.dumps(normalized_manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
             log("Normalized installed package manifest back to portable-source after full-backup restore.")
 
+        # Apply the operator/environment imprint only after package synchronization and
+        # any backup-state restore. This keeps the public package generic while allowing
+        # a local sidecar to deterministically bind this installation to its environment.
+        installed_manifest_path = target / "package-manifest.json"
+        installed_manifest = json.loads(installed_manifest_path.read_text(encoding="utf-8-sig"))
+        _apply_imprint(
+            target,
+            installed_manifest,
+            options.imprint,
+            options.secret_values,
+            log=log,
+        )
+
     # From here onward the install operates only on the target copy.
     manifest_path = target / "package-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
@@ -973,6 +988,320 @@ def _source_directory() -> Path:
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
 
+
+
+IMPRINT_SCHEMA_VERSION = 1
+LOCAL_IMPRINT_NAME = "norm-imprint.local.json"
+EXAMPLE_IMPRINT_NAME = "norm-imprint.example.json"
+_SECRET_KEY_RE = re.compile(r"(?:password|passwd|pwd|secret|token|authkey|api[_-]?key|private[_-]?key)", re.I)
+
+DEFAULT_IMPRINT: dict[str, Any] = {
+    "schema": IMPRINT_SCHEMA_VERSION,
+    "install": {
+        "target_dir": r"C:\Norm",
+        "dependency_mode": "newest",
+        "python_exe": "",
+    },
+    "paths": {
+        "documents_root": r"%USERPROFILE%\Documents\Norm",
+        "workspace_root": "workspace",
+        "temp_root": "temp",
+    },
+    "network": {
+        "current_machine": "norm-host",
+        "current_domain": "example.invalid",
+        "require_tailscale": False,
+        "ollama_host": "loopback",
+        "ollama_port": 11434,
+        "norm_host": "loopback",
+        "norm_port": 12543,
+        "activity_host": "loopback",
+        "activity_port": 8766,
+        "postgres_host": "loopback",
+        "postgres_port": 5432,
+        "redis_host": "loopback",
+        "redis_port": 6379,
+    },
+    "postgres": {
+        "user": "norm",
+        "database": "norm",
+        "schema": "norm_runtime",
+        "stocks_database": "stocks_api",
+    },
+    "ssh": {
+        "enabled": False,
+        "user": "",
+        "remote_host": "",
+        "docker_host": "",
+        "port": 22,
+        "identity_file": "norm_remote_ed25519",
+    },
+    "runtime": {
+        "allowed_roots": [r"%USERPROFILE%\Documents\Norm"],
+        "storage_context": {
+            "primary_name": "documents",
+            "primary_root": r"%USERPROFILE%\Documents\Norm",
+            "backup_name": "workspace",
+        },
+        "network_map": {
+            "never_probe_name_patterns": [
+                "*decoy*",
+                "*honeypot*",
+                "*mesh-canary*",
+                "*mesh-cache*",
+                "*decoy-guard*",
+            ],
+            "never_probe_cidrs": [],
+            "targets": [],
+        },
+    },
+}
+
+
+def _deep_copy(value: Any) -> Any:
+    return json.loads(json.dumps(value))
+
+
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    merged = _deep_copy(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = _deep_copy(value)
+    return merged
+
+
+def _find_forbidden_imprint_key(value: Any, prefix: str = "") -> str | None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            name = str(key)
+            path = f"{prefix}.{name}" if prefix else name
+            if _SECRET_KEY_RE.search(name):
+                return path
+            found = _find_forbidden_imprint_key(child, path)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            found = _find_forbidden_imprint_key(child, f"{prefix}[{index}]")
+            if found:
+                return found
+    return None
+
+
+def validate_imprint(data: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise InstallerError("Imprint must be a JSON object.")
+    schema = data.get("schema", IMPRINT_SCHEMA_VERSION)
+    if schema != IMPRINT_SCHEMA_VERSION:
+        raise InstallerError(
+            f"Unsupported imprint schema {schema!r}; expected {IMPRINT_SCHEMA_VERSION}."
+        )
+    forbidden = _find_forbidden_imprint_key(data)
+    if forbidden:
+        raise InstallerError(
+            f"Imprint contains a secret-like key ({forbidden}). "
+            "Imprint files are intentionally non-secret; enter secrets in masked installer fields instead."
+        )
+    merged = _deep_merge(DEFAULT_IMPRINT, data)
+    merged["schema"] = IMPRINT_SCHEMA_VERSION
+    mode = str(merged.get("install", {}).get("dependency_mode", "newest")).strip().lower()
+    if mode not in {"newest", "package"}:
+        raise InstallerError("install.dependency_mode must be 'newest' or 'package'.")
+    merged["install"]["dependency_mode"] = mode
+    return merged
+
+
+def load_imprint(path: Path | None = None) -> tuple[dict[str, Any], Path | None]:
+    candidate = Path(path).expanduser().resolve() if path else (_source_directory() / LOCAL_IMPRINT_NAME)
+    if not candidate.is_file():
+        return _deep_copy(DEFAULT_IMPRINT), None
+    try:
+        raw = json.loads(candidate.read_text(encoding="utf-8-sig"))
+    except Exception as exc:
+        raise InstallerError(f"Could not read imprint {candidate}: {exc}") from exc
+    return validate_imprint(raw), candidate
+
+
+def _nonsecret_imprint_for_save(data: dict[str, Any]) -> dict[str, Any]:
+    clean = validate_imprint(data)
+    # validate_imprint already rejects secret-like keys; deep-copy so caller mutation cannot alter UI state.
+    return _deep_copy(clean)
+
+
+def save_local_imprint(data: dict[str, Any], path: Path | None = None) -> Path:
+    destination = Path(path).expanduser().resolve() if path else (_source_directory() / LOCAL_IMPRINT_NAME)
+    clean = _nonsecret_imprint_for_save(data)
+    destination.write_text(
+        json.dumps(clean, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    return destination
+
+
+def _coerce_port(value: Any, label: str) -> int:
+    try:
+        port = int(str(value).strip())
+    except (TypeError, ValueError) as exc:
+        raise InstallerError(f"{label} must be an integer port.") from exc
+    if not 1 <= port <= 65535:
+        raise InstallerError(f"{label} must be between 1 and 65535.")
+    return port
+
+
+def _bool_text(value: Any) -> str:
+    return "true" if bool(value) else "false"
+
+
+def _resolve_secrets_path(settings_path: Path) -> Path:
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(settings_path, encoding="utf-8-sig")
+    raw = parser.get("environment", "secrets_file", fallback="").strip()
+    if not raw:
+        raise InstallerError("Installed settings do not define environment.secrets_file.")
+    expanded = _expand_windows_vars(raw)
+    return Path(expanded).expanduser().resolve()
+
+
+def _update_env_file(path: Path, updates: dict[str, str], *, require_password: bool) -> None:
+    existing: dict[str, str] = {}
+    comments: list[str] = []
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8-sig").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                comments.append(line)
+                continue
+            key, value = stripped.split("=", 1)
+            existing[key.strip()] = value.strip()
+
+    for key, value in updates.items():
+        if value is not None and str(value) != "":
+            existing[key] = str(value)
+
+    if require_password and not existing.get("NORM_POSTGRES_PASSWORD", "").strip():
+        raise InstallerError(
+            "PostgreSQL password is required for a new Norm environment. "
+            "Enter it in the masked Database password field. It will be written only to the configured secrets file."
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ordered_keys = [
+        "NORM_POSTGRES_USER",
+        "NORM_POSTGRES_PASSWORD",
+        "NORM_POSTGRES_DB",
+        "NORM_POSTGRES_SCHEMA",
+        "NORM_STOCKS_DB",
+        "NORM_ROTOR5_SECRET",
+        "NORM_ROTOR5_PREVIOUS_SECRETS",
+    ]
+    lines: list[str] = [
+        "# Norm local secrets. This file is not part of the source package or imprint.",
+        "# Keep permissions restricted and never commit it.",
+    ]
+    seen: set[str] = set()
+    for key in ordered_keys:
+        if key in existing:
+            lines.append(f"{key}={existing[key]}")
+            seen.add(key)
+    for key in sorted(existing):
+        if key not in seen:
+            lines.append(f"{key}={existing[key]}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def _apply_imprint(
+    target: Path,
+    manifest: dict[str, Any],
+    imprint: dict[str, Any] | None,
+    secret_values: dict[str, str] | None,
+    *,
+    log: LogFn,
+) -> None:
+    data = validate_imprint(imprint or {})
+    settings_path = target / str(manifest["settings"])
+    if not settings_path.is_file():
+        raise InstallerError(f"Installed settings file is missing: {settings_path}")
+
+    paths = data["paths"]
+    for key in ("documents_root", "workspace_root", "temp_root"):
+        _set_ini_value(settings_path, "paths", key, str(paths[key]))
+
+    network = data["network"]
+    network_keys = (
+        "current_machine", "current_domain", "ollama_host", "norm_host",
+        "activity_host", "postgres_host", "redis_host",
+    )
+    for key in network_keys:
+        _set_ini_value(settings_path, "network", key, str(network[key]))
+    _set_ini_value(settings_path, "network", "require_tailscale", _bool_text(network["require_tailscale"]))
+    for key in ("ollama_port", "norm_port", "activity_port", "postgres_port", "redis_port"):
+        _set_ini_value(settings_path, "network", key, str(_coerce_port(network[key], f"network.{key}")))
+
+    ssh = data["ssh"]
+    _set_ini_value(settings_path, "ssh", "enabled", _bool_text(ssh["enabled"]))
+    _set_ini_value(settings_path, "ssh", "ca8d_host", str(ssh["remote_host"]))
+    _set_ini_value(settings_path, "ssh", "ca8d_docker_host", str(ssh["docker_host"]))
+    _set_ini_value(settings_path, "ssh", "ca8d_port", str(_coerce_port(ssh["port"], "ssh.port")))
+    _set_ini_value(settings_path, "ssh", "ca8d_user", str(ssh["user"]))
+    _set_ini_value(settings_path, "ssh", "ca8d_identity_file", str(ssh["identity_file"]))
+
+    runtime_path = target / str(manifest.get("runtime_config", "config/runtime.json"))
+    if runtime_path.is_file():
+        runtime = json.loads(runtime_path.read_text(encoding="utf-8-sig"))
+        tools = runtime.setdefault("tools", {})
+        allowed = data.get("runtime", {}).get("allowed_roots", [])
+        if not isinstance(allowed, list) or not [str(item).strip() for item in allowed if str(item).strip()]:
+            allowed = [str(paths["documents_root"])]
+        tools["allowed_roots"] = [str(item) for item in allowed if str(item).strip()]
+        storage = data.get("runtime", {}).get("storage_context", {})
+        if isinstance(storage, dict):
+            tools["storage_context"] = {
+                "primary_name": str(storage.get("primary_name") or "documents"),
+                "primary_root": str(storage.get("primary_root") or paths["documents_root"]),
+                "backup_name": str(storage.get("backup_name") or "workspace"),
+                "probe_timeout_seconds": float(storage.get("probe_timeout_seconds", 2.0)),
+                "status_cache_seconds": float(storage.get("status_cache_seconds", 30.0)),
+            }
+        runtime_path.write_text(json.dumps(runtime, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+
+    map_path = target / "config" / "network-map.json"
+    map_cfg = data.get("runtime", {}).get("network_map", {})
+    if isinstance(map_cfg, dict):
+        safe_map = {
+            "schema": 1,
+            "never_probe_name_patterns": list(map_cfg.get("never_probe_name_patterns") or []),
+            "never_probe_cidrs": list(map_cfg.get("never_probe_cidrs") or []),
+            "targets": list(map_cfg.get("targets") or []),
+        }
+        map_path.parent.mkdir(parents=True, exist_ok=True)
+        map_path.write_text(json.dumps(safe_map, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+
+    pg = data["postgres"]
+    updates = {
+        "NORM_POSTGRES_USER": str(pg.get("user") or "norm"),
+        "NORM_POSTGRES_DB": str(pg.get("database") or "norm"),
+        "NORM_POSTGRES_SCHEMA": str(pg.get("schema") or "norm_runtime"),
+        "NORM_STOCKS_DB": str(pg.get("stocks_database") or "stocks_api"),
+    }
+    for key, value in (secret_values or {}).items():
+        if key in {"NORM_POSTGRES_PASSWORD", "NORM_ROTOR5_SECRET", "NORM_ROTOR5_PREVIOUS_SECRETS"}:
+            updates[key] = str(value)
+
+    secrets_path = _resolve_secrets_path(settings_path)
+    _update_env_file(
+        secrets_path,
+        updates,
+        require_password=not secrets_path.is_file(),
+    )
+    log(f"Applied non-secret installer imprint from memory to {settings_path.name}.")
+    log(f"Secrets were written/preserved only in configured secrets file: {secrets_path} (values not logged).")
 
 def _peek_norm_source(path: Path) -> tuple[str, str] | None:
     """Return (version, package_type) for a Norm package without enforcing its companion SHA yet."""
@@ -1176,7 +1505,7 @@ def choose_default_python(source: Path | None) -> Path | None:
     return candidates[0]
 
 
-def launch_gui(initial_source: Path | None = None) -> int:
+def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = None) -> int:
     try:
         import tkinter as tk
         from tkinter import filedialog, messagebox, ttk
@@ -1184,23 +1513,98 @@ def launch_gui(initial_source: Path | None = None) -> int:
     except Exception as exc:
         raise InstallerError(f"Tkinter is required for the GUI installer: {exc}") from exc
 
+    imprint, loaded_imprint_path = load_imprint(imprint_path)
+    raw_imprint: dict[str, Any] = {}
+    if loaded_imprint_path:
+        try:
+            loaded_raw = json.loads(loaded_imprint_path.read_text(encoding="utf-8-sig"))
+            if isinstance(loaded_raw, dict):
+                raw_imprint = loaded_raw
+        except Exception:
+            raw_imprint = {}
+
+    def nested_get(data: dict[str, Any], dotted: str, default: Any = "") -> Any:
+        current: Any = data
+        for part in dotted.split("."):
+            if not isinstance(current, dict) or part not in current:
+                return default
+            current = current[part]
+        return current
+
+    def provided_in_raw(dotted: str) -> bool:
+        current: Any = raw_imprint
+        for part in dotted.split("."):
+            if not isinstance(current, dict) or part not in current:
+                return False
+            current = current[part]
+        return True
+
     root = tk.Tk()
     root.title(f"Norm Installer {INSTALLER_VERSION}")
-    root.geometry("900x650")
-    root.minsize(760, 560)
+    root.geometry("980x760")
+    root.minsize(820, 640)
 
-    target_var = tk.StringVar(value=r"C:\Norm" if os.name == "nt" else str(Path.home() / "Norm"))
-    python_var = tk.StringVar(value="")
-    dependency_var = tk.StringVar(value="newest")
+    target_var = tk.StringVar(value=str(nested_get(imprint, "install.target_dir", r"C:\Norm" if os.name == "nt" else str(Path.home() / "Norm"))))
+    python_var = tk.StringVar(value=str(nested_get(imprint, "install.python_exe", "")))
+    dependency_var = tk.StringVar(value=str(nested_get(imprint, "install.dependency_mode", "newest")))
     package_var = tk.StringVar(value="Searching for the newest Norm package…")
     package_detail_var = tk.StringVar(value="")
     status_var = tk.StringVar(value="Ready")
     progress_var = tk.DoubleVar(value=0)
+    imprint_status_var = tk.StringVar(
+        value=f"Auto-fill: {loaded_imprint_path.name}" if loaded_imprint_path else f"Auto-fill: no {LOCAL_IMPRINT_NAME}; using public defaults"
+    )
 
-    selected_source: Path | None = None
+    # Environment variables. Secret values intentionally never come from an imprint.
+    machine_var = tk.StringVar(value=str(nested_get(imprint, "network.current_machine", "norm-host")))
+    domain_var = tk.StringVar(value=str(nested_get(imprint, "network.current_domain", "example.invalid")))
+    require_tailscale_var = tk.BooleanVar(value=bool(nested_get(imprint, "network.require_tailscale", False)))
+    ollama_host_var = tk.StringVar(value=str(nested_get(imprint, "network.ollama_host", "loopback")))
+    ollama_port_var = tk.StringVar(value=str(nested_get(imprint, "network.ollama_port", 11434)))
+    norm_host_var = tk.StringVar(value=str(nested_get(imprint, "network.norm_host", "loopback")))
+    norm_port_var = tk.StringVar(value=str(nested_get(imprint, "network.norm_port", 12543)))
+    activity_host_var = tk.StringVar(value=str(nested_get(imprint, "network.activity_host", "loopback")))
+    activity_port_var = tk.StringVar(value=str(nested_get(imprint, "network.activity_port", 8766)))
+    postgres_host_var = tk.StringVar(value=str(nested_get(imprint, "network.postgres_host", "loopback")))
+    postgres_port_var = tk.StringVar(value=str(nested_get(imprint, "network.postgres_port", 5432)))
+    redis_host_var = tk.StringVar(value=str(nested_get(imprint, "network.redis_host", "loopback")))
+    redis_port_var = tk.StringVar(value=str(nested_get(imprint, "network.redis_port", 6379)))
+
+    pg_user_var = tk.StringVar(value=str(nested_get(imprint, "postgres.user", "norm")))
+    pg_db_var = tk.StringVar(value=str(nested_get(imprint, "postgres.database", "norm")))
+    pg_schema_var = tk.StringVar(value=str(nested_get(imprint, "postgres.schema", "norm_runtime")))
+    stocks_db_var = tk.StringVar(value=str(nested_get(imprint, "postgres.stocks_database", "stocks_api")))
+    pg_password_var = tk.StringVar(value="")
+    rotor_secret_var = tk.StringVar(value="")
+
+    documents_root_var = tk.StringVar(value=str(nested_get(imprint, "paths.documents_root", r"%USERPROFILE%\Documents\Norm")))
+    workspace_root_var = tk.StringVar(value=str(nested_get(imprint, "paths.workspace_root", "workspace")))
+    temp_root_var = tk.StringVar(value=str(nested_get(imprint, "paths.temp_root", "temp")))
+    allowed_roots_var = tk.StringVar(
+        value=";".join(str(item) for item in nested_get(imprint, "runtime.allowed_roots", [r"%USERPROFILE%\Documents\Norm"]))
+    )
+    storage_primary_name_var = tk.StringVar(value=str(nested_get(imprint, "runtime.storage_context.primary_name", "documents")))
+    storage_primary_root_var = tk.StringVar(value=str(nested_get(imprint, "runtime.storage_context.primary_root", r"%USERPROFILE%\Documents\Norm")))
+    storage_backup_name_var = tk.StringVar(value=str(nested_get(imprint, "runtime.storage_context.backup_name", "workspace")))
+    never_probe_patterns_var = tk.StringVar(
+        value=";".join(str(item) for item in nested_get(imprint, "runtime.network_map.never_probe_name_patterns", []))
+    )
+    never_probe_cidrs_var = tk.StringVar(
+        value=";".join(str(item) for item in nested_get(imprint, "runtime.network_map.never_probe_cidrs", []))
+    )
+
+    ssh_enabled_var = tk.BooleanVar(value=bool(nested_get(imprint, "ssh.enabled", False)))
+    ssh_user_var = tk.StringVar(value=str(nested_get(imprint, "ssh.user", "")))
+    ssh_remote_var = tk.StringVar(value=str(nested_get(imprint, "ssh.remote_host", "")))
+    ssh_docker_var = tk.StringVar(value=str(nested_get(imprint, "ssh.docker_host", "")))
+    ssh_port_var = tk.StringVar(value=str(nested_get(imprint, "ssh.port", 22)))
+    ssh_identity_var = tk.StringVar(value=str(nested_get(imprint, "ssh.identity_file", "norm_remote_ed25519")))
+
+    selected_source: Path | None = initial_source.resolve() if initial_source else None
     selected_info: PackageInfo | None = None
     busy = False
     events: queue.Queue[tuple[str, object]] = queue.Queue()
+    origin_labels: dict[str, Any] = {}
 
     shell = ttk.Frame(root, padding=(18, 14))
     shell.pack(fill="both", expand=True)
@@ -1208,7 +1612,7 @@ def launch_gui(initial_source: Path | None = None) -> int:
     shell.rowconfigure(2, weight=1)
 
     ttk.Label(shell, text="Norm Installer", font=("Segoe UI", 18, "bold")).grid(row=0, column=0, sticky="w")
-    step_var = tk.StringVar(value="● Package & Requirements     ○ Install     ○ Complete")
+    step_var = tk.StringVar(value="● Package     ○ Environment     ○ Install     ○ Complete")
     ttk.Label(shell, textvariable=step_var, font=("Segoe UI", 10)).grid(row=1, column=0, sticky="w", pady=(4, 14))
 
     pages = ttk.Frame(shell)
@@ -1217,28 +1621,30 @@ def launch_gui(initial_source: Path | None = None) -> int:
     pages.columnconfigure(0, weight=1)
 
     page_setup = ttk.Frame(pages)
+    page_environment = ttk.Frame(pages)
     page_install = ttk.Frame(pages)
     page_complete = ttk.Frame(pages)
-    for page in (page_setup, page_install, page_complete):
+    for page in (page_setup, page_environment, page_install, page_complete):
         page.grid(row=0, column=0, sticky="nsew")
 
     actions = ttk.Frame(shell)
     actions.grid(row=3, column=0, sticky="ew", pady=(14, 0))
     actions.columnconfigure(0, weight=1)
 
+    back_btn = ttk.Button(actions, text="< Back")
     cancel_btn = ttk.Button(actions, text="Cancel", command=root.destroy)
-    cancel_btn.grid(row=0, column=1, padx=(8, 0))
     next_btn = ttk.Button(actions, text="Next >", state="disabled")
-    next_btn.grid(row=0, column=2, padx=(8, 0))
     finish_btn = ttk.Button(actions, text="Finish", command=root.destroy)
+    cancel_btn.grid(row=0, column=2, padx=(8, 0))
+    next_btn.grid(row=0, column=3, padx=(8, 0))
 
-    # Page 1
+    # Page 1: package / requirements.
     page_setup.columnconfigure(0, weight=1)
     package_box = ttk.LabelFrame(page_setup, text="Package", padding=12)
     package_box.grid(row=0, column=0, sticky="ew")
     package_box.columnconfigure(0, weight=1)
     ttk.Label(package_box, textvariable=package_var, font=("Segoe UI", 11, "bold")).grid(row=0, column=0, sticky="w")
-    ttk.Label(package_box, textvariable=package_detail_var, wraplength=800, justify="left").grid(
+    ttk.Label(package_box, textvariable=package_detail_var, wraplength=860, justify="left").grid(
         row=1, column=0, sticky="w", pady=(5, 0)
     )
 
@@ -1260,42 +1666,39 @@ def launch_gui(initial_source: Path | None = None) -> int:
     req_box = ttk.LabelFrame(page_setup, text="Requirements", padding=12)
     req_box.grid(row=1, column=0, sticky="ew", pady=(12, 0))
     ttk.Radiobutton(
-        req_box,
-        text="Newest available packages",
-        variable=dependency_var,
-        value="newest",
+        req_box, text="Newest available packages", variable=dependency_var, value="newest"
     ).grid(row=0, column=0, sticky="w")
     ttk.Label(
         req_box,
-        text="Upgrade the distributions named by the selected package lock and let pip resolve the newest normal releases.",
-        wraplength=790,
+        text="Upgrade the distributions named by the selected package lock and let pip resolve newest normal releases.",
+        wraplength=850,
     ).grid(row=1, column=0, sticky="w", padx=(24, 0), pady=(0, 8))
     ttk.Radiobutton(
-        req_box,
-        text="Use package requirements",
-        variable=dependency_var,
-        value="package",
+        req_box, text="Use package requirements", variable=dependency_var, value="package"
     ).grid(row=2, column=0, sticky="w")
     ttk.Label(
         req_box,
         text="Install the exact tools/requirements-lock.txt shipped inside the selected Norm package.",
-        wraplength=790,
+        wraplength=850,
     ).grid(row=3, column=0, sticky="w", padx=(24, 0))
 
     target_box = ttk.LabelFrame(page_setup, text="Install location", padding=12)
     target_box.grid(row=2, column=0, sticky="ew", pady=(12, 0))
     target_box.columnconfigure(0, weight=1)
     ttk.Entry(target_box, textvariable=target_var).grid(row=0, column=0, sticky="ew")
+
     def browse_target() -> None:
         path = filedialog.askdirectory(title="Select Norm installation directory")
         if path:
             target_var.set(path)
+
     ttk.Button(target_box, text="Browse…", command=browse_target).grid(row=0, column=1, padx=(8, 0))
 
     python_box = ttk.LabelFrame(page_setup, text="Base Python", padding=12)
     python_box.grid(row=3, column=0, sticky="ew", pady=(12, 0))
     python_box.columnconfigure(0, weight=1)
     ttk.Entry(python_box, textvariable=python_var).grid(row=0, column=0, sticky="ew")
+
     def browse_python() -> None:
         path = filedialog.askopenfilename(
             title="Select Python executable",
@@ -1303,28 +1706,241 @@ def launch_gui(initial_source: Path | None = None) -> int:
         )
         if path:
             python_var.set(path)
+
     ttk.Button(python_box, text="Browse…", command=browse_python).grid(row=0, column=1, padx=(8, 0))
 
-    # Page 2
+    # Page 2: environment / imprint.
+    page_environment.columnconfigure(0, weight=1)
+    page_environment.rowconfigure(2, weight=1)
+    imprint_banner = ttk.Frame(page_environment)
+    imprint_banner.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+    imprint_banner.columnconfigure(0, weight=1)
+    ttk.Label(imprint_banner, textvariable=imprint_status_var, font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w")
+    ttk.Label(
+        imprint_banner,
+        text="Imprints contain only non-secret topology/settings. Passwords and secrets below are masked and are never saved to the imprint.",
+        wraplength=850,
+    ).grid(row=1, column=0, sticky="w", pady=(2, 0))
+
+    notebook = ttk.Notebook(page_environment)
+    notebook.grid(row=2, column=0, sticky="nsew")
+    network_tab = ttk.Frame(notebook, padding=12)
+    db_tab = ttk.Frame(notebook, padding=12)
+    runtime_tab = ttk.Frame(notebook, padding=12)
+    notebook.add(network_tab, text="Network & services")
+    notebook.add(db_tab, text="Database & SSH")
+    notebook.add(runtime_tab, text="Paths & safety")
+
+    def mark_entered(key: str) -> None:
+        label = origin_labels.get(key)
+        if label is not None:
+            label.configure(text="[entered]")
+
+    def origin_text(key: str) -> str:
+        return "[imprint]" if provided_in_raw(key) else "[default]"
+
+    def add_entry(parent: Any, row: int, label_text: str, var: Any, key: str, *, show: str | None = None, width: int = 34) -> Any:
+        ttk.Label(parent, text=label_text).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
+        entry = ttk.Entry(parent, textvariable=var, width=width, show=show or "")
+        entry.grid(row=row, column=1, sticky="ew", pady=4)
+        badge = ttk.Label(parent, text=origin_text(key), width=11)
+        badge.grid(row=row, column=2, sticky="w", padx=(8, 0))
+        origin_labels[key] = badge
+        entry.bind("<KeyRelease>", lambda _event, k=key: mark_entered(k))
+        return entry
+
+    for tab in (network_tab, db_tab, runtime_tab):
+        tab.columnconfigure(1, weight=1)
+
+    add_entry(network_tab, 0, "Machine name", machine_var, "network.current_machine")
+    add_entry(network_tab, 1, "DNS / tailnet domain", domain_var, "network.current_domain")
+    tailscale_cb = ttk.Checkbutton(
+        network_tab,
+        text="Require Tailscale for current-host bindings",
+        variable=require_tailscale_var,
+        command=lambda: mark_entered("network.require_tailscale"),
+    )
+    tailscale_cb.grid(row=2, column=1, sticky="w", pady=4)
+    badge = ttk.Label(network_tab, text=origin_text("network.require_tailscale"), width=11)
+    badge.grid(row=2, column=2, sticky="w", padx=(8, 0))
+    origin_labels["network.require_tailscale"] = badge
+
+    service_rows = [
+        ("Ollama", ollama_host_var, "network.ollama_host", ollama_port_var, "network.ollama_port"),
+        ("Norm HTTP", norm_host_var, "network.norm_host", norm_port_var, "network.norm_port"),
+        ("Activity", activity_host_var, "network.activity_host", activity_port_var, "network.activity_port"),
+        ("PostgreSQL", postgres_host_var, "network.postgres_host", postgres_port_var, "network.postgres_port"),
+        ("Redis", redis_host_var, "network.redis_host", redis_port_var, "network.redis_port"),
+    ]
+    ttk.Label(network_tab, text="Service").grid(row=3, column=0, sticky="w", pady=(12, 2))
+    ttk.Label(network_tab, text="Host").grid(row=3, column=1, sticky="w", pady=(12, 2))
+    for offset, (label_text, host_var, host_key, port_var, port_key) in enumerate(service_rows, start=4):
+        row_frame = ttk.Frame(network_tab)
+        row_frame.grid(row=offset, column=1, columnspan=2, sticky="ew", pady=3)
+        row_frame.columnconfigure(0, weight=1)
+        ttk.Label(network_tab, text=label_text).grid(row=offset, column=0, sticky="w", pady=3)
+        host_entry = ttk.Entry(row_frame, textvariable=host_var)
+        host_entry.grid(row=0, column=0, sticky="ew")
+        port_entry = ttk.Entry(row_frame, textvariable=port_var, width=8)
+        port_entry.grid(row=0, column=1, padx=(8, 0))
+        host_badge = ttk.Label(row_frame, text=origin_text(host_key), width=11)
+        host_badge.grid(row=0, column=2, padx=(8, 0))
+        port_badge = ttk.Label(row_frame, text=origin_text(port_key), width=11)
+        port_badge.grid(row=0, column=3, padx=(4, 0))
+        origin_labels[host_key] = host_badge
+        origin_labels[port_key] = port_badge
+        host_entry.bind("<KeyRelease>", lambda _e, k=host_key: mark_entered(k))
+        port_entry.bind("<KeyRelease>", lambda _e, k=port_key: mark_entered(k))
+
+    add_entry(db_tab, 0, "PostgreSQL user", pg_user_var, "postgres.user")
+    add_entry(db_tab, 1, "Database", pg_db_var, "postgres.database")
+    add_entry(db_tab, 2, "Schema", pg_schema_var, "postgres.schema")
+    add_entry(db_tab, 3, "Stocks database", stocks_db_var, "postgres.stocks_database")
+    ttk.Label(db_tab, text="PostgreSQL password").grid(row=4, column=0, sticky="w", padx=(0, 8), pady=4)
+    ttk.Entry(db_tab, textvariable=pg_password_var, show="•").grid(row=4, column=1, sticky="ew", pady=4)
+    ttk.Label(db_tab, text="[secret; never saved]").grid(row=4, column=2, sticky="w", padx=(8, 0))
+    ttk.Label(db_tab, text="Rotor5 secret (optional)").grid(row=5, column=0, sticky="w", padx=(0, 8), pady=4)
+    ttk.Entry(db_tab, textvariable=rotor_secret_var, show="•").grid(row=5, column=1, sticky="ew", pady=4)
+    ttk.Label(db_tab, text="[secret; never saved]").grid(row=5, column=2, sticky="w", padx=(8, 0))
+
+    ssh_cb = ttk.Checkbutton(
+        db_tab,
+        text="Enable SSH convenience settings",
+        variable=ssh_enabled_var,
+        command=lambda: mark_entered("ssh.enabled"),
+    )
+    ssh_cb.grid(row=6, column=1, sticky="w", pady=(12, 4))
+    badge = ttk.Label(db_tab, text=origin_text("ssh.enabled"), width=11)
+    badge.grid(row=6, column=2, sticky="w", padx=(8, 0))
+    origin_labels["ssh.enabled"] = badge
+    add_entry(db_tab, 7, "SSH user", ssh_user_var, "ssh.user")
+    add_entry(db_tab, 8, "Remote host", ssh_remote_var, "ssh.remote_host")
+    add_entry(db_tab, 9, "Docker host", ssh_docker_var, "ssh.docker_host")
+    add_entry(db_tab, 10, "SSH port", ssh_port_var, "ssh.port")
+    add_entry(db_tab, 11, "Identity filename", ssh_identity_var, "ssh.identity_file")
+
+    add_entry(runtime_tab, 0, "Documents root", documents_root_var, "paths.documents_root")
+    add_entry(runtime_tab, 1, "Workspace root", workspace_root_var, "paths.workspace_root")
+    add_entry(runtime_tab, 2, "Temp root", temp_root_var, "paths.temp_root")
+    add_entry(runtime_tab, 3, "Allowed roots (; separated)", allowed_roots_var, "runtime.allowed_roots")
+    add_entry(runtime_tab, 4, "Storage primary name", storage_primary_name_var, "runtime.storage_context.primary_name")
+    add_entry(runtime_tab, 5, "Storage primary root", storage_primary_root_var, "runtime.storage_context.primary_root")
+    add_entry(runtime_tab, 6, "Storage backup name", storage_backup_name_var, "runtime.storage_context.backup_name")
+    add_entry(runtime_tab, 7, "Never-probe names (; separated)", never_probe_patterns_var, "runtime.network_map.never_probe_name_patterns")
+    add_entry(runtime_tab, 8, "Never-probe CIDRs (; separated)", never_probe_cidrs_var, "runtime.network_map.never_probe_cidrs")
+    ttk.Label(
+        runtime_tab,
+        text="Network-map active probes are never inferred from discovered peers. Only explicit targets already present in the imprint are probed.",
+        wraplength=760,
+    ).grid(row=9, column=0, columnspan=3, sticky="w", pady=(10, 0))
+
+    def split_list(value: str) -> list[str]:
+        return [item.strip() for item in value.split(";") if item.strip()]
+
+    def collect_imprint() -> dict[str, Any]:
+        # Preserve complex explicit target definitions from the loaded imprint; the GUI
+        # edits only safe scalar/list environment fields.
+        existing_map = nested_get(imprint, "runtime.network_map", {})
+        existing_targets = existing_map.get("targets", []) if isinstance(existing_map, dict) else []
+        data: dict[str, Any] = {
+            "schema": IMPRINT_SCHEMA_VERSION,
+            "install": {
+                "target_dir": target_var.get().strip(),
+                "dependency_mode": dependency_var.get().strip().lower(),
+                "python_exe": python_var.get().strip(),
+            },
+            "paths": {
+                "documents_root": documents_root_var.get().strip(),
+                "workspace_root": workspace_root_var.get().strip(),
+                "temp_root": temp_root_var.get().strip(),
+            },
+            "network": {
+                "current_machine": machine_var.get().strip(),
+                "current_domain": domain_var.get().strip(),
+                "require_tailscale": bool(require_tailscale_var.get()),
+                "ollama_host": ollama_host_var.get().strip(),
+                "ollama_port": _coerce_port(ollama_port_var.get(), "Ollama port"),
+                "norm_host": norm_host_var.get().strip(),
+                "norm_port": _coerce_port(norm_port_var.get(), "Norm HTTP port"),
+                "activity_host": activity_host_var.get().strip(),
+                "activity_port": _coerce_port(activity_port_var.get(), "Activity port"),
+                "postgres_host": postgres_host_var.get().strip(),
+                "postgres_port": _coerce_port(postgres_port_var.get(), "PostgreSQL port"),
+                "redis_host": redis_host_var.get().strip(),
+                "redis_port": _coerce_port(redis_port_var.get(), "Redis port"),
+            },
+            "postgres": {
+                "user": pg_user_var.get().strip(),
+                "database": pg_db_var.get().strip(),
+                "schema": pg_schema_var.get().strip(),
+                "stocks_database": stocks_db_var.get().strip(),
+            },
+            "ssh": {
+                "enabled": bool(ssh_enabled_var.get()),
+                "user": ssh_user_var.get().strip(),
+                "remote_host": ssh_remote_var.get().strip(),
+                "docker_host": ssh_docker_var.get().strip(),
+                "port": _coerce_port(ssh_port_var.get(), "SSH port"),
+                "identity_file": ssh_identity_var.get().strip(),
+            },
+            "runtime": {
+                "allowed_roots": split_list(allowed_roots_var.get()) or [documents_root_var.get().strip()],
+                "storage_context": {
+                    "primary_name": storage_primary_name_var.get().strip() or "documents",
+                    "primary_root": storage_primary_root_var.get().strip() or documents_root_var.get().strip(),
+                    "backup_name": storage_backup_name_var.get().strip() or "workspace",
+                },
+                "network_map": {
+                    "never_probe_name_patterns": split_list(never_probe_patterns_var.get()),
+                    "never_probe_cidrs": split_list(never_probe_cidrs_var.get()),
+                    "targets": list(existing_targets) if isinstance(existing_targets, list) else [],
+                },
+            },
+        }
+        if not data["network"]["current_machine"] or not data["network"]["current_domain"]:
+            raise InstallerError("Machine name and DNS/tailnet domain are required.")
+        for key in ("user", "database", "schema", "stocks_database"):
+            if not data["postgres"][key]:
+                raise InstallerError(f"PostgreSQL {key.replace('_', ' ')} is required.")
+        return validate_imprint(data)
+
+    def save_imprint_clicked() -> None:
+        try:
+            saved = save_local_imprint(collect_imprint())
+            imprint_status_var.set(f"Auto-fill saved: {saved.name} (non-secret only)")
+            messagebox.showinfo(
+                "Norm Installer",
+                f"Saved non-secret auto-fill settings to:\n{saved}\n\n"
+                "Passwords and secret fields were not written.",
+                parent=root,
+            )
+        except Exception as exc:
+            messagebox.showerror("Norm Installer", str(exc), parent=root)
+
+    save_bar = ttk.Frame(page_environment)
+    save_bar.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+    ttk.Button(save_bar, text=f"Save non-secret {LOCAL_IMPRINT_NAME}", command=save_imprint_clicked).pack(side="left")
+
+    # Page 3: install.
     page_install.columnconfigure(1, weight=1)
     page_install.rowconfigure(0, weight=1)
     timeline_box = ttk.LabelFrame(page_install, text="Timeline", padding=10)
     timeline_box.grid(row=0, column=0, sticky="nsw", padx=(0, 10))
     timeline_steps = [
         ("validate", "Validate package", 0, 14),
-        ("sync", "Synchronize Norm", 15, 24),
+        ("sync", "Synchronize / configure", 15, 24),
         ("venv", "Python environment", 25, 37),
         ("deps", "Requirements", 38, 67),
         ("check", "Validate environment", 68, 75),
         ("build", "Build norm.exe", 76, 91),
         ("final", "Finalize", 92, 100),
     ]
-    timeline_labels: dict[str, tk.Label] = {}
+    timeline_labels: dict[str, Any] = {}
     timeline_state = {key: "pending" for key, _, _, _ in timeline_steps}
     for row, (key, label, _, _) in enumerate(timeline_steps):
-        w = tk.Label(timeline_box, text=f"○  {label}", anchor="w", font=("Segoe UI", 9))
-        w.grid(row=row, column=0, sticky="w", pady=5)
-        timeline_labels[key] = w
+        widget = tk.Label(timeline_box, text=f"○  {label}", anchor="w", font=("Segoe UI", 9))
+        widget.grid(row=row, column=0, sticky="w", pady=5)
+        timeline_labels[key] = widget
 
     output_box = ttk.LabelFrame(page_install, text="Installer output", padding=6)
     output_box.grid(row=0, column=1, sticky="nsew")
@@ -1336,16 +1952,15 @@ def launch_gui(initial_source: Path | None = None) -> int:
     ttk.Progressbar(page_install, maximum=100, variable=progress_var).grid(
         row=1, column=0, columnspan=2, sticky="ew", pady=(10, 3)
     )
-    status_label = tk.Label(page_install, textvariable=status_var, anchor="w")
-    status_label.grid(row=2, column=0, columnspan=2, sticky="ew")
+    tk.Label(page_install, textvariable=status_var, anchor="w").grid(row=2, column=0, columnspan=2, sticky="ew")
 
-    # Page 3
+    # Page 4: complete.
     page_complete.columnconfigure(0, weight=1)
     ttk.Label(page_complete, text="✓  Norm was successfully installed / updated", font=("Segoe UI", 16, "bold")).grid(
         row=0, column=0, sticky="w", pady=(8, 16)
     )
     completion_var = tk.StringVar(value="")
-    ttk.Label(page_complete, textvariable=completion_var, justify="left", wraplength=820).grid(row=1, column=0, sticky="nw")
+    ttk.Label(page_complete, textvariable=completion_var, justify="left", wraplength=860).grid(row=1, column=0, sticky="nw")
 
     def append_log(text: str) -> None:
         log_box.configure(state="normal")
@@ -1386,12 +2001,11 @@ def launch_gui(initial_source: Path | None = None) -> int:
             _verify_companion_sha256(selected_source)
             selected_info = inspect_package(selected_source)
             package_var.set(f"{selected_info.label}  •  {selected_source.name}")
-            package_detail_var.set(
-                "✓ Highest valid package version found beside installer  •  ✓ SHA-256 verified"
-            )
-            default_py = choose_default_python(selected_source)
-            if default_py:
-                python_var.set(str(default_py))
+            package_detail_var.set("✓ Highest valid package version found beside installer  •  ✓ SHA-256 verified")
+            if not python_var.get().strip():
+                default_py = choose_default_python(selected_source)
+                if default_py:
+                    python_var.set(str(default_py))
             next_btn.configure(state="normal")
         except Exception as exc:
             selected_info = None
@@ -1399,16 +2013,20 @@ def launch_gui(initial_source: Path | None = None) -> int:
             package_detail_var.set(f"Package validation failed: {exc}")
             next_btn.configure(state="disabled")
 
-    def build_options() -> InstallOptions:
+    def validate_setup() -> None:
         if selected_source is None or selected_info is None:
             raise InstallerError("No valid Norm package is selected.")
-        target_text = target_var.get().strip()
-        python_text = python_var.get().strip()
-        if not target_text:
+        if not target_var.get().strip():
             raise InstallerError("Choose an install location.")
+        python_text = python_var.get().strip()
         if not python_text or not Path(python_text).expanduser().is_file():
             raise InstallerError("Choose a valid Base Python executable.")
-        target = Path(target_text).expanduser()
+
+    def build_options() -> InstallOptions:
+        validate_setup()
+        assert selected_source is not None and selected_info is not None
+        current_imprint = collect_imprint()
+        target = Path(target_var.get().strip()).expanduser()
         replace = False
         recreate = False
         if target.exists() and any(target.iterdir()):
@@ -1429,15 +2047,24 @@ def launch_gui(initial_source: Path | None = None) -> int:
                         recreate = existing_ver[:2] != expected
             except Exception as exc:
                 append_log(f"Existing environment probe was inconclusive; repair path will continue: {exc}")
+
+        secrets: dict[str, str] = {}
+        if pg_password_var.get():
+            secrets["NORM_POSTGRES_PASSWORD"] = pg_password_var.get()
+        if rotor_secret_var.get():
+            secrets["NORM_ROTOR5_SECRET"] = rotor_secret_var.get()
+
         return InstallOptions(
             source_zip=selected_source,
             target_dir=target,
-            python_exe=Path(python_text).expanduser(),
+            python_exe=Path(python_var.get().strip()).expanduser(),
             compile_exe=True,
             install_torch=True,
             replace_existing=replace,
             recreate_venv=recreate,
             dependency_mode=dependency_var.get(),
+            imprint=current_imprint,
+            secret_values=secrets,
         )
 
     def worker(options: InstallOptions) -> None:
@@ -1451,6 +2078,26 @@ def launch_gui(initial_source: Path | None = None) -> int:
         except Exception as exc:
             events.put(("error", exc))
 
+    def show_setup() -> None:
+        step_var.set("● Package     ○ Environment     ○ Install     ○ Complete")
+        page_setup.tkraise()
+        back_btn.grid_remove()
+        cancel_btn.configure(text="Cancel", state="normal")
+        if selected_info is not None:
+            next_btn.configure(state="normal", text="Next >", command=show_environment)
+
+    def show_environment() -> None:
+        try:
+            validate_setup()
+        except Exception as exc:
+            messagebox.showerror("Norm Installer", str(exc), parent=root)
+            return
+        step_var.set("✓ Package     ● Environment     ○ Install     ○ Complete")
+        page_environment.tkraise()
+        back_btn.configure(command=show_setup)
+        back_btn.grid(row=0, column=1, padx=(8, 0))
+        next_btn.configure(text="Install >", command=start_install, state="normal")
+
     def start_install() -> None:
         nonlocal busy
         if busy:
@@ -1461,8 +2108,9 @@ def launch_gui(initial_source: Path | None = None) -> int:
             messagebox.showerror("Norm Installer", str(exc), parent=root)
             return
         busy = True
-        step_var.set("✓ Package & Requirements     ● Install     ○ Complete")
+        step_var.set("✓ Package     ✓ Environment     ● Install     ○ Complete")
         page_install.tkraise()
+        back_btn.grid_remove()
         next_btn.grid_remove()
         cancel_btn.configure(text="Close", state="disabled")
         log_box.configure(state="normal")
@@ -1472,6 +2120,8 @@ def launch_gui(initial_source: Path | None = None) -> int:
         append_log(f"Source: {selected_source}")
         append_log(f"Requirements mode: {dependency_var.get()}")
         append_log(f"Target: {options.target_dir}")
+        append_log(f"Imprint: {loaded_imprint_path.name if loaded_imprint_path else 'public defaults / current UI values'}")
+        append_log("Secret values are masked and are never written to the imprint or installer log.")
         status_var.set("Installing…")
         progress_var.set(0)
         update_timeline(0)
@@ -1494,18 +2144,18 @@ def launch_gui(initial_source: Path | None = None) -> int:
                     busy = False
                     progress_var.set(100)
                     update_timeline(100)
-                    step_var.set("✓ Package & Requirements     ✓ Install     ● Complete")
+                    step_var.set("✓ Package     ✓ Environment     ✓ Install     ● Complete")
                     completion_var.set(
                         f"Package: {result.package.label}\n"
                         f"Installed to: {result.target_dir}\n"
                         f"Requirements: {'Newest available' if dependency_var.get() == 'newest' else 'Package lock'}\n"
                         f"Python environment: {result.venv_python}\n"
                         f"norm.exe: {result.compiled_exe or 'not built'}\n\n"
-                        "Package integrity, environment validation, build, and finalization completed successfully."
+                        "Environment imprint applied. Secret values were stored only in Norm's configured local secrets file."
                     )
                     page_complete.tkraise()
                     cancel_btn.grid_remove()
-                    finish_btn.grid(row=0, column=2, padx=(8, 0))
+                    finish_btn.grid(row=0, column=3, padx=(8, 0))
                 elif kind == "error":
                     busy = False
                     active = next((key for key, state in timeline_state.items() if state == "active"), "validate")
@@ -1515,23 +2165,27 @@ def launch_gui(initial_source: Path | None = None) -> int:
                     append_log(f"ERROR: {payload}")
                     cancel_btn.configure(text="Close", state="normal")
                     next_btn.configure(text="Retry", command=start_install, state="normal")
-                    next_btn.grid(row=0, column=2, padx=(8, 0))
+                    next_btn.grid(row=0, column=3, padx=(8, 0))
         except queue.Empty:
             pass
         root.after(100, poll_events)
 
-    next_btn.configure(command=start_install)
+    next_btn.configure(command=show_environment)
     analyze_source()
-    page_setup.tkraise()
+    show_setup()
     root.after(100, poll_events)
     root.mainloop()
     return 0
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Reusable local Norm installer; source package is selected at runtime")
     parser.add_argument("--source", help=argparse.SUPPRESS)
     parser.add_argument("--target", help="Installation directory")
     parser.add_argument("--python", dest="python_exe", help="Python executable used to create the Norm venv")
+    parser.add_argument("--imprint", help=f"Non-secret imprint JSON; defaults to {LOCAL_IMPRINT_NAME} beside installer")
+    parser.add_argument("--postgres-password-file", help="Headless-only file containing the PostgreSQL password")
+    parser.add_argument("--rotor-secret-file", help="Headless-only file containing the optional Rotor5 secret")
     parser.add_argument("--validate-only", action="store_true", help="Validate the source package and exit")
     parser.add_argument("--install", action="store_true", help="Run headless installation instead of the GUI")
     parser.add_argument("--replace", action="store_true", help="Allow in-place synchronization of a non-empty target")
@@ -1558,6 +2212,8 @@ def main() -> int:
         return 0
 
     source = Path(args.source).expanduser() if args.source else find_latest_source()
+    imprint_path = Path(args.imprint).expanduser() if args.imprint else None
+    imprint, _loaded_imprint_path = load_imprint(imprint_path)
 
     if args.validate_only:
         if not source:
@@ -1577,17 +2233,36 @@ def main() -> int:
         return 0
 
     if args.install:
-        if not source or not args.target or not args.python_exe:
-            parser.error("--install requires a local Norm source package plus --target and --python")
+        install_cfg = imprint.get("install", {})
+        target_arg = args.target or str(install_cfg.get("target_dir") or "")
+        python_arg = args.python_exe or str(install_cfg.get("python_exe") or "")
+        if not source or not target_arg or not python_arg:
+            parser.error(
+                "--install requires a local Norm source package plus target/python values "
+                "(from CLI or the non-secret imprint)"
+            )
+        secret_values: dict[str, str] = {}
+        for file_arg, key in (
+            (args.postgres_password_file, "NORM_POSTGRES_PASSWORD"),
+            (args.rotor_secret_file, "NORM_ROTOR5_SECRET"),
+        ):
+            if file_arg:
+                secret_path = Path(file_arg).expanduser()
+                if not secret_path.is_file():
+                    parser.error(f"Secret file does not exist: {secret_path}")
+                secret_values[key] = secret_path.read_text(encoding="utf-8-sig").strip()
         result = install_norm(
             InstallOptions(
                 source_zip=source,
-                target_dir=Path(args.target),
-                python_exe=Path(args.python_exe),
+                target_dir=Path(target_arg),
+                python_exe=Path(python_arg),
                 compile_exe=not args.no_build,
                 install_torch=not args.no_torch,
                 replace_existing=args.replace,
                 recreate_venv=args.recreate_venv,
+                dependency_mode=str(install_cfg.get("dependency_mode") or "newest"),
+                imprint=imprint,
+                secret_values=secret_values,
             ),
             log=print,
             progress=lambda value, text: print(f"[{value:3d}%] {text}"),
@@ -1597,7 +2272,7 @@ def main() -> int:
             print(f"WARNING: {warning}")
         return 0
 
-    return launch_gui(source)
+    return launch_gui(source, imprint_path=imprint_path)
 
 
 def _show_fatal_error(message: str) -> None:

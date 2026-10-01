@@ -7,10 +7,12 @@ Each non-hidden direct subfolder is a hot-swappable plugin. Public functions def
 Plugin folders are persistent local state during normal installer upgrades. Package-shipped plugin files may be updated by a newer base, while unrelated local plugin folders are preserved. A full-backup restore intentionally restores the captured plugin tree.
 
 
-Built-in package-managed plugin folders in 0.52.0:
+Built-in package-managed plugin folders:
 - `backup` — source/full installer-compatible backups.
 - `verbatim_lines` — exact UTF-8 append/insert plus private stdin CLI.
 - `stegosplit_key` — password/map-key protected 256-bit key pair prototype.
 - `stegosplit_message` — two-PNG UTF-8 message carrier.
+- `rotor5_cipher` — independent reversible message transform.
+- `vision_parse` — rendered-page PDF reading with local vision and text-layer reconciliation.
 
 These built-ins are synchronized by the installer; other plugin folders are local persistent state.

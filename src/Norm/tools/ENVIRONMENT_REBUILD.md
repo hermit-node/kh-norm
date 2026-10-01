@@ -18,4 +18,4 @@ A clean installation should:
 The install script is intentionally separate from this source package so the package remains portable and does not contain machine-specific generated state.
 
 
-StegoSplit is now self-contained under the built-in plugin tree. No editable `D:\LOCAL_Share\Code Projects\StegoSplit-MessageCodec` reinstall is required after recreating `.venv`; Pillow and NumPy from the normal dependency lock are sufficient for the bundled codecs.
+StegoSplit is now self-contained under the built-in plugin tree. No editable `D:\Data\Code Projects\StegoSplit-MessageCodec` reinstall is required after recreating `.venv`; Pillow and NumPy from the normal dependency lock are sufficient for the bundled codecs.

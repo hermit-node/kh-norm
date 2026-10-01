@@ -566,10 +566,12 @@ class RedisPromptQueue:
         return counts
 
     def oldest_task_id(self) -> str | None:
+        # Historical versions deliberately kept acknowledged suppressed rows in Redis.
+        # Ignore those stale rows when selecting the next operator-visible task.
         for stream in (self.stream, self.retry_stream, self.escalation_stream):
-            for _, fields in self.r.xrange(stream, min="-", max="+", count=1):
+            for _, fields in self.r.xrange(stream, min="-", max="+"):
                 task_id = str(fields.get("task_id") or "").strip()
-                if task_id:
+                if task_id and not self._task_suppressed(task_id):
                     return task_id
         return None
 
@@ -646,10 +648,9 @@ class RedisPromptQueue:
             _, fields = rows[0]
             job = self._fields_to_job(msg_id, fields)
             if self._task_suppressed(job.task_id):
-                # Preserve the entry in Redis: ack (remove from PEL) but do NOT
-                # delete from the stream.  Suppressed tasks remain in the queue
-                # until explicit /flush-queue or Redis shutdown.
-                self.ack_preserve(msg_id)
+                # Resume state is already durable in PostgreSQL; remove stale live
+                # queue copies left by older versions so they cannot shadow new work.
+                self.ack(msg_id)
                 continue
             job.created_at = time.time()
             self.r.xack(self.stream, self.group, msg_id)

@@ -1,3 +1,24 @@
+## 0.53.9 — 2026-10-01 — operator network map and public configuration split
+
+- Added `/network-map` and `/network-map --json` as synchronous operator commands before normal DB3 prompt ingress.
+- Active checks come only from explicit `config/network-map.json` targets; discovered peers never widen the probe set. Honeypot/decoy matches remain observable but are never probed.
+- Added `tools/norm-network-map.cmd --json` for SSH/automation.
+- Public defaults are topology-neutral; Unified Installer 1.6.0 supports a local non-secret imprint.
+
+## 0.53.8 same-version reliability hotfix — vision plugin + suppression handoff
+
+- Moved PDF vision parsing into the actual package-managed `plugins\vision_parse` tree. The dynamic plugin exposes `plugin_vision_parse__vision_parse__vision_parse`; the old native duplicate is no longer advertised.
+- Suppressing a durable task now removes its live Redis work/retry/escalation copies after the resume snapshot is safely stored in PostgreSQL, so the worker can immediately advance to unrelated queued work.
+- The synchronous conversation wait path now treats `suppressed` as a terminal-for-this-delivery state and returns promptly, allowing DB3 ingress to acknowledge that prompt and dispatch the next one without requiring `/flush-suppressed`.
+
+
+## 2026-10-01 - 0.53.8 same-version PDF/stream hotfix
+- Added first-party `plugins\vision_parse` PDF reading: PyMuPDF supplies page text/rendering and the local Ollama vision model reconciles visible page content against the untrusted text layer. This avoids treating mojibake, bad column ordering, or OCR-like corruption as ground truth.
+- `vision_parse` handles at most four pages per call and returns page-numbered readings plus a continuation page so large books remain resumable.
+- Added PyMuPDF 1.28.2 to the managed dependency set.
+- Added an Ollama stream watchdog for severe repetitive-token degeneration and bounded partial-line flushing. A no-newline token loop can no longer make the runtime window appear silent and then dump an enormous buffered string only when `/stop-all -now` closes the model response.
+- Preserved the existing 0.53.8 unresolved-bits SQL typing fix and bounded rolling-summary refresh fixes.
+
 ## 0.53.8 — 2026-09-30 — Ingrained Details and unresolved-bit routing
 
 - Added mixed-turn interpretation before planning: Norm preserves the full user message verbatim while separating the primary executable request from meaningful side information typed as **Ingrained Details**.
@@ -10,6 +31,8 @@
 - Carried DB3 ingress `prompt_id` through `/api/chat` into durable task-plan provenance. `/queue` now joins ingress entries to the newest matching running task/child and shows its current step rather than presenting the first characters of a mixed user turn as runtime status.
 - Same-version launcher presentation refresh: automatic `norm.exe --service` startup is fully hidden (`CREATE_NO_WINDOW` + hidden startup info), and `Run-Norm.bat` prefers a dedicated Windows Terminal window for **Norm Runtime** while keeping Prompt/Replies unchanged; the classic Runtime console remains the fallback when `wt.exe` is unavailable.
 - Same-version startup-cleanup hotfix: `prompt_worker.py` now imports `pathlib.Path` at module scope. The 0.53.7 task-retention/temp-cleanup paths already used `Path` during startup and terminal cleanup; the missing import caused `NameError: Path is not defined` and forced Norm to preserve temp material on every startup.
+- Same-version unresolved-bit query hotfix: explicitly cast the nullable exclusion parameter to PostgreSQL `text` when selecting unresolved candidates. PostgreSQL could not infer the type of a bare `%s IS NULL` placeholder and raised `IndeterminateDatatype`, preventing unresolved-context test fitting.
+- Same-version conversation-summary output-budget hotfix: rolling thread summary refresh no longer uses the legacy single 900-token `generate()` call. It now requests bounded structured output with an 8,000-character summary ceiling and a 3,200-token budget, retries once with a 3,500-character compact target after a model length stop, and preserves the prior summary with a warning instead of emitting a background ERROR if even the compact retry cannot fit.
 
 ## 0.53.7 — 2026-09-30 — large-source streaming and semantic task storage
 
@@ -199,7 +222,7 @@ Rules:
 - Replaced the old `[ports]` settings model with `[network]`, including `current_machine`, `current_domain`, per-service host selectors, ports, and `require_tailscale`.
 - Central runtime resolution now derives Redis, prompt/deletion/console queues, PostgreSQL, `stocks_api`, Norm HTTP, activity/control, and Ollama endpoints from the settings resolver instead of duplicating live network values in `runtime.json`.
 - Moved environment-specific PostgreSQL database/user/password values to the configured external `.env` file; runtime JSON no longer carries the connection string.
-- PostgreSQL runtime and `stocks_api` use `khzz.boga-dace.ts.net:25434`; Redis authority uses `khzz.boga-dace.ts.net:6379`; Norm HTTP/activity bind to KHzz’s Tailscale address; Ollama intentionally remains loopback-only.
+- PostgreSQL runtime and `stocks_api` use `norm-host.example.invalid:25434`; Redis authority uses `norm-host.example.invalid:6379`; Norm HTTP/activity bind to NORM-HOST’s Tailscale address; Ollama intentionally remains loopback-only.
 - Added Tailscale Serve TCP forwarding for Redis so Memurai remains bound to `127.0.0.1:6379` while Norm reaches it only through the tailnet authority path.
 - Added a pre-tool-call authority gate: each native Norm tool call must successfully reach/PING the configured Tailscale Redis authority endpoint before execution proceeds.
 - Promoted live executable SHA-256: `0EE7EA56B866F0DC6CC3B54C04A4549A97F76DC4C9CCD968CD13D6D7137CC671`; `norm.exe --version` reports `0.51.4`.
@@ -236,7 +259,7 @@ Rules:
 
 ## 0.51.1 — 2026-09-20 — Runtime/workspace split and reproducible backup
 
-- Moved the runtime to `C:\Norm` while keeping the model-editable workspace at `C:\Users\KHzz\Documents\Norm`; startup validates that the two roots do not overlap.
+- Moved the runtime to `C:\Norm` while keeping the model-editable workspace at `C:\Users\NORM-HOST\Documents\Norm`; startup validates that the two roots do not overlap.
 - Normal and recovery-child tools receive the configured workspace plus approved external roots, while the runtime tree itself is not model-writable.
 - Added `/backup-zip` with PostgreSQL `norm_runtime`, workspace, runtime, manifest, and restore helpers while excluding disposable build/cache output.
 - Removed the large rebuildable `.venv` from backups and added pinned Python/CUDA-Torch/dependency rebuild settings and documentation.

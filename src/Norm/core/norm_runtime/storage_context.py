@@ -29,7 +29,7 @@ class StorageContext:
         key = str(source).strip().lower()
         if key in {"primary", self.primary_name.lower(), "ca8d", "ca8d_smb"}:
             return self.primary_name, self.primary_root
-        if key in {"backup", self.backup_name.lower(), "khzz", "khzz_docs", "local"}:
+        if key in {"backup", self.backup_name.lower(), "workspace", "local"}:
             return self.backup_name, self.backup_root
         raise ValueError(f"unknown storage source: {source}")
 

@@ -1,3 +1,23 @@
+## 2026-10-01 - 0.53.9 operator network map/public configuration boundary
+- Added synchronous `/network-map` and `/network-map --json` operator handling before DB3 prompt enqueue.
+- Passive Tailscale inventory does not expand the active-probe set; only exact configured targets may be actively checked.
+- Never-probe policy now validates resolved addresses against forbidden CIDRs before probing, and HTTP probes are address-pinned and do not follow redirects.
+- Public source defaults are topology-neutral; Unified Installer 1.6.0 owns local non-secret imprint auto-fill while secrets remain outside the imprint.
+- Preserved the merged 0.53.8 `vision_parse`/PyMuPDF, suppression-handoff, and Ollama degeneration-watchdog changes.
+
+## 2026-10-01 — suppression handoff and actual vision_parse plugin
+
+- `vision_parse` belongs in `plugins\vision_parse`, not merely in the core file-tool executor. It is package-managed and hot-hydrated like the other first-party plugins.
+- Suppression snapshot is the durable resume source. Once PostgreSQL has committed the tree suppression + queue snapshot, live Redis copies are cleanup candidates rather than the parked source of truth.
+- `/suppress-task` must release the active `/api/chat` wait as soon as task status becomes `suppressed`; otherwise DB3 ingress remains stuck owning the HTTP request and later queued prompts never dispatch. `/flush-suppressed` is deletion, not a scheduler kick.
+
+
+## 2026-10-01 - semantic PDF reading and degenerate model-stream containment
+- Problem observed in the Dictionary of Women task: raw PDF text conversion was treated as authoritative, malformed spellings leaked into generated regex (`writers` variants), and a worker could enter a long no-newline repetitive model stream that looked 100% busy until cancellation flushed the buffered garbage.
+- First-party `plugins\vision_parse` renders PDF pages with PyMuPDF and sends each rendered page to the configured local vision model. The PDF text layer is included only as an untrusted hint. The prompt requires visual support for corrections and explicitly forbids fabricated typo/regex variants.
+- PDF calls are intentionally bounded to four pages and return `next_page`; book-scale study should extract/normalize in resumable page batches and persist semantic structured data with source-page provenance rather than a wholesale paragraph dump.
+- `OllamaClient._emit` flushes a no-newline partial line every 1024 characters. `_guard_model_stream` checks an 8 KiB tail and raises on extreme compression/dominant-token repetition, preventing pathological streams from consuming an entire 16k/27k generation allowance.
+
 ## 2026-09-30 — Ingrained Details / unresolved-bits pipeline
 - Mixed user turns were exposing a semantic-loss bug: a correction or aside at the beginning of a turn could dominate `/queue` display while the planner actually worked on a later request, and side information not needed for execution could be silently lost.
 - The full user message remains immutable conversation provenance. A structured turn-interpretation pass now emits a separate primary task request plus zero or more **Ingrained Details**. This replaces the initial command-classification call for normal turns rather than stacking another classifier on top.
@@ -155,11 +175,11 @@ Norm's internal coordinator/worker/verifier control plane now uses schema-valida
 - Per-step verification also uses a schema-constrained JSON verdict rather than `VERDICT:` line parsing.
 - Runtime queue protocol version is 2.
 
-Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-protocol-20260916-162126.zip`; it includes a plain-SQL `pg_dump` of the full `norm_runtime` PostgreSQL schema/data as `norm_runtime_postgresql_memory.sql`.
+Pre-change rollback backup: `C:\Users\NORM-HOST\Documents\Norm-backups\pre-json-protocol-20260916-162126.zip`; it includes a plain-SQL `pg_dump` of the full `norm_runtime` PostgreSQL schema/data as `norm_runtime_postgresql_memory.sql`.
 
 ## 2026-09-16 — CA8D primary storage failover — deployed
-- Primary relative-file root is now `\\KH-CA8D\Local1675`; fallback is `C:\Users\KHzz\Documents\Norm\docs`. Existing explicit allowed roots remain available.
-- Storage probes are bounded (2s, 30s cache). Relative reads/writes select CA8D when responsive and KHzz docs when CA8D is unavailable. Writes are never mirrored.
+- Primary relative-file root is now `\\REMOTE-HOST\Share`; fallback is `C:\Users\NORM-HOST\Documents\Norm\docs`. Existing explicit allowed roots remain available.
+- Storage probes are bounded (2s, 30s cache). Relative reads/writes select CA8D when responsive and NORM-HOST docs when CA8D is unavailable. Writes are never mirrored.
 - Every file-tool result includes `storage_context` JSON. Worker `work_request` and durable `step_result` JSON include `context.resource_status.local_storage` / `resource_status.local_storage`, including exact source name, responsiveness, active root, degraded flag, error, and a note that generation continued without the unavailable source.
 - Current live state during deployment: `ca8d_smb` unavailable to Norm because SMB credentials are not yet cached in Norm's Windows session; `khzz_docs` is active fallback. Once SMB auth works, CA8D becomes primary automatically after the status cache expires; no rebuild/restart is required.
 - Source `py_compile`, source `--check`, packaged `--check`, live `/health`, and a packaged end-to-end JSON smoke all passed. Smoke task `chat-2adb56d2-bc94-4647-af9c-94c1bc63a181` recorded the expected degraded storage status.
@@ -169,8 +189,8 @@ Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-proto
 
 - Connection availability is no longer treated as something to probe globally on every task. Optional resources should be queried only when the current operation actually needs them, or when the user explicitly invokes maintenance.
 - `check_connection` is a targeted maintenance tool for exactly one named target: `ca8d`, `khzz_docs`, `postgres`, `redis`, `prompt_queue`, `ollama`, `tailscale`, or `dropbox`.
-- An explicit file path under an already-known allowed root does not trigger unrelated storage checks. This was live-validated with the `goBackend` README task, which stayed entirely under `D:\LOCAL_Share\Code Projects\goBackend` and never touched CA8D.
-- Relative local-file paths still use the configured CA8D-primary/KHzz-docs-fallback selector. The selector checks only what is needed to resolve that relative operation; writes are never mirrored.
+- An explicit file path under an already-known allowed root does not trigger unrelated storage checks. This was live-validated with the `goBackend` README task, which stayed entirely under `D:\Data\Code Projects\goBackend` and never touched CA8D.
+- Relative local-file paths still use the configured CA8D-primary/NORM-HOST-docs-fallback selector. The selector checks only what is needed to resolve that relative operation; writes are never mirrored.
 - Required connection failures are represented through shared `resource_status` JSON: `context_state`, the fixed message `generating with impaired context`, and deduplicated `{connection, reason}` records.
 - PostgreSQL entry/context reads now have degraded paths. If PostgreSQL fails during initial conversation setup, Norm can answer from the current request plus explicitly needed available tools while clearly reporting impaired context. This is not equivalent to normal durable execution and must not be documented as such.
 - Dropbox remains unconfigured in the native runtime; the maintenance check reports that fact without pretending to query an unavailable connector.
@@ -178,9 +198,9 @@ Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-proto
 ## 2026-09-16 — current live validation after impaired-context build
 
 - Current live executable SHA-256: `F9779CFE1DF00EE3F7457755BC06F663E4E1AE2C4A3339FB9F810AF6F4A96014`.
-- Live KHzz Tailscale IPv4 observed during the documentation refresh: `100.95.94.29`; `http://100.95.94.29:12543/health` returned `{"status":"ok"}`.
+- Live NORM-HOST Tailscale IPv4 observed during the documentation refresh: `192.0.2.10`; `http://192.0.2.10:12543/health` returned `{"status":"ok"}`.
 - The earlier CA8D deployment note in this file records the state at that deployment point. Later demand-driven connection and PostgreSQL-degraded work supersedes any implication there that CA8D should be probed for every file task.
-- `chat-a75c8e0b-516d-4e77-932e-0ee779c79575` created a grounded README for `D:\LOCAL_Share\Code Projects\goBackend` and passed structured final verification without a CA8D query.
+- `chat-a75c8e0b-516d-4e77-932e-0ee779c79575` created a grounded README for `D:\Data\Code Projects\goBackend` and passed structured final verification without a CA8D query.
 - `chat-69010cdb-40f5-4df4-a446-98e9a2b3598b` finished the previously deferred synthesis of all 32 SPY/QQQ hypotheses. Final artifact: `docs\SPY_QQQ_20260916_32_hypotheses_synthesized.md`; size 12,758 bytes; SHA-256 `B0D71CC8754E528217EB94D223841DC02C85E298B109107ACB14131A537C504A`.
 - The raw 32-path artifact remains preserved as `docs\SPY_QQQ_20260916_32_hypotheticals_unsynthesized_corrected.md` rather than being overwritten by synthesis.
 - Documentation refresh backup: `staging\pre-doc-refresh-20260916-194654`.
@@ -209,7 +229,7 @@ Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-proto
 - The same SPY run showed that endpoint detection and price conversion can fail independently: geometry found the important wick near `y≈492`, while a bad y->price transform converted it inconsistently with the visible 750 line.
 - Added `docs\CHART_AXIS_GATE.md` as the generic chart price-axis contract: visible numeric anchors only, explicit label-to-grid association, residual/spacing checks, pane identity, monotonic ordering, and local bracket checks before price conversion.
 - `docs\QQQ_AXIS_GATE.md` is now a regression-specific example rather than the general rule. The generic gate is not hard-wired into analyzer code; the deferred enforcement design is tracked in `FUTURE_IMPLEMENTATION_NOTES.md`.
-- Remote Windows rule: stop escalating nested PowerShell/Python/SQL quoting once it becomes fragile. Prefer a small script/file. `C:\Users\KHzz\Documents\Norm\verbatim_lines.py` is the newline-safe helper for verbatim append/insert work.
+- Remote Windows rule: stop escalating nested PowerShell/Python/SQL quoting once it becomes fragile. Prefer a small script/file. `C:\Users\NORM-HOST\Documents\Norm\verbatim_lines.py` is the newline-safe helper for verbatim append/insert work.
 - Documentation refresh on 2026-09-17 trimmed deployment-history detail from the operator README, updated `CURRENT_STATUS.md`, and preserved `SOS.readme` unchanged as forensic evidence.
 
 - Redis inspection reminder: use Norm's `.venv` and Python Redis client with `config\runtime.json`; do not assume `redis-cli` is available. For active-work checks, use consumer-group pending/task state rather than treating stream `XLEN` as the number of live jobs.
@@ -217,7 +237,7 @@ Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-proto
 ## 2026-09-17 - code-first documentation/Redis maintenance pass
 - Re-audited the live source tree rather than trusting handoff prose. Current worker is `app\norm_runtime\prompt_worker.py`; `prompt_worker_legacy.py` is retained history. Runtime config selects `tools\image_analyzer_v3.py`, which wraps v2.
 - Reconfirmed protocol-v2 behavior from source: the final verifier consumes/returns structured control JSON while the accepted `final_candidate.user_reply` remains normal user-facing text/Markdown. This is expected architecture, not an unresolved verifier issue.
-- Standing remote execution rule strengthened: use `C:\Users\KHzz\Documents\Norm\verbatim_lines.py` for essentially all operations beyond the simplest one-liners. Prefer creating a temporary Python script, running it, verifying results, then deleting it.
+- Standing remote execution rule strengthened: use `C:\Users\NORM-HOST\Documents\Norm\verbatim_lines.py` for essentially all operations beyond the simplest one-liners. Prefer creating a temporary Python script, running it, verifying results, then deleting it.
 - Direct Redis audit found DB0 empty; DB1 work/retry/escalation/dead streams empty with zero consumer-group pending entries; DB2 empty. The sole DB1 key is the empty `norm:prompt:work` stream/group shell. Do not `FLUSHDB` a live DB1 merely to erase that infrastructure key.
 - Processed the 08:18 SPY `SOS.readme`: later final verification succeeded at 09:37:41 and live `/health` was OK. The incident was preserved in the maintenance backup and the live SOS was deleted. Standing policy is now to treat SOS as transient task-resolution state: retain it until the originating task is durably completed or deliberately finalized failed in PostgreSQL, then remove it after preserving reusable lessons.
 - Generalized `docs\CHART_VISION_CHEATSHEET.md`; removed QQQ-only anchors/candidate coordinates. QQQ-specific details remain in regression files. The generic axis gate remains instruction-level and is not yet an analyzer-enforced numeric transform.
@@ -266,7 +286,7 @@ Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-proto
 
 ## 2026-09-18 - shell tool and verifier diagnosis
 - Added bounded `run_command(command, cwd?, timeout_seconds?)` to the model tool executor. Runtime config enables PowerShell with a 180-second cap and 20,000-character stdout/stderr capture.
-- Direct source test ran `D:\LOCAL_Share\Code Projects\Universal\ports.py` successfully with exit code 0 and a bindable returned port. The all-busy utility behavior had already been independently verified at 235 unique probes then `False`.
+- Direct source test ran `D:\Data\Code Projects\Universal\ports.py` successfully with exit code 0 and a bindable returned port. The all-busy utility behavior had already been independently verified at 235 unique probes then `False`.
 - The earlier `ports.py` task exposed a pipeline flaw rather than a script flaw: the planner required execution proof, the old worker lacked a shell, intermediate verification still accepted substitute static reasoning, and final verification correctly rejected the missing runtime evidence. Prose-only final repair cannot manufacture missing execution evidence.
 - The missing-evidence failure mode remains an architectural limitation; the implementation plan is tracked in `FUTURE_IMPLEMENTATION_NOTES.md`.
 
@@ -287,7 +307,7 @@ Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-proto
 
 
 ## 2026-09-18 - targeted PostgreSQL prune
-- Created and verified a full pre-prune SQL backup at `C:\Users\KHzz\Documents\Norm-backups\postgres-prune-20260918-1720\norm_runtime_pre_prune.sql` (~13.9 MB) before deleting anything.
+- Created and verified a full pre-prune SQL backup at `C:\Users\NORM-HOST\Documents\Norm-backups\postgres-prune-20260918-1720\norm_runtime_pre_prune.sql` (~13.9 MB) before deleting anything.
 - Compacted redundant Sep-16-18 SPY retry/recovery trees into one validated `task_history` record preserving the 749.60 ground truth, salvage-note location, bounded-scope recovery lesson, and organic-survivor rule.
 - Compacted exact-response/storage/protocol/lifecycle/planner deployment smokes into a second validated `task_history` record.
 - Deleted 117 terminal task rows (including descendants), 463 task-step rows by cascade, 915 live evidence rows by cascade (~6.31M rendered chars), and 145 orphan-style archive rows.
@@ -343,12 +363,12 @@ Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-proto
 - Do not remove the compatibility hard link until a build containing the documentation-pointer source patch is promoted and `/status-context` is verified against the configured paths.
 
 ## 2026-09-20 - Norm 0.51.0 promotion and scheduler/recovery repair
-- `config\settings.ini` is the canonical source for project metadata: Norm `0.51.0`, author/company `KernelHermit`, repository URL `https://github.com/hermit-node`; it also holds maintained-document pointers.
-- Added `tools\build_norm.py` as the repeatable PyInstaller build path. It generates Windows version resources from `settings.ini`; Windows metadata and `norm.exe --version` report 0.51.0 / KernelHermit / the repository URL.
+- `config\settings.ini` is the canonical source for project metadata: Norm `0.51.0`, author/company `hermit-node`, repository URL `https://github.com/hermit-node`; it also holds maintained-document pointers.
+- Added `tools\build_norm.py` as the repeatable PyInstaller build path. It generates Windows version resources from `settings.ini`; Windows metadata and `norm.exe --version` report 0.51.0 / hermit-node / the repository URL.
 - Promoted executable SHA-256: `F0900495F289DABDF0A38AAA7C4014F6E60A37B19B66955CF4BD930571555DD5`; packaged dependency health passed before promotion.
 - Append/follow-up requests now persist only a `deferred-plan` control node while the predecessor is unfinished. The real plan is generated only after the full predecessor task completes and passes structured final verification.
 - Cancelled/failed oversized-recovery children are replaced within a bounded child retry budget without repeatedly consuming the parent retry budget.
-- Worker shell instructions explicitly advertise `C:\Users\KHzz\Documents\Norm\verbatim_lines.py` for multiline/quote-heavy commands without widening native file-tool roots.
+- Worker shell instructions explicitly advertise `C:\Users\NORM-HOST\Documents\Norm\verbatim_lines.py` for multiline/quote-heavy commands without widening native file-tool roots.
 - The pointer-aware build reads maintained-document paths from `settings.ini`; after promotion, the redundant `docs\FUTURE_IMPLEMENTATION_NOTES.md` hard link was removed while preserving the root canonical file.
 
 ## 2026-09-20 - failed documentation self-reconcile stopped and purged
@@ -377,8 +397,8 @@ Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-proto
 - Promoted 0.51.0 executable SHA-256: `A72D7FC8E0268CB42A1F062BB63EFCAA4904B159330972D878779738A2DDAEC6`. Previous live executable backup: `staging\norm-live-before-0.51.0-20260920-194100.exe` (`F0900495...555DD5`).
 
 ## 2026-09-20 - Norm 0.51.1 runtime/workspace split and backup tooling
-- Runtime moved to `C:\Norm`; the model-editable workspace remains `C:\Users\KHzz\Documents\Norm`. `config\settings.ini` now defines `runtime_root`, `workspace_root`, and `verbatim_writer`, and startup validates that runtime/workspace do not overlap.
-- Both normal conversation tools and worker/recovery-child tools inject the configured workspace root as an allowed file root. Effective roots are the Norm workspace, `\\KH-CA8D\Local1675`, and `D:\LOCAL_Share\Code Projects`; `C:\Norm` itself is not model-writable.
+- Runtime moved to `C:\Norm`; the model-editable workspace remains `C:\Users\NORM-HOST\Documents\Norm`. `config\settings.ini` now defines `runtime_root`, `workspace_root`, and `verbatim_writer`, and startup validates that runtime/workspace do not overlap.
+- Both normal conversation tools and worker/recovery-child tools inject the configured workspace root as an allowed file root. Effective roots are the Norm workspace, `\\REMOTE-HOST\Share`, and `D:\Data\Code Projects`; `C:\Norm` itself is not model-writable.
 - `verbatim_lines.py`, runtime logs/state/tools/config/source, build tooling, and the deployed executable now live under `C:\Norm`. Maintained docs/images/context/statements remain under the writable workspace.
 - Added local GUI command `/backup-zip`. It uses settings to create a timestamped ZIP containing a custom-format PostgreSQL `norm_runtime` dump, the workspace tree, and the runtime tree while excluding disposable build/staging/cache directories. The archive contains `backup-manifest.json` plus `.bat`/PowerShell restore helpers; restore refuses while Norm is running and requires explicit `RESTORE` confirmation.
 - Backup validation succeeded by creating a temporary PostgreSQL dump, validating it with `pg_restore --list`, and walking 29,552 runtime files / 4,871,669,539 bytes plus 1,478 workspace files / 881,549,022 bytes.
@@ -417,9 +437,9 @@ Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-proto
 - Two stale CA8D audit tasks were explicitly cancelled and removed from executable Redis work state before release; their PostgreSQL history remains preserved and startup recovery reports no recoverable stale tasks.
 
 ## 2026-09-22 - Norm 0.51.4 centralized network authority and Tailscale fail-closed path
-- Replaced `[ports]` with `[network]` in `config\settings.ini`; topology now includes KHzz/domain identity, host selectors, service ports, and `require_tailscale`.
+- Replaced `[ports]` with `[network]` in `config\settings.ini`; topology now includes NORM-HOST/domain identity, host selectors, service ports, and `require_tailscale`.
 - `runtime_bootstrap.load_config()` resolves Redis/all queue endpoints, PostgreSQL runtime, separate `stocks_api`, Norm HTTP/activity binds, and Ollama from the central network settings. Environment-specific DB names/user/password were moved to the external secrets file configured by `[environment].secrets_file`.
-- Runtime PostgreSQL and `stocks_api` now use `khzz.boga-dace.ts.net:25434`; Redis authority uses `khzz.boga-dace.ts.net:6379`; Norm HTTP/activity bind to KHzz's Tailscale address; Ollama remains intentionally loopback-only.
+- Runtime PostgreSQL and `stocks_api` now use `norm-host.example.invalid:25434`; Redis authority uses `norm-host.example.invalid:6379`; Norm HTTP/activity bind to NORM-HOST's Tailscale address; Ollama remains intentionally loopback-only.
 - Memurai itself remains `127.0.0.1:6379`; Tailscale Serve provides the tailnet TCP endpoint and forwards it to local Redis. Direct tailnet Redis PING was verified.
 - `FileToolExecutor` now performs a Redis authority PING before each native tool call and refuses tool execution when the configured authority endpoint is unavailable. This is a capability-boundary check, not yet continuous mid-command cancellation.
 - PyInstaller 0.51.4 was built, package-checked, promoted, and verified at `C:\Norm\app\norm.exe`; live SHA-256 is `0EE7EA56B866F0DC6CC3B54C04A4549A97F76DC4C9CCD968CD13D6D7137CC671`.
@@ -437,7 +457,7 @@ Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-proto
 - Added a separate CA8D Compose project under `e2e/norm`. Each run uses the already-cached `python:3.14-slim` image but creates a brand-new venv, plus fresh PostgreSQL 16, Redis, Apache, Python fixture, and scriptable Ollama-mock sidecars. Compose volumes are project-scoped and removed with `down -v` after an executed run.
 - The default JIT smoke scenario drives the actual Norm pipeline through planning, native `write_file`/`read_file` calls, final verification, PostgreSQL task persistence, Redis connectivity, Apache shared-file serving, Python HTTP fixture messaging, and a disposable `stocks_api` fixture.
 - JIT convention is `WORKING` (exit 0), `DEAD` (exit 1), `DNE` (exit 3). Stage-only/Compose validation is explicitly setup evidence, never proof that a behavior works.
-- Python syntax, scenario JSON, generated sandbox configuration, source staging, and `docker compose config` all passed. CA8D execution has **not** yet run because the available Docker endpoint on port 2376 requires client TLS credentials and the prior CA8D SSH management key is not present on KHzz.
+- Python syntax, scenario JSON, generated sandbox configuration, source staging, and `docker compose config` all passed. CA8D execution has **not** yet run because the available Docker endpoint on port 2376 requires client TLS credentials and the prior CA8D SSH management key is not present on NORM-HOST.
 - Added workspace `e2e-jit/README.md` and a persistent runtime instruction so Norm may author a disposable JIT test/scenario when explicitly asked. E2E remains opt-in rather than automatic release behavior.
 
 ## 2026-09-23 - GUI UTF transport and emergency stop correction
@@ -456,7 +476,7 @@ Pre-change rollback backup: `C:\Users\KHzz\Documents\Norm-backups\pre-json-proto
 - Repaired `tools\norm_backup.py` for the 0.51.4 centralized configuration model: runtime/workspace paths now come from `load_path_settings()`, PostgreSQL connection/schema from `runtime_bootstrap.load_config()`, and an optional `--label` is recorded in the filename/manifest. Validation succeeded against the live PostgreSQL schema and measured the cleaned runtime/workspace before ZIP creation.
 - Updated backup policy to exclude `state/file-backups`, avoiding recursive backup-of-backup growth while preserving those local mutation backups in place.
 - The user-requested `0.52.5` identifier is being used for this full backup checkpoint only. The deployed packaged runtime remains Norm `0.51.4`; no unfinished post-0.51.4 source drift was promoted or rebuilt as part of this maintenance pass.
-- Created and verified `C:\Users\KHzz\Documents\Norm-backups\Norm-backup-0.52.5-20260923-123324-0400.zip` (SHA-256 `7b0edd732c1540d6bf9bd98b1e7e5801250aec92bd12dbdfa154fe5b3987343e`). Archive `testzip`, `.sha256` match, checkpoint-label manifest check, nested-file-backup exclusion, and `pg_restore --list` on the embedded `norm_runtime` dump all passed. The manifest intentionally records project version `0.51.4` alongside checkpoint label `0.52.5`.
+- Created and verified `C:\Users\NORM-HOST\Documents\Norm-backups\Norm-backup-0.52.5-20260923-123324-0400.zip` (SHA-256 `7b0edd732c1540d6bf9bd98b1e7e5801250aec92bd12dbdfa154fe5b3987343e`). Archive `testzip`, `.sha256` match, checkpoint-label manifest check, nested-file-backup exclusion, and `pg_restore --list` on the embedded `norm_runtime` dump all passed. The manifest intentionally records project version `0.51.4` alongside checkpoint label `0.52.5`.
 
 ## 2026-09-23 - external hot-swappable plugin broker
 - Added `C:\Norm\tools\norm_plugins.py` and configured `documents_root\plugins` as the local plugin root without rebuilding the packaged executable.
@@ -495,7 +515,7 @@ raw recovery/storage code was left intact. Renderer tests preserve contiguous
 model fragments and ignore filtered log noise without injecting blank lines.
 
 Resolved maintained-document paths through the actual settings loader: all five
-point to `C:\Users\KHzz\Documents\Norm`. Prior docs still declared 0.51.4 and
+point to `C:\Users\NORM-HOST\Documents\Norm`. Prior docs still declared 0.51.4 and
 an old executable hash, despite the current executable being 0.51.5. Refreshed
 current documentation; retained release/development history as historical records.
 No PostgreSQL memory write, task creation or service start was performed.
@@ -575,3 +595,9 @@ The plan verifier was tightened around blocking execution correctness while redu
 - Live runtime startup exposed `NameError: name 'Path' is not defined` from `PromptWorker._purge_temp_outputs()`. The same module also used `Path` in terminal task-temp cleanup while only a few unrelated helper methods imported it locally.
 - Added one module-level `from pathlib import Path`; no behavior/schema/version change. Startup cleanup can again inspect/preserve/remove task temp according to the existing retention policy instead of failing closed on every launch.
 - Kept the failure-safe behavior intact: any future cleanup exception still logs and preserves temp material rather than deleting uncertain state.
+
+
+## 2026-09-30 - 0.53.8 same-version rolling-summary output-budget hotfix
+- The long-output/segmentation work in the task worker did not cover `ConversationService._refresh_summary()`, which still called Ollama directly with `num_predict=900`. A long rolling branch summary could therefore raise `ModelOutputTruncated` after the user-facing task had already completed.
+- Summary refresh now uses bounded structured output (`summary` <= 8,000 characters, 3,200-token generation budget) and performs one explicit compact retry (`summary` <= 3,500 characters, 1,800-token budget) if Ollama reports `done_reason=length`.
+- A second length stop is treated as deferred background maintenance: the prior durable summary is preserved and a warning is logged rather than surfacing a red traceback. This keeps the human-response 384 KiB cap, task-worker continuation, and rolling-summary maintenance as separate limits with separate semantics.

@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "never_probe_name_patterns": [
+    "*decoy*",
+    "*honeypot*",
+    "*mesh-canary*",
+    "*mesh-cache*",
+    "*decoy-guard*"
+  ],
+  "never_probe_cidrs": [],
+  "targets": []
+}

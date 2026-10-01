@@ -66,7 +66,7 @@ def main() -> int:
     cmd=[str(python),"-m","PyInstaller","--noconfirm"]
     if args.clean:
         cmd.append("--clean")
-    cmd += ["--onefile","--name","norm","--paths",str(ROOT/"core"),"--collect-all","cryptography","--collect-all","cffi","--hidden-import","_cffi_backend","--version-file",str(version_file),"--distpath",str(out/"dist"),"--workpath",str(work_dir),"--specpath",str(spec_dir),str(ROOT/"core"/"norm_main.py")]
+    cmd += ["--onefile","--name","norm","--paths",str(ROOT/"core"),"--collect-all","cryptography","--collect-all","cffi","--collect-all","pymupdf","--hidden-import","_cffi_backend","--version-file",str(version_file),"--distpath",str(out/"dist"),"--workpath",str(work_dir),"--specpath",str(spec_dir),str(ROOT/"core"/"norm_main.py")]
     print(f"pyinstaller_cache={cache_root}")
     print(f"clean_build={args.clean}")
     cp=subprocess.run(cmd,cwd=str(ROOT))

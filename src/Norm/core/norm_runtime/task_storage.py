@@ -334,4 +334,3 @@ def retain_task_manifest(task_root: str | Path, retention_root: str | Path) -> P
     out = out_root / "manifest.json"
     _atomic_json(out, compact)
     return out
-

@@ -15,8 +15,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "core"
 SETTINGS = ROOT / "config" / "settings.ini"
-NAS_ROOT = Path(r"\\KH-CA8D\Local1675\Docker\ca8d-tailnet-host\e2e\norm")
-REMOTE_ROOT = "/share/Local1675/Docker/ca8d-tailnet-host/e2e/norm"
+NAS_ROOT = Path(os.environ.get("NORM_E2E_NAS_ROOT", r"\\REMOTE-HOST\Share\Norm-E2E"))
+REMOTE_ROOT = os.environ.get("NORM_E2E_REMOTE_ROOT", "/share/Norm-E2E")
 
 
 def project_version() -> str:
@@ -117,7 +117,7 @@ registry_file = .registry.json
 [project]
 name = Norm
 version = {version}
-author = KernelHermit
+author = hermit-node
 repository = https://github.com/hermit-node
 """
     )
