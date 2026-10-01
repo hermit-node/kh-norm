@@ -16,11 +16,11 @@ assert expected == actual, (expected, actual)
 deployment_leak_patterns = [
     re.compile(r"\\\\[^\\\n]+\\(?:Local|Private|Secrets)[^\\\n]*", re.I),
     re.compile(r"\b100\.(?!64\.0\.0\b)(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.(?:\d{1,3})\.(?:\d{1,3})\b"),
-    re.compile(r"\bkh-?ca8d(?:-docker)?\b", re.I),
-    re.compile(r"\bkhzz\b", re.I),
-    re.compile(r"\bboga-dace\.ts\.net\b", re.I),
-    re.compile(r"\bLocal1675\b", re.I),
-    re.compile(r"\bconsole\.1675m\b", re.I),
+    re.compile(r"\bprivate-storage(?:-docker)?\b", re.I),
+    re.compile(r"\bnorm-host\b", re.I),
+    re.compile(r"\bprivate-tailnet\.example\b", re.I),
+    re.compile(r"\bLocalExample\b", re.I),
+    re.compile(r"\bconsole\.example\b", re.I),
 ]
 credential_patterns = [
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),

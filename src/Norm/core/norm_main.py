@@ -34,7 +34,7 @@ from norm_runtime.rich_console import run_console
 from norm_runtime.settings import load_ports, load_project_metadata, load_path_settings
 
 MODEL_NAME = "norm"
-MODEL_STORE = r"G:\Ollama\models"
+MODEL_STORE = r"<configured model store>"
 _WINDOWS_CTRL_HANDLER = None
 
 
