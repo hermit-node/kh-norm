@@ -1,3 +1,16 @@
+## 0.53.8 — 2026-09-30 — Ingrained Details and unresolved-bit routing
+
+- Added mixed-turn interpretation before planning: Norm preserves the full user message verbatim while separating the primary executable request from meaningful side information typed as **Ingrained Details**.
+- Confident details are written directly to their final durable home using existing memory types or current-task context. Explicit corrections can supersede a matched active memory; future actions/backlog items use the existing `task` memory type.
+- Added PostgreSQL `unresolved_bits` as the temporary catch basin only for meaningful details whose correct home is unclear, plus `unresolved_bit_trials` for test-fit evidence while unresolved. Exact repeated unresolved content increments mention count and merges source-thread provenance.
+- Added bounded test-fitting of unresolved bits against later real tasks. Plausible matches are tested immediately; otherwise Norm occasionally explores a few least-tested bits. Promotion/application deletes the temporary unresolved record and its trial history instead of maintaining a resolved graveyard.
+- Added evidence-based unresolved cleanup: by default a singly-mentioned bit may be removed after 15 non-useful trials spanning at least 3 distinct task domains. Repeated user mention or any useful trial prevents that automatic deletion; recency alone does not qualify.
+- Added unresolved-bit state/trial aggregates to background-memory condensation input so uncertain context is visible to compact memory maintenance while still remaining unpromoted.
+- Split task provenance into the full original user turn and the actionable primary task request throughout root, child, recovery, deferred-append, verifier, and worker envelopes. Norm-generated steps remain explicitly internal.
+- Carried DB3 ingress `prompt_id` through `/api/chat` into durable task-plan provenance. `/queue` now joins ingress entries to the newest matching running task/child and shows its current step rather than presenting the first characters of a mixed user turn as runtime status.
+- Same-version launcher presentation refresh: automatic `norm.exe --service` startup is fully hidden (`CREATE_NO_WINDOW` + hidden startup info), and `Run-Norm.bat` prefers a dedicated Windows Terminal window for **Norm Runtime** while keeping Prompt/Replies unchanged; the classic Runtime console remains the fallback when `wt.exe` is unavailable.
+- Same-version startup-cleanup hotfix: `prompt_worker.py` now imports `pathlib.Path` at module scope. The 0.53.7 task-retention/temp-cleanup paths already used `Path` during startup and terminal cleanup; the missing import caused `NameError: Path is not defined` and forced Norm to preserve temp material on every startup.
+
 ## 0.53.7 — 2026-09-30 — large-source streaming and semantic task storage
 
 - Removed the whole-source `read_file` size gate. Large UTF-8 sources are streamed with byte/line continuation cursors; the source itself is not limited by the model-result cap.

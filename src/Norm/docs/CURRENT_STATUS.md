@@ -1,10 +1,10 @@
 # Norm current status
 
-Updated 2026-09-30 for the clean **0.53.7** portable source line.
+Updated 2026-09-30 for the clean **0.53.8** portable source line.
 
 ## Source/layout
 
-- Version: **0.53.7**.
+- Version: **0.53.8**.
 - Runtime root: `C:\Norm` (relocatable by installer); the installed absolute path is written to `config\settings.ini` `[paths].runtime_root`.
 - Runtime source/executable directory: `core\`; compiled executable target is `core\norm.exe`.
 - Maintained docs: `C:\Norm\docs`.
@@ -14,6 +14,16 @@ Updated 2026-09-30 for the clean **0.53.7** portable source line.
 - Durable generated workspace: `%USERPROFILE%\Documents\Norm\workspace`.
 - Disposable/recovery root: `%USERPROFILE%\Documents\Norm\temp`.
 - `.venv` is generated/reusable and is intentionally omitted from source and full backup ZIPs.
+
+## 0.53.8 mixed-turn context routing and unresolved bits
+
+- The full user turn is still stored verbatim, but planning now operates on a separately preserved **primary task request**. Meaningful side information is typed as an **Ingrained Detail** instead of being silently discarded or misrepresented as another execution step.
+- Confident details go directly to an existing durable final home: fact/terminology/correction, preference, decision, reusable constraint, future task/backlog item, assumption, or task-local context. Corrections can supersede an explicitly matched active memory.
+- Only genuinely unplaced details enter PostgreSQL `unresolved_bits`; their temporary test-fit history lives in `unresolved_bit_trials`. There is no resolved graveyard. Promotion/application verifies the final write and then deletes the unresolved row, cascading its trial history.
+- Later real tasks test at most `ingrained_details.test_limit` candidate bits. Lexically plausible bits are considered promptly; otherwise a deterministic exploratory sample occurs roughly every `explore_every_tasks` tasks. Each consideration records a stable task-domain label and outcome.
+- Default irrelevant-bit garbage collection requires at least 15 trials across at least 3 task domains, zero useful trials, and only one user mention. Repeatedly mentioned bits are protected. Age by itself is not evidence for deletion.
+- Background-memory condensation includes unresolved-bit state/trial aggregates so uncertain context can be compressed alongside the rest of surviving PostgreSQL memory without being prematurely promoted.
+- GUI DB3 ingress now carries its `prompt_id` through the chat API into durable task-plan provenance. `/queue` and `/queue-full` join that ID to the newest matching running task/child and expose the actual current task/step; raw prompt previews are only used before a durable task exists or while an item is merely queued.
 
 ## 0.53.7 large-source/task-storage contract
 
@@ -71,7 +81,7 @@ Portable base/source ZIPs remain secrets-free and safe to treat separately from 
 
 ## Installer behavior
 
-The reusable installer performs an in-place managed sync. Changed package files are replaced and package-owned files no longer present are removed. Persistent local directories (`.venv`, `.ssh`, plugins, logs/state) survive normal base updates. Existing compatible venvs are reused. Recommended Installer 1.4.15 binds one exact source payload by filename and SHA-256 and can build a derived payload from locked or newest eligible stable/RC dependency versions. Alpha, beta, and dev releases are excluded. Full-backup packages additionally restore their private state payload.
+The reusable installer performs an in-place managed sync. Changed package files are replaced and package-owned files no longer present are removed. Persistent local directories (`.venv`, `.ssh`, plugins, logs/state) survive normal base updates. Existing compatible venvs are reused. Recommended Installer 1.4.16 binds one exact source payload by filename and SHA-256 and can build a derived payload from locked or newest eligible stable/RC dependency versions. Alpha, beta, and dev releases are excluded. Full-backup packages additionally restore their private state payload.
 
 ## Current validation boundary
 
@@ -88,7 +98,7 @@ Emergency stop now passes the real runtime root into the SOS writer and supplies
 
 ## 0.53.1 operator console launcher
 
-`norm.exe` remains detached in service mode. `Run-Norm.bat` now starts three explicit visible operator consoles (Prompt, Runtime, Replies) through a small console host. If a helper exits during startup, that console stays open and shows the exit/error instead of disappearing.
+`norm.exe --service` is launched headlessly with Windows `CREATE_NO_WINDOW` plus a hidden startup window, so the service process no longer leaves an inert console on the desktop. `Run-Norm.bat` still opens the three operator surfaces, but **Norm Runtime** prefers a separate Windows Terminal (`wt.exe`) window for the more compact/refined terminal host and falls back to the classic console when Windows Terminal is unavailable. Norm Prompt and Norm Replies keep their existing explicit console behavior. The Runtime stream already exits when `norm.exe` exits, so shutting Norm down also closes that terminal naturally.
 
 ## 0.52.6 proportional plan verification
 
@@ -116,3 +126,6 @@ The Windows launcher now starts `norm.exe --service`. Service mode ignores and l
 ## 0.53.1 aiohttp transport
 
 Chat and activity/control HTTP are served by pinned aiohttp 3.14.3 on dedicated asyncio loops. Existing coordinator lifecycle semantics remain compatible; blocking runtime callbacks are offloaded with asyncio.to_thread. SSE disconnects are benign transport events.
+
+### 2026-09-30 same-version startup cleanup correction
+- `core\norm_runtime\prompt_worker.py` imports `pathlib.Path` at module scope. Startup temp cleanup and verified terminal task-temp cleanup therefore execute the existing 0.53.7 retention policy instead of failing with `NameError` and preserving all temp material.

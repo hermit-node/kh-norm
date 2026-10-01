@@ -7,6 +7,7 @@ import logging
 import re
 import socket
 import uuid
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from threading import Event, Lock, Thread
 from time import monotonic, time
@@ -679,7 +680,7 @@ class PromptWorker:
             source = "task"
         return normalize_command({
             "schema_version": PROTOCOL_VERSION, "kind": "command", "category": source,
-            "intent": str((job.metadata or {}).get("original_user_prompt") or job.prompt)[:500],
+            "intent": str((job.metadata or {}).get("task_user_prompt") or (job.metadata or {}).get("original_user_prompt") or job.prompt)[:500],
             "requires_file_mutation": False, "requires_external_research": False,
             "input_has_media": False, "output_requires_media": False,
             "expected_output": {"type": "answer", "format": "text"},
@@ -706,6 +707,7 @@ class PromptWorker:
         prompt_origin = str(metadata.get("prompt_origin") or ("user_prompt" if request_type == "prompt" else "norm_internal"))
         is_user_prompt = request_type == "prompt" and prompt_origin in {"user_prompt", "prompt_interface", "gui_prompt", "ssh_prompt"}
         original_user_prompt = str(metadata.get("original_user_prompt") or (job.prompt if is_user_prompt else "")).strip()
+        task_user_prompt = str(metadata.get("task_user_prompt") or original_user_prompt).strip()
         instruction = str(job.prompt or "")
         if not is_user_prompt:
             instruction = (
@@ -727,6 +729,7 @@ class PromptWorker:
             "project_id": job.project_id,
             "command": self._command_from_job(job),
             "original_user_request": original_user_prompt,
+            "primary_task_request": task_user_prompt,
             "instruction": instruction,
             "context": {
                 "task_working_memory": task_memory,
@@ -734,6 +737,7 @@ class PromptWorker:
                 "background_memory": background,
                 "continuation": job.context,
                 "related_running_work": list((job.metadata or {}).get("related_running_work") or []),
+                "ingrained_task_context": list((job.metadata or {}).get("ingrained_task_context") or []),
                 "dependency_safety": "If required files/structure are unexpectedly absent and related_running_work shows unfinished work intended to create them, do not silently fabricate a parallel foundation; identify the dependency conflict in the step result.",
                 "resource_status": merge_resource_status(resource_status),
             },
@@ -833,6 +837,8 @@ class PromptWorker:
             "prompt_origin": "runtime_final_candidate",
             "context_id": job.task_id,
             "original_user_prompt": str((job.metadata or {}).get("original_user_prompt") or ""),
+            "task_user_prompt": str((job.metadata or {}).get("task_user_prompt") or (job.metadata or {}).get("original_user_prompt") or ""),
+            "ingrained_task_context": list((job.metadata or {}).get("ingrained_task_context") or []),
             "command_envelope": self._command_from_job(job),
             "verification_cycle": 1,
             "queue_protocol_version": PROTOCOL_VERSION,
@@ -870,7 +876,7 @@ class PromptWorker:
         prior = ""
         if self.durable and hasattr(self.durable, "completed_step_context"):
             prior = self.durable.completed_step_context(job.task_id, job.step_id, max_chars=36000)
-        request = str((job.metadata or {}).get("original_user_prompt") or "")
+        request = str((job.metadata or {}).get("task_user_prompt") or (job.metadata or {}).get("original_user_prompt") or "")
         return (
             "You are the final independent verifier for a queued Norm result. The candidate envelope has already passed deterministic JSON shape validation. "
             "Return only the structured JSON object required by the supplied schema. Set verdict=accept only if the user_reply directly and completely satisfies the authoritative request, "
@@ -892,7 +898,7 @@ class PromptWorker:
             f"PERSISTENT OPERATING PRINCIPLES:\n{chr(10).join('- '+str(v) for v in self._runtime_config().get('persistent_instructions', []))}\n\n"
             "Repair only the user-facing reply in this final candidate. Preserve completed work and observed evidence; do not rerun tools or invent actions. "
             "Resolve every verifier issue using the authoritative request and prior completed task state. Return only the replacement user-facing reply, not JSON and not a review report.\n\n"
-            f"AUTHORITATIVE USER REQUEST:\n{(job.metadata or {}).get('original_user_prompt','')}\n\n"
+            f"AUTHORITATIVE PRIMARY TASK REQUEST:\n{(job.metadata or {}).get('task_user_prompt') or (job.metadata or {}).get('original_user_prompt','')}\n\n"
             f"CURRENT CANDIDATE:\n{json.dumps(candidate, ensure_ascii=False)}\n\n"
             f"VERIFICATION ISSUES:\n{json.dumps(verification.get('issues', []), ensure_ascii=False)}\n\n"
             f"PRIOR COMPLETED TASK STATE/EVIDENCE:\n{prior}"
@@ -1392,10 +1398,17 @@ class PromptWorker:
             depends_on=tuple(batch_ids),
         ))
         steps.append(TaskStep("final-verify", "Verify merged child result", "Independently verify the merged child result.", f"Merged child result satisfies parent step and contains exactly {count} valid items.", depends_on=(merge_id,)))
-        plan = TaskPlan(task_id=child_id, title=f"Child decomposition for {job.task_id}/{job.step_id}", steps=tuple(steps))
-        self.live.start_task(child_id, plan.title, plan.as_dict())
         original_user_prompt = str((job.metadata or {}).get("original_user_prompt") or job.prompt).strip()
-        self.durable.start_child_task(plan, job.task_id, job.step_id, original_request=original_user_prompt)
+        task_user_prompt = str((job.metadata or {}).get("task_user_prompt") or original_user_prompt).strip()
+        plan = TaskPlan(
+            task_id=child_id, title=f"Child decomposition for {job.task_id}/{job.step_id}", steps=tuple(steps),
+            original_request=task_user_prompt, source_prompt_id=str((job.metadata or {}).get("source_prompt_id") or ""),
+            source_user_message_id=str((job.metadata or {}).get("original_user_message_id") or ""),
+            ingrained_detail_count=int((job.metadata or {}).get("ingrained_detail_count") or 0),
+            ingrained_task_context=tuple((job.metadata or {}).get("ingrained_task_context") or []),
+        )
+        self.live.start_task(child_id, plan.title, plan.as_dict())
+        self.durable.start_child_task(plan, job.task_id, job.step_id, original_request=task_user_prompt)
         now = _utc_now()
         for step in steps[:2]:
             result = StepResult(child_id, step.id, step.name, StepStatus.COMPLETED, step.description, verification=step.verify, started_at=now, completed_at=now)
@@ -1420,6 +1433,10 @@ class PromptWorker:
                     "step_name": step.name, "verification": step.verify,
                     "prompt_origin": "runtime_child_subtask", "context_id": child_id,
                     "original_user_prompt": original_user_prompt,
+                    "task_user_prompt": task_user_prompt,
+                    "ingrained_task_context": list((job.metadata or {}).get("ingrained_task_context") or []),
+                    "ingrained_detail_count": int((job.metadata or {}).get("ingrained_detail_count") or 0),
+                    "source_prompt_id": str((job.metadata or {}).get("source_prompt_id") or ""),
                     "norm_generated_instruction": child_request, "command_envelope": command,
                     "is_final_candidate": index == len(action_steps) - 1,
                     "final_verification_step_id": "final-verify", "final_verification_node_id": final_verify_step.node_id,
@@ -1466,13 +1483,20 @@ class PromptWorker:
             TaskStep("work", title, instruction, verify, depends_on=("verify-plan",)),
             TaskStep("final-verify", "Verify runtime child result", "Independently verify the child result.", verify, depends_on=("work",)),
         )
-        plan = TaskPlan(task_id=child_id, title=title, steps=steps)
+        original_user_prompt = str((parent_job.metadata or {}).get("original_user_prompt") or parent_job.prompt).strip()
+        task_user_prompt = str((parent_job.metadata or {}).get("task_user_prompt") or original_user_prompt).strip()
+        plan = TaskPlan(
+            task_id=child_id, title=title, steps=steps, original_request=task_user_prompt,
+            source_prompt_id=str((parent_job.metadata or {}).get("source_prompt_id") or ""),
+            source_user_message_id=str((parent_job.metadata or {}).get("original_user_message_id") or ""),
+            ingrained_detail_count=int((parent_job.metadata or {}).get("ingrained_detail_count") or 0),
+            ingrained_task_context=tuple((parent_job.metadata or {}).get("ingrained_task_context") or []),
+        )
         self.live.start_task(child_id, plan.title, plan.as_dict())
         child_kind = "recovery" if "recovery" in str(prompt_origin or "").lower() else "child"
-        original_user_prompt = str((parent_job.metadata or {}).get("original_user_prompt") or parent_job.prompt).strip()
         self.durable.start_child_task(
             plan, parent_job.task_id, parent_job.step_id,
-            original_request=original_user_prompt, task_kind=child_kind,
+            original_request=task_user_prompt, task_kind=child_kind,
         )
         now = _utc_now()
         for step in steps[:2]:
@@ -1502,6 +1526,10 @@ class PromptWorker:
                 "step_name": title, "verification": verify,
                 "prompt_origin": prompt_origin, "context_id": child_id,
                 "original_user_prompt": original_user_prompt,
+                "task_user_prompt": task_user_prompt,
+                "ingrained_task_context": list((parent_job.metadata or {}).get("ingrained_task_context") or []),
+                "ingrained_detail_count": int((parent_job.metadata or {}).get("ingrained_detail_count") or 0),
+                "source_prompt_id": str((parent_job.metadata or {}).get("source_prompt_id") or ""),
                 "norm_generated_instruction": instruction, "command_envelope": command,
                 "is_final_candidate": True, "final_verification_step_id": "final-verify",
                 "final_verification_node_id": final_verify_step.node_id,

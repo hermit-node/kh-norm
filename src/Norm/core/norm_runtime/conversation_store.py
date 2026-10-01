@@ -76,12 +76,45 @@ class ConversationStore:
                 thread_id text NOT NULL REFERENCES {}.threads(thread_id) ON DELETE CASCADE,
                 relevance double precision NOT NULL DEFAULT 1.0, PRIMARY KEY(memory_id, thread_id)
             )""").format(s, s, s))
+            cur.execute(sql.SQL("""CREATE TABLE IF NOT EXISTS {}.unresolved_bits (
+                bit_id text PRIMARY KEY,
+                project_id text NOT NULL REFERENCES {}.projects(project_id) ON DELETE CASCADE,
+                source_message_id text REFERENCES {}.messages(message_id) ON DELETE SET NULL,
+                last_source_message_id text REFERENCES {}.messages(message_id) ON DELETE SET NULL,
+                detail_type text NOT NULL DEFAULT 'ingrained_detail',
+                verbatim text NOT NULL,
+                normalized text NOT NULL,
+                content_hash text NOT NULL,
+                why_separate text NOT NULL DEFAULT '',
+                suggested_destination text NOT NULL DEFAULT '',
+                confidence double precision NOT NULL DEFAULT 0.0,
+                source_thread_ids text[] NOT NULL DEFAULT ARRAY[]::text[],
+                mention_count integer NOT NULL DEFAULT 1,
+                created_at timestamptz NOT NULL DEFAULT now(),
+                updated_at timestamptz NOT NULL DEFAULT now(),
+                last_considered_at timestamptz,
+                UNIQUE(project_id, content_hash)
+            )""").format(s, s, s, s))
+            cur.execute(sql.SQL("""CREATE TABLE IF NOT EXISTS {}.unresolved_bit_trials (
+                trial_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                bit_id text NOT NULL REFERENCES {}.unresolved_bits(bit_id) ON DELETE CASCADE,
+                task_id text NOT NULL,
+                task_domain text NOT NULL DEFAULT 'unknown',
+                outcome text NOT NULL,
+                reason text NOT NULL DEFAULT '',
+                useful boolean NOT NULL DEFAULT false,
+                considered_at timestamptz NOT NULL DEFAULT now()
+            )""").format(s, s))
             cur.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {}.threads(project_id, updated_at DESC)").format(
                 sql.Identifier(f"idx_{self.schema}_threads_project"), s))
             cur.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {}.message_threads(thread_id)").format(
                 sql.Identifier(f"idx_{self.schema}_message_threads_thread"), s))
             cur.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {}.memory_items(project_id, status)").format(
                 sql.Identifier(f"idx_{self.schema}_memory_project_status"), s))
+            cur.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {}.unresolved_bits(project_id, last_considered_at, created_at)").format(
+                sql.Identifier(f"idx_{self.schema}_unresolved_bits_project"), s))
+            cur.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {}.unresolved_bit_trials(bit_id, considered_at)").format(
+                sql.Identifier(f"idx_{self.schema}_unresolved_trials_bit"), s))
             repair_memory_threads_cur(cur, self.schema)
 
     def ensure_project(self, project_id: str, name: str | None = None) -> None:
@@ -186,3 +219,123 @@ class ConversationStore:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(sql.SQL("UPDATE {}.memory_items SET status='superseded',superseded_by=%s,updated_at=now() WHERE memory_id=ANY(%s)").format(
                 sql.Identifier(self.schema)), (superseded_by, memory_ids))
+
+    def add_unresolved_bit(
+        self,
+        project_id: str,
+        *,
+        verbatim: str,
+        normalized: str,
+        why_separate: str = "",
+        suggested_destination: str = "",
+        confidence: float = 0.0,
+        source_message_id: str | None = None,
+        thread_ids: list[str] | None = None,
+    ) -> str:
+        normalized = str(normalized or verbatim or "").strip()
+        verbatim = str(verbatim or normalized).strip()
+        if not normalized:
+            raise ValueError("unresolved bit requires non-empty content")
+        digest = hashlib.sha256(normalized.lower().encode("utf-8")).hexdigest()
+        bit_id = str(uuid.uuid4())
+        clean_threads = [str(v) for v in dict.fromkeys(thread_ids or []) if str(v).strip()]
+        with self._connect() as conn, conn.cursor() as cur:
+            s = sql.Identifier(self.schema)
+            cur.execute(sql.SQL("""
+                INSERT INTO {}.unresolved_bits AS ub(
+                    bit_id,project_id,source_message_id,last_source_message_id,detail_type,
+                    verbatim,normalized,content_hash,why_separate,suggested_destination,
+                    confidence,source_thread_ids
+                ) VALUES (%s,%s,%s,%s,'ingrained_detail',%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT(project_id,content_hash) DO UPDATE SET
+                    last_source_message_id=EXCLUDED.last_source_message_id,
+                    verbatim=EXCLUDED.verbatim,normalized=EXCLUDED.normalized,
+                    why_separate=EXCLUDED.why_separate,
+                    suggested_destination=EXCLUDED.suggested_destination,
+                    confidence=GREATEST(ub.confidence,EXCLUDED.confidence),
+                    source_thread_ids=ARRAY(
+                        SELECT DISTINCT value
+                        FROM unnest(ub.source_thread_ids || EXCLUDED.source_thread_ids) AS merged(value)
+                    ),
+                    mention_count=ub.mention_count+1,updated_at=now()
+                RETURNING bit_id
+            """).format(s), (
+                bit_id, project_id, source_message_id, source_message_id, verbatim, normalized,
+                digest, str(why_separate or "")[:1200], str(suggested_destination or "")[:120],
+                max(0.0, min(float(confidence or 0.0), 1.0)), clean_threads,
+            ))
+            return str(cur.fetchone()[0])
+
+    def unresolved_candidates(
+        self, project_id: str, *, exclude_message_id: str | None = None, limit: int = 12
+    ) -> list[dict]:
+        with self._connect() as conn, conn.cursor() as cur:
+            s = sql.Identifier(self.schema)
+            cur.execute(sql.SQL("""
+                SELECT b.bit_id,b.verbatim,b.normalized,b.why_separate,b.suggested_destination,
+                       b.confidence,b.source_message_id,b.last_source_message_id,b.source_thread_ids,
+                       b.mention_count,b.created_at,b.last_considered_at,
+                       COUNT(t.trial_id)::int AS trial_count,
+                       COUNT(DISTINCT NULLIF(t.task_domain,''))::int AS distinct_domains,
+                       COALESCE(SUM(CASE WHEN t.useful THEN 1 ELSE 0 END),0)::int AS useful_count
+                FROM {}.unresolved_bits b
+                LEFT JOIN {}.unresolved_bit_trials t ON t.bit_id=b.bit_id
+                WHERE b.project_id=%s
+                  AND (%s IS NULL OR b.last_source_message_id IS DISTINCT FROM %s)
+                GROUP BY b.bit_id
+                ORDER BY b.last_considered_at NULLS FIRST, b.updated_at ASC
+                LIMIT %s
+            """).format(s, s), (project_id, exclude_message_id, exclude_message_id, max(1, int(limit))))
+            rows = cur.fetchall()
+        return [{
+            "bit_id": str(r[0]), "verbatim": str(r[1]), "normalized": str(r[2]),
+            "why_separate": str(r[3] or ""), "suggested_destination": str(r[4] or ""),
+            "confidence": float(r[5] or 0.0), "source_message_id": str(r[6] or ""),
+            "last_source_message_id": str(r[7] or ""), "source_thread_ids": list(r[8] or []),
+            "mention_count": int(r[9] or 1), "created_at": r[10].isoformat() if r[10] else None,
+            "last_considered_at": r[11].isoformat() if r[11] else None,
+            "trial_count": int(r[12] or 0), "distinct_domains": int(r[13] or 0),
+            "useful_count": int(r[14] or 0),
+        } for r in rows]
+
+    def record_unresolved_trial(
+        self, bit_id: str, *, task_id: str, task_domain: str, outcome: str, reason: str = "", useful: bool = False
+    ) -> None:
+        with self._connect() as conn, conn.cursor() as cur:
+            s = sql.Identifier(self.schema)
+            cur.execute(sql.SQL("""
+                INSERT INTO {}.unresolved_bit_trials(bit_id,task_id,task_domain,outcome,reason,useful)
+                VALUES (%s,%s,%s,%s,%s,%s)
+            """).format(s), (
+                bit_id, str(task_id), str(task_domain or "unknown")[:120], str(outcome or "ambiguous")[:80],
+                str(reason or "")[:1200], bool(useful),
+            ))
+            cur.execute(sql.SQL("UPDATE {}.unresolved_bits SET last_considered_at=now(),updated_at=now() WHERE bit_id=%s").format(s), (bit_id,))
+
+    def delete_unresolved_bit(self, bit_id: str) -> bool:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("DELETE FROM {}.unresolved_bits WHERE bit_id=%s").format(sql.Identifier(self.schema)), (bit_id,))
+            return bool(cur.rowcount)
+
+    def prune_unresolved_bit_if_exhausted(
+        self, bit_id: str, *, min_trials: int = 15, min_domains: int = 3
+    ) -> bool:
+        with self._connect() as conn, conn.cursor() as cur:
+            s = sql.Identifier(self.schema)
+            cur.execute(sql.SQL("""
+                SELECT b.mention_count,COUNT(t.trial_id)::int,
+                       COUNT(DISTINCT NULLIF(t.task_domain,''))::int,
+                       COALESCE(SUM(CASE WHEN t.useful THEN 1 ELSE 0 END),0)::int
+                FROM {}.unresolved_bits b
+                LEFT JOIN {}.unresolved_bit_trials t ON t.bit_id=b.bit_id
+                WHERE b.bit_id=%s GROUP BY b.bit_id
+            """).format(s, s), (bit_id,))
+            row = cur.fetchone()
+            if not row:
+                return False
+            mentions, trials, domains, useful = (int(row[0] or 0), int(row[1] or 0), int(row[2] or 0), int(row[3] or 0))
+            if mentions > 1 or trials < max(1, int(min_trials)) or domains < max(1, int(min_domains)) or useful > 0:
+                return False
+            cur.execute(sql.SQL("DELETE FROM {}.unresolved_bits WHERE bit_id=%s").format(s), (bit_id,))
+            return bool(cur.rowcount)
+

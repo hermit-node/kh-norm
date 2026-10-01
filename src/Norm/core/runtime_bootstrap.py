@@ -181,6 +181,7 @@ def build_conversation_service(
         activity_source="chat",
     )
     memory_cfg = config.get("memory", {})
+    ingrained_cfg = config.get("ingrained_details", {})
     tools_cfg = config.get("tools", {})
     path_cfg = load_path_settings(root)
     plugin_cfg = load_plugin_settings(root)
@@ -241,6 +242,11 @@ def build_conversation_service(
         durable=durable,
         wait_timeout_seconds=float(config.get("http", {}).get("wait_timeout_seconds", 86400)),
         persistent_instructions=list(config.get("persistent_instructions", [])),
+        ingrained_details_enabled=bool(ingrained_cfg.get("enabled", True)),
+        unresolved_test_limit=int(ingrained_cfg.get("test_limit", 3)),
+        unresolved_explore_every_tasks=int(ingrained_cfg.get("explore_every_tasks", 4)),
+        unresolved_delete_after_trials=int(ingrained_cfg.get("delete_after_trials", 15)),
+        unresolved_delete_after_domains=int(ingrained_cfg.get("delete_after_distinct_domains", 3)),
     )
 
 

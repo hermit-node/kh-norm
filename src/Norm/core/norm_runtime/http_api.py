@@ -85,13 +85,17 @@ def _app_factory(service: ConversationService):
             thread_id = payload.get("thread_id")
             if thread_id is not None and (not isinstance(thread_id, str) or not thread_id):
                 return web.json_response({"error": "thread_id must be a non-empty string or null"}, status=400)
+            source_prompt_id = payload.get("prompt_id")
+            if source_prompt_id is not None and not isinstance(source_prompt_id, str):
+                return web.json_response({"error": "prompt_id must be a string or null"}, status=400)
 
-            logging.info("Chat request project=%s explicit_thread=%s", project_id, bool(thread_id))
+            logging.info("Chat request project=%s explicit_thread=%s prompt_id=%s", project_id, bool(thread_id), str(source_prompt_id or "")[:12])
             server.begin_request()
             try:
                 try:
                     result = await asyncio.to_thread(
-                        service.chat, message, project_id=project_id, thread_id=thread_id
+                        service.chat, message, project_id=project_id, thread_id=thread_id,
+                        source_prompt_id=str(source_prompt_id or ""),
                     )
                 except ValueError as exc:
                     logging.warning("Bad chat request: %s", exc)

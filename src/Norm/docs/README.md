@@ -1,6 +1,6 @@
 # Norm
 
-**Norm 0.53.7** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
+**Norm 0.53.8** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
 
 ## Canonical layout
 
@@ -55,6 +55,18 @@ The weekly maintenance cycle and manual `/memory-condense` / `/memory-condense -
 
 Queued work keeps its existing first-class `request_type` and `prompt_origin`. Only real prompt-interface input is treated as user-authored. Planner steps, child tasks, recovery work, verification, and maintenance are explicitly labelled as Norm-internal instructions in model envelopes, while `original_user_prompt` remains the immutable user request carried through descendants.
 
+## Mixed-turn interpretation and Ingrained Details
+
+A user turn is stored verbatim, but Norm no longer assumes that every meaningful sentence belongs to the same executable task. Before planning, one structured interpretation separates the **primary task request** from **Ingrained Details**: meaningful side information such as terminology corrections, reusable preferences, future work, project intentions, or corrections to prior context. Details required to understand the primary task stay in that task; reusable details may both influence the current task and be stored durably.
+
+Confident Ingrained Details go directly to their final home using the existing durable memory types (`fact`, `preference`, `decision`, `constraint`, `task`, `assumption`) or current-task context. A confident correction may supersede the specific prior memory it replaces. Norm does not create a permanent intermediate ledger for already-resolved details.
+
+Meaningful details whose correct destination is genuinely unclear are temporarily stored in PostgreSQL `unresolved_bits`. `unresolved_bit_trials` records only the experiments performed while a bit is unresolved. On later real tasks Norm test-fits at most a few plausible bits, recording the task domain and whether the bit applied, found a durable home, remained ambiguous, or proved irrelevant. A resolved bit is written to its final home and its temporary unresolved row is deleted; trial rows disappear by cascade. By default a singly-mentioned bit with no useful trial may be garbage-collected after at least 15 genuine `not_relevant` trials spanning at least 3 task domains. Repeated user mention protects it from that automatic discard rule. Recency alone is never the deletion criterion.
+
+Background-memory condensation also sees the current unresolved-bit state and its aggregate trial evidence, allowing useful uncertain context to survive compactly without pretending it has already become a curated memory.
+
+Queue status preserves the same provenance split. DB3 `prompt_id` is carried into the durable task plan, and `/queue` joins the ingress row to the newest matching running task/child so it can show the actual task title and current step. The beginning of the raw mixed user message remains provenance, not a false description of what the worker is currently doing.
+
 ## External workspace and temp policy
 
 Use `%USERPROFILE%\Documents\Norm\workspace` for artifacts or working files that should survive normal maintenance. Use `%USERPROFILE%\Documents\Norm\temp` for disposable helper scripts, scratch/intermediate files, blocked-write staging, and recovery output. Task-scoped temp is removed only after durable terminal verification. Older scratch is age-cleaned by maintenance. SOS/recovery files are retained unless their referenced tasks are durably terminal.
@@ -67,7 +79,7 @@ The GUI recognizes `help`/`/help`, `/about`, `/status`, `/status/busy`, `/queue-
 
 ## Build/update
 
-`tools\build_norm.py` is the repeatable PyInstaller path. Its analysis cache is reusable under `state\build-cache\pyinstaller`; use `--clean` only for an explicit cold rebuild. `package-manifest.json` defines the reusable installer contract. Normal updates should use the reusable Norm installer rather than deleting `C:\Norm`: it mirrors package-owned source files, preserves local/persistent state, reuses the venv when compatible, installs only missing/changed dependencies, and optionally rebuilds `core\norm.exe`. Installer 1.4.15 binds one exact source payload by filename and SHA-256. Its builder reads this package's requirements lock and can create a derived payload using either the locked version or the newest eligible stable/release-candidate version for each package; alpha, beta, and dev builds are excluded. The package schema remains 1.
+`tools\build_norm.py` is the repeatable PyInstaller path. Its analysis cache is reusable under `state\build-cache\pyinstaller`; use `--clean` only for an explicit cold rebuild. `package-manifest.json` defines the reusable installer contract. Normal updates should use the reusable Norm installer rather than deleting `C:\Norm`: it mirrors package-owned source files, preserves local/persistent state, reuses the venv when compatible, installs only missing/changed dependencies, and optionally rebuilds `core\norm.exe`. Installer 1.4.16 binds one exact source payload by filename and SHA-256. Its builder reads this package's requirements lock and can create a derived payload using either the locked version or the newest eligible stable/release-candidate version for each package; alpha, beta, and dev builds are excluded. The package schema remains 1.
 
 ## Documentation
 
@@ -82,7 +94,7 @@ Historical notes may mention earlier `app\` and Documents-root layouts. Those ar
 
 ## 0.53.1 operator console launcher
 
-`norm.exe` remains detached in service mode. `Run-Norm.bat` now starts three explicit visible operator consoles (Prompt, Runtime, Replies) through a small console host. If a helper exits during startup, that console stays open and shows the exit/error instead of disappearing.
+`norm.exe --service` is launched headlessly with Windows `CREATE_NO_WINDOW` plus a hidden startup window, so the service process no longer leaves an inert console on the desktop. `Run-Norm.bat` still opens the three operator surfaces, but **Norm Runtime** prefers a separate Windows Terminal (`wt.exe`) window for the more compact/refined terminal host and falls back to the classic console when Windows Terminal is unavailable. Norm Prompt and Norm Replies keep their existing explicit console behavior. The Runtime stream already exits when `norm.exe` exits, so shutting Norm down also closes that terminal naturally.
 
 ## 0.52.6 proportional plan verification
 

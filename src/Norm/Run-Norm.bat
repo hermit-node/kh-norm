@@ -80,7 +80,14 @@ echo Norm is healthy at %CHAT_HEALTH%
 if /I "%~1"=="--service-only" exit /b 0
 
 pushd "%ROOT%"
-start "Norm Runtime" "%PY%" -u "%ROOT%tools\norm_gui_stream.py"
+where wt.exe >NUL 2>&1
+if not errorlevel 1 (
+  rem Use the more compact/refined Windows Terminal host for the read-only runtime stream.
+  start "" wt.exe -w new new-tab --title "Norm Runtime" "%PY%" -u "%ROOT%tools\norm_gui_stream.py"
+) else (
+  rem Fall back to the classic console host if Windows Terminal is unavailable.
+  start "Norm Runtime" "%PY%" -u "%ROOT%tools\norm_gui_stream.py"
+)
 start "Norm Replies" "%PY%" -u "%ROOT%tools\norm_gui_reply.py"
 start "Norm Prompt" "%PY%" -u "%ROOT%tools\norm_gui_prompt.py"
 popd

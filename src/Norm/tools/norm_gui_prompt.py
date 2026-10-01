@@ -164,6 +164,42 @@ def get_json(url: str, timeout: float = 5) -> dict:
     with request.urlopen(url, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
+def enrich_queue_with_runtime(ep: dict[str, str], items: list[dict]) -> tuple[list[dict], str]:
+    """Join DB3 ingress rows to authoritative running-task status when possible."""
+    try:
+        busy = get_json(ep["busy"], timeout=3)
+    except Exception:
+        return [dict(item) for item in items], "unknown"
+    phase = str(busy.get("phase") or "unknown")
+    signals = busy.get("signals") if isinstance(busy.get("signals"), dict) else {}
+    running = signals.get("running_tasks") if isinstance(signals.get("running_tasks"), list) else []
+    # running_tasks is newest-first. Keep the most recently updated task for a
+    # prompt (often an active child/recovery task) rather than letting an older
+    # root task overwrite it in a dict comprehension.
+    by_prompt: dict[str, dict] = {}
+    for task in running:
+        if not isinstance(task, dict):
+            continue
+        prompt_id = str(task.get("source_prompt_id") or "")
+        if prompt_id and prompt_id not in by_prompt:
+            by_prompt[prompt_id] = task
+    enriched = []
+    for item in items:
+        row = dict(item)
+        prompt_id = str(row.get("prompt_id") or "")
+        task = by_prompt.get(prompt_id)
+        if task is not None:
+            row["runtime_task"] = task
+            row["runtime_phase"] = phase
+        elif row.get("state") in {"dispatching", "in-flight"}:
+            # During the short prequeue window the durable task does not exist yet.
+            # Report that phase explicitly rather than pretending the prompt preview
+            # describes the work currently being executed.
+            row["runtime_phase"] = phase
+        enriched.append(row)
+    return enriched, phase
+
+
 def _chat_api_base(ep: dict[str, str]) -> str:
     chat = str(ep["chat"])
     suffix = "/api/chat"
@@ -464,11 +500,12 @@ def main() -> int:
             if lowered == "/queue-full":
                 try:
                     live_items = dispatcher.queue_snapshot(limit=None)
+                    live_items, runtime_phase = enrich_queue_with_runtime(ep, live_items)
                     items = dispatcher.uncertain_snapshot()
                 except Exception as exc:
                     print(f"Cannot read the full queue: {exc}")
                     continue
-                print(f"LIVE QUEUE: {len(live_items)} queued/in-flight entry(s)")
+                print(f"LIVE QUEUE: {len(live_items)} queued/in-flight entry(s)  runtime_phase={runtime_phase}")
                 for item in live_items:
                     print(json.dumps(item, indent=2, ensure_ascii=False))
                 print(f"PARKED / UNCERTAIN: {len(items)} delivery record(s)")
@@ -492,11 +529,25 @@ def main() -> int:
                 if not items:
                     print("GUI Redis queue is empty.")
                     continue
+                items, runtime_phase = enrich_queue_with_runtime(ep, items)
                 for item in items:
-                    preview = item["message"].replace("\r", " ").replace("\n", " ")
-                    if len(preview) > 110:
-                        preview = preview[:107] + "..."
-                    print(f"[{item['index']}] {item['state']:<11} {item['entry_id']} {item['prompt_id'][:8]}  {preview}")
+                    task = item.get("runtime_task") if isinstance(item.get("runtime_task"), dict) else None
+                    if task is not None:
+                        current = task.get("current_step") if isinstance(task.get("current_step"), dict) else None
+                        detail = str(task.get("title") or task.get("original_request") or "active task")
+                        if current:
+                            detail += f" | step {current.get('index')}/{current.get('total')}: {current.get('name') or current.get('id')}"
+                        count = int(task.get("ingrained_detail_count") or 0)
+                        if count:
+                            detail += f" | ingrained details: {count}"
+                    elif item.get("state") in {"dispatching", "in-flight"}:
+                        detail = f"runtime: {item.get('runtime_phase') or runtime_phase}; durable task not created/matched yet"
+                    else:
+                        preview = item["message"].replace("\r", " ").replace("\n", " ")
+                        if len(preview) > 110:
+                            preview = preview[:107] + "..."
+                        detail = preview
+                    print(f"[{item['index']}] {item['state']:<11} {item['entry_id']} {item['prompt_id'][:8]}  {detail}")
                 continue
             if lowered == "/resume-queue" or lowered.startswith("/resume-queue "):
                 parts = text.split()
