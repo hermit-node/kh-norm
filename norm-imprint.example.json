@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "install": {
+    "target_dir": "C:\\Norm",
+    "dependency_mode": "newest",
+    "python_exe": ""
+  },
+  "paths": {
+    "documents_root": "%USERPROFILE%\\Documents\\Norm",
+    "workspace_root": "workspace",
+    "temp_root": "temp"
+  },
+  "network": {
+    "current_machine": "norm-host",
+    "current_domain": "example.invalid",
+    "require_tailscale": false,
+    "ollama_host": "loopback",
+    "ollama_port": 11434,
+    "norm_host": "loopback",
+    "norm_port": 12543,
+    "activity_host": "loopback",
+    "activity_port": 8766,
+    "postgres_host": "loopback",
+    "postgres_port": 5432,
+    "redis_host": "loopback",
+    "redis_port": 6379
+  },
+  "postgres": {
+    "user": "norm",
+    "database": "norm",
+    "schema": "norm_runtime",
+    "stocks_database": "stocks_api"
+  },
+  "ssh": {
+    "enabled": false,
+    "user": "",
+    "remote_host": "",
+    "docker_host": "",
+    "port": 22,
+    "identity_file": "norm_remote_ed25519"
+  },
+  "runtime": {
+    "allowed_roots": [
+      "%USERPROFILE%\\Documents\\Norm"
+    ],
+    "storage_context": {
+      "primary_name": "documents",
+      "primary_root": "%USERPROFILE%\\Documents\\Norm",
+      "backup_name": "workspace"
+    },
+    "network_map": {
+      "never_probe_name_patterns": [
+        "*decoy*",
+        "*honeypot*",
+        "*mesh-canary*",
+        "*mesh-cache*",
+        "*decoy-guard*"
+      ],
+      "never_probe_cidrs": [],
+      "targets": []
+    }
+  }
+}
