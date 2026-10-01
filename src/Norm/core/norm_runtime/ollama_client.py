@@ -4,7 +4,9 @@ from .secret_redaction import redact
 
 import base64
 import json
+import re
 import time
+import zlib
 from pathlib import Path
 from threading import Event, Lock
 from typing import Callable
@@ -12,6 +14,10 @@ from urllib import request
 
 
 class ModelGenerationCancelled(RuntimeError):
+    pass
+
+
+class ModelDegenerateOutput(RuntimeError):
     pass
 
 
@@ -52,6 +58,12 @@ class OllamaClient:
         if event_type in {"thinking", "answer"}:
             pending = self._display_pending.get(event_type, "") + str(values.get("text") or "")
             boundary = pending.rfind("\n") + 1
+            # Ollama can occasionally emit a very long token loop with no newline. The
+            # old console buffered that entire run until cancellation, making Norm look
+            # frozen and then dumping thousands of characters at once. Flush bounded
+            # partial lines so activity remains visible and cancellation stays clean.
+            if boundary == 0 and len(pending) >= 1024:
+                boundary = (len(pending) // 1024) * 1024
             self._display_pending[event_type] = pending[boundary:]
             if boundary:
                 safe = redact(pending[:boundary])
@@ -83,6 +95,38 @@ class OllamaClient:
             )
         except Exception:
             pass
+
+    @staticmethod
+    def _guard_model_stream(recent: str, new_text: str) -> str:
+        if not new_text:
+            return recent
+        tail = (recent + str(new_text))[-8192:]
+        if len(tail) < 4096:
+            return tail
+        raw = tail.encode("utf-8", errors="replace")
+        # Severe token loops compress to almost nothing. Natural prose/code, even when
+        # repetitive, stays well above this threshold.
+        compression_ratio = len(zlib.compress(raw, 1)) / max(1, len(raw))
+        tokens = re.findall(r"[A-Za-z0-9_]+|[^\w\s]", tail.lower())
+        dominant_ratio = 0.0
+        unique_tokens = 0
+        if len(tokens) >= 256:
+            counts: dict[str, int] = {}
+            for token in tokens:
+                counts[token] = counts.get(token, 0) + 1
+            unique_tokens = len(counts)
+            dominant_ratio = max(counts.values(), default=0) / len(tokens)
+        longest_run = max((len(part) for part in re.split(r"\s+", tail)), default=0)
+        severe_compressed_loop = compression_ratio < 0.035 and (
+            longest_run >= 1024 or (len(tokens) >= 512 and unique_tokens <= 6)
+        )
+        if severe_compressed_loop or dominant_ratio > 0.72:
+            raise ModelDegenerateOutput(
+                "model stream became degenerate/repetitive "
+                f"(compression={compression_ratio:.3f}, dominant_token={dominant_ratio:.3f}, "
+                f"unique_tokens={unique_tokens}, longest_run={longest_run})"
+            )
+        return tail
 
     def set_crash_context(self, task_id: str, step_id: str) -> None:
         self._flush_crash()
@@ -165,6 +209,7 @@ class OllamaClient:
             method="POST",
         )
         response_parts: list[str] = []
+        guard_tail = ""
         done_reason = ""
         eval_count = 0
         cancel_event = Event()
@@ -193,8 +238,10 @@ class OllamaClient:
                     thinking = str(data.get("thinking", ""))
                     answer = str(data.get("response", ""))
                     if thinking:
+                        guard_tail = self._guard_model_stream(guard_tail, thinking)
                         self._emit("thinking", text=thinking)
                     if answer:
+                        guard_tail = self._guard_model_stream(guard_tail, answer)
                         response_parts.append(answer)
                         self._emit("answer", text=answer)
                 if cancel_event.is_set():
@@ -281,6 +328,7 @@ class OllamaClient:
         )
         content_parts: list[str] = []
         thinking_parts: list[str] = []
+        guard_tail = ""
         tool_calls: list[dict] = []
         seen_calls: set[str] = set()
         done_reason = ""
@@ -310,9 +358,11 @@ class OllamaClient:
                     thinking = str(message.get("thinking", ""))
                     content = str(message.get("content", ""))
                     if thinking:
+                        guard_tail = self._guard_model_stream(guard_tail, thinking)
                         thinking_parts.append(thinking)
                         self._emit("thinking", text=thinking)
                     if content:
+                        guard_tail = self._guard_model_stream(guard_tail, content)
                         content_parts.append(content)
                         self._emit("answer", text=content)
                     for call in message.get("tool_calls") or []:
@@ -374,6 +424,7 @@ class OllamaClient:
             method="POST",
         )
         parts: list[str] = []
+        guard_tail = ""
         cancel_event = Event()
         call_id = id(cancel_event)
         with self._active_lock:
@@ -396,8 +447,10 @@ class OllamaClient:
                     thinking_text = str(message.get("thinking", ""))
                     content = str(message.get("content", ""))
                     if thinking_text:
+                        guard_tail = self._guard_model_stream(guard_tail, thinking_text)
                         self._emit("thinking", text=thinking_text)
                     if content:
+                        guard_tail = self._guard_model_stream(guard_tail, content)
                         parts.append(content)
                         self._emit("answer", text=content)
                 if cancel_event.is_set():

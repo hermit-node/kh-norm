@@ -300,4 +300,3 @@ def pair_stats(image_a: str | Path, image_b: str | Path) -> dict[str, float | in
         "max_channel_delta": max(diffs, default=0),
         "mean_abs_channel_delta": sum(diffs) / len(diffs),
     }
-

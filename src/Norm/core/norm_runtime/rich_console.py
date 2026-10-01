@@ -501,4 +501,3 @@ def run_console(chat_host: str, chat_port: int, activity_host: str, activity_por
     finally:
         if mutex:
             ctypes.windll.kernel32.CloseHandle(mutex)
-

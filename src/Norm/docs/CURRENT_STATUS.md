@@ -1,10 +1,10 @@
 # Norm current status
 
-Updated 2026-09-30 for the clean **0.53.8** portable source line.
+Updated 2026-10-01 for the clean **0.53.9** portable source line.
 
 ## Source/layout
 
-- Version: **0.53.8**.
+- Version: **0.53.9**.
 - Runtime root: `C:\Norm` (relocatable by installer); the installed absolute path is written to `config\settings.ini` `[paths].runtime_root`.
 - Runtime source/executable directory: `core\`; compiled executable target is `core\norm.exe`.
 - Maintained docs: `C:\Norm\docs`.
@@ -14,6 +14,16 @@ Updated 2026-09-30 for the clean **0.53.8** portable source line.
 - Durable generated workspace: `%USERPROFILE%\Documents\Norm\workspace`.
 - Disposable/recovery root: `%USERPROFILE%\Documents\Norm\temp`.
 - `.venv` is generated/reusable and is intentionally omitted from source and full backup ZIPs.
+
+
+## 0.53.9 operator network map and public configuration split
+
+- `/network-map` and `/network-map --json` are synchronous operator commands handled before normal DB3 prompt ingress; they do not become queued Norm tasks.
+- Tailscale inventory is passive. Discovered peers never widen the active-probe set.
+- Active probes are limited to exact targets in `config\\network-map.json`; never-probe name patterns and CIDRs are rechecked before network I/O.
+- Hostname targets are resolved before probing and every resolved address is checked against the never-probe CIDR set. HTTP probes are pinned to an approved resolved address and do not follow redirects.
+- The public installer/source ships topology-neutral defaults. Deployment-specific non-secret values live in `norm-imprint.local.json`; secrets remain outside the imprint.
+- The merged 0.53.8 plugin/reliability baseline is preserved, including `vision_parse`, PyMuPDF 1.28.2, the Ollama degeneration watchdog, and suppression handoff cleanup.
 
 ## 0.53.8 mixed-turn context routing and unresolved bits
 
@@ -52,7 +62,7 @@ Terminal cleanup is lineage-aware. Task-local image-analysis variants and other 
 
 ## Built-in capabilities and plugin hydration
 
-First-party package-managed plugin subtrees are `plugins\backup`, `plugins\verbatim_lines`, `plugins\stegosplit_key`, `plugins\stegosplit_message`, and `plugins\rotor5_cipher`. User-added plugin folders remain persistent and are not deleted by normal base updates. The StegoSplit key and message sources are bundled privately inside their plugin folders, eliminating the old editable-install dependency. Rotor5 is now a separate first-party plugin rather than being embedded in the StegoSplit message codec.
+First-party package-managed plugin subtrees are `plugins\backup`, `plugins\verbatim_lines`, `plugins\stegosplit_key`, `plugins\stegosplit_message`, `plugins\rotor5_cipher`, and `plugins\vision_parse`. User-added plugin folders remain persistent and are not deleted by normal base updates. The StegoSplit key and message sources are bundled privately inside their plugin folders, eliminating the old editable-install dependency. Rotor5 is now a separate first-party plugin rather than being embedded in the StegoSplit message codec.
 
 
 `cryptography 50.0.2` is the locked runtime/build dependency and the PyInstaller build explicitly collects cryptography/cffi so ChaCha20-Poly1305 remains available inside the frozen `norm.exe` plugin host.
@@ -129,3 +139,5 @@ Chat and activity/control HTTP are served by pinned aiohttp 3.14.3 on dedicated 
 
 ### 2026-09-30 same-version startup cleanup correction
 - `core\norm_runtime\prompt_worker.py` imports `pathlib.Path` at module scope. Startup temp cleanup and verified terminal task-temp cleanup therefore execute the existing 0.53.7 retention policy instead of failing with `NameError` and preserving all temp material.
+
+- PDF semantic parsing: first-party `plugins\vision_parse` uses PyMuPDF rendering + local Ollama vision, up to four pages per call with continuation; rendered-page evidence overrides garbled text-layer extraction.

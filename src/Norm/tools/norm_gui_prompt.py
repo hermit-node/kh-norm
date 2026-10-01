@@ -298,6 +298,7 @@ def show_help() -> None:
     print("  /about              Show Norm version, runtime, package, and plugin summary")
     print("  /status             Show runtime and queue state")
     print("  /status/busy        Show authoritative runtime busy state")
+    print("  /network-map [--json]  Passive Tailscale inventory plus explicitly allowlisted probes")
     print("  /queue [N]          Show queued GUI prompts with stable snapshot indexes")
     print("  /queue-full         Show full prompts and live + parked/uncertain state")
     print("  /resume-queue [N]   Resume/rotate the GUI queue, optionally from snapshot index N")
@@ -496,6 +497,13 @@ def main() -> int:
                     print(f"GUI Redis queue: unknown (group stats unavailable); {uncertain} parked/uncertain records (see /queue-full).")
                 else:
                     print(f"GUI Redis queue: {queued} queued/in-flight; {uncertain} parked/uncertain records (see /queue-full).")
+                continue
+            if lowered in {"/network-map", "/network-map --json"}:
+                try:
+                    from norm_network_map import emit_network_map
+                    emit_network_map(json_output=lowered.endswith(" --json"))
+                except Exception as exc:
+                    print(f"Network map failed: {type(exc).__name__}: {exc}")
                 continue
             if lowered == "/queue-full":
                 try:
@@ -717,4 +725,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

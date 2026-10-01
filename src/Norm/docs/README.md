@@ -1,6 +1,12 @@
 # Norm
 
-**Norm 0.53.8** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
+**Norm 0.53.9** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
+
+## Public installer imprint
+
+The public package intentionally ships without machine-specific topology or credentials. `norm-imprint.local.json`, when present beside the unified installer, provides non-secret auto-fill values. Passwords/tokens are entered separately and are never written to the imprint.
+
+`/network-map` provides passive Tailscale inventory plus exact allowlisted probes; discovered peers are never automatically probed.
 
 ## Canonical layout
 
@@ -37,7 +43,7 @@ Human-facing completed replies are capped at 384 KiB. The full terminal summary 
 
 ## Runtime services
 
-`config\settings.ini` is the canonical operator configuration. `[paths]` records the installed `runtime_root` (normally `C:\Norm`), and `[network]` defines service topology. Current defaults are Ollama `11434`, Norm HTTP/chat `12543`, activity/control `8766`, Redis `6379`, and PostgreSQL `25434`. Credentials are loaded from the configured external secrets file and are never included in the portable source package.
+`config\settings.ini` is the canonical operator configuration. `[paths]` records the installed `runtime_root` (normally `C:\Norm`), and `[network]` defines service topology. Public defaults are Ollama `11434`, Norm HTTP/chat `12543`, activity/control `8766`, Redis `6379`, and PostgreSQL `5432`; the installer imprint can override hosts and ports. Credentials are loaded from the configured external secrets file and are never included in the portable source package.
 
 ## Tool and plugin model
 
@@ -45,7 +51,7 @@ The runtime lock includes `cryptography 50.0.2`/`cffi 2.0.0`, and `tools\build_n
 
 `core\norm_runtime\plugin_manager.py` automatically rescans `C:\Norm\plugins` before native tool schema use/dispatch. Public functions in non-underscore Python files become namespaced native tools; helper files/functions beginning with `_` stay private. Multi-file plugins and sibling imports are supported. If a changed plugin fails to load, the last-known-good hydrated version remains active and `.registry.json` records the refresh error.
 
-First-party plugins currently ship under `plugins\backup`, `plugins\verbatim_lines`, `plugins\stegosplit_key`, `plugins\stegosplit_message`, and `plugins\rotor5_cipher`. The StegoSplit plugins bundle their Python implementation so a `.venv` rebuild no longer depends on an external editable checkout. `stegosplit_message` is the two-image authenticated carrier; `rotor5_cipher` is an independent optional pre-encoding layer; `stegosplit_key` remains the password/map-key protected 256-bit key prototype.
+First-party plugins currently ship under `plugins\backup`, `plugins\verbatim_lines`, `plugins\stegosplit_key`, `plugins\stegosplit_message`, `plugins\rotor5_cipher`, and `plugins\vision_parse`. The StegoSplit plugins bundle their Python implementation so a `.venv` rebuild no longer depends on an external editable checkout. `stegosplit_message` is the two-image authenticated carrier; `rotor5_cipher` is an independent optional pre-encoding layer; `stegosplit_key` remains the password/map-key protected 256-bit key prototype.
 
 The backup plugin supports two package types. `/backup` creates a portable installer/source ZIP without private state. `/backup full` creates a sensitive full-state ZIP containing source/runtime, docs, all plugins, `.ssh`, configured secrets, external workspace, selected recovery/log/state, PostgreSQL, and environment rebuild metadata. `.venv` itself is intentionally omitted. Older backup aliases remain accepted for compatibility but are not advertised in help.
 
@@ -119,3 +125,6 @@ The activity/control API starts before PostgreSQL schema initialization and repo
 ## 0.53.1 aiohttp transport
 
 Chat and activity/control HTTP are served by pinned aiohttp 3.14.3 on dedicated asyncio loops. Existing coordinator lifecycle semantics remain compatible; blocking runtime callbacks are offloaded with asyncio.to_thread. SSE disconnects are benign transport events.
+
+### PDF semantic reading
+For PDF study/extraction, use `vision_parse` when exact wording, names, dates, columns, or classifications matter. It combines the PDF text layer with a rendered-page vision pass; the rendered page wins when extraction is garbled. Calls cover up to four pages and return `next_page` for resumable traversal. Raw extraction is evidence, not authority, and Norm should not generate typo-regex variants merely to chase corrupted OCR/encoding.

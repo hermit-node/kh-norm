@@ -281,7 +281,7 @@ class ConversationStore:
                 FROM {}.unresolved_bits b
                 LEFT JOIN {}.unresolved_bit_trials t ON t.bit_id=b.bit_id
                 WHERE b.project_id=%s
-                  AND (%s IS NULL OR b.last_source_message_id IS DISTINCT FROM %s)
+                  AND (CAST(%s AS text) IS NULL OR b.last_source_message_id IS DISTINCT FROM CAST(%s AS text))
                 GROUP BY b.bit_id
                 ORDER BY b.last_considered_at NULLS FIRST, b.updated_at ASC
                 LIMIT %s
@@ -338,4 +338,3 @@ class ConversationStore:
                 return False
             cur.execute(sql.SQL("DELETE FROM {}.unresolved_bits WHERE bit_id=%s").format(s), (bit_id,))
             return bool(cur.rowcount)
-

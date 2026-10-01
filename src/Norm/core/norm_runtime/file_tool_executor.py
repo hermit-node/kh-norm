@@ -6,6 +6,7 @@ import os
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -156,7 +157,7 @@ class FileToolExecutor:
             )
         return (
             "You have direct file tools inside these allowed roots only: " + roots + ".\n"
-            + ("Relative local-file paths use the configured primary Samba storage when responsive and automatically fall back to the KHzz backup when needed. Writes go only to the selected responsive location and are never mirrored. Storage connections are queried only when the requested file path requires them. If a required connection is unresponsive, the tool result carries resource_status JSON with the connection, reason, and 'generating with impaired context'.\n" if self.storage else "")
+            + ("Relative local-file paths use the configured primary Samba storage when responsive and automatically fall back to the configured backup storage when needed. Writes go only to the selected responsive location and are never mirrored. Storage connections are queried only when the requested file path requires them. If a required connection is unresponsive, the tool result carries resource_status JSON with the connection, reason, and 'generating with impaired context'.\n" if self.storage else "")
             + "Use the supplied native tools whenever a file operation is needed. "
             "Tool results here preserve execution values. Terminal/audit/checkpoint copies may contain [REDACTED]; that marker is never a real credential or path. Re-read ordinary configuration when needed; never reuse a redacted placeholder.\n"
             "Never dump .env or credential files. Load credentials internally and pass them through process environment variables; never echo literal secrets.\n"
@@ -267,7 +268,7 @@ class FileToolExecutor:
             tool(
                 "check_connection",
                 "Maintenance-only targeted health check. Query exactly one named connection and do not check unrelated connections.",
-                {"target": {"type": "string", "enum": ["ca8d", "khzz_docs", "postgres", "redis", "prompt_queue", "ollama", "tailscale", "dropbox"]}},
+                {"target": {"type": "string", "enum": ["ca8d", "workspace", "postgres", "redis", "prompt_queue", "ollama", "tailscale", "dropbox"]}},
                 ["target"],
             ),
         ]
@@ -419,9 +420,9 @@ class FileToolExecutor:
 
     def _check_connection(self, arguments: dict[str, Any]) -> dict[str, Any]:
         target = str(arguments.get("target") or "").strip().lower()
-        aliases = {"ca8d_smb": "ca8d", "local": "khzz_docs", "postgresql": "postgres", "pg": "postgres"}
+        aliases = {"ca8d_smb": "ca8d", "local": "workspace", "postgresql": "postgres", "pg": "postgres"}
         target = aliases.get(target, target)
-        if target in {"ca8d", "khzz_docs"}:
+        if target in {"ca8d", "workspace"}:
             if self.storage is None:
                 return {"target": target, "configured": False, "queried": False, "responsive": False, "note": "storage connection is not configured"}
             source = "primary" if target == "ca8d" else "backup"

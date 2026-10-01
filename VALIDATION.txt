@@ -1,0 +1,19 @@
+kh-norm public release validation
+Norm: 0.53.9
+Unified Installer: 1.6.0
+Merged baseline SHA-256: 31ffffc84f263bceb00507b44b2661d0e16f2ea92160e7df7f081191aa37020d
+Portable source SHA-256: 444c6c09d88b5144bca3acf29d59eb5eba3b6e9d499d668c526f67b0d2a53722
+Python syntax: PASS (79 Norm source files; 84 public Python files total)
+vision_parse + PyMuPDF: PASS
+PyInstaller collect-all pymupdf: PASS
+Ollama degeneration watchdog: PASS
+suppression handoff cleanup: PASS
+network-map synchronous hook/policy artifacts: PASS
+network-map passive peers do not widen active targets: PASS
+network-map honeypot/decoy never-probe policy: PASS
+network-map hostname -> forbidden CIDR fail-closed: PASS
+network-map HTTP redirects not followed: PASS
+installer package selection/SHA/imprint/secret-separation tests: PASS
+public topology/key/token signature scan: PASS
+current-version docs audit: PASS
+Windows GUI/PyInstaller acceptance: still required on Windows

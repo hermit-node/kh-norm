@@ -15,7 +15,7 @@ import psycopg
 
 from .conversation_store import ConversationStore
 from .file_tool_executor import FileToolExecutor
-from .ollama_client import OllamaClient
+from .ollama_client import ModelDegenerateOutput, ModelOutputTruncated, OllamaClient
 from .models import StepResult, StepStatus, TaskPlan, TaskStep, utc_now
 from .prompt_queue import PromptJob, RedisPromptQueue
 from .protocol import PROTOCOL_VERSION, command_schema, normalize_command
@@ -1553,6 +1553,17 @@ class ConversationService:
                 raise RuntimeError(f"queued task failed: {task_id}")
             if status == "cancelled":
                 raise RuntimeError(f"queued task cancelled: {task_id}")
+            if status == "suppressed":
+                # Suppression parks the task for explicit resume, but this particular
+                # synchronous delivery is finished. Returning here releases the DB3
+                # ingress HTTP owner so the dispatcher can immediately take the next
+                # queued user prompt. /flush-suppressed is not a scheduler control.
+                task_resource_status = (
+                    self.durable.task_resource_status(task_id)
+                    if hasattr(self.durable, "task_resource_status")
+                    else full_context_status()
+                )
+                return task_id, "Task suppressed and parked by operator.", merge_resource_status(resource_status, task_resource_status)
             time.sleep(0.1)
         raise TimeoutError(f"queued task did not finish within {self.wait_timeout_seconds:g} seconds")
 
@@ -1752,13 +1763,42 @@ class ConversationService:
             "Return STRICT JSON object exactly shaped {\"summary\":\"...\"}.\n"
             "The summary must be a concise rolling branch state preserving: durable facts, decisions, constraints, current work/state, unresolved questions, and stable user terminology/meaning conventions or communication preferences when they materially affect future interpretation.\n"
             "Explicitly distinguish superseded/outdated information from current information.\n"
-            "Do not add facts not present in the provided context.\n\n"
+            "Do not add facts not present in the provided context.\n"
+            "Target 3000-6000 characters and NEVER exceed 8000 characters. Prefer dense factual compression over narrative prose.\n\n"
             f"Old summary:\n{old}\n\n"
             f"Recent messages:\n{json.dumps(recent_view, ensure_ascii=False)}"
         )
-        raw = self.ollama.generate(prompt, think=False, temperature=0.1, num_predict=900)
+        schema = {
+            "type": "object",
+            "properties": {"summary": {"type": "string", "maxLength": 8000}},
+            "required": ["summary"],
+            "additionalProperties": False,
+        }
         try:
-            parsed = self.ollama.parse_json(raw)
+            parsed = self._structured_generate(prompt, schema, num_predict=3200, think=False)
+        except (ModelOutputTruncated, ModelDegenerateOutput):
+            # Rolling summaries are bounded state, not long-form user output. Retry once with
+            # a much tighter target rather than surfacing a red background-maintenance error.
+            retry_prompt = (
+                prompt
+                + "\n\nRETRY: The previous summary exceeded the model output budget. "
+                  "Return a substantially more compressed summary, at most 3500 characters. "
+                  "Keep only information that would materially affect future interpretation or ongoing work."
+            )
+            retry_schema = {
+                "type": "object",
+                "properties": {"summary": {"type": "string", "maxLength": 3500}},
+                "required": ["summary"],
+                "additionalProperties": False,
+            }
+            try:
+                parsed = self._structured_generate(retry_prompt, retry_schema, num_predict=1800, think=False)
+            except (ModelOutputTruncated, ModelDegenerateOutput):
+                logging.warning(
+                    "Summary refresh deferred after two output-budget hits; preserving prior summary thread=%s",
+                    thread_id,
+                )
+                return
         except ValueError:
             logging.warning("Skipping malformed summary JSON for thread %s", thread_id)
             return
@@ -1819,4 +1859,3 @@ class ConversationService:
             supersedes = [x for x in supersedes if x != new_id]
             if supersedes:
                 self.store.supersede_memories(supersedes, new_id)
-
