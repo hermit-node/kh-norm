@@ -8,6 +8,7 @@ from pathlib import Path
 NETWORK_PORT_KEYS = {"ollama": "ollama_port", "norm_http": "norm_port", "activity": "activity_port", "postgres": "postgres_port", "redis": "redis_port"}
 DOCUMENT_KEYS = ("readme", "current_status", "development_notes", "release_notes", "future_implementation_notes")
 PROJECT_KEYS = ("name", "version", "author", "repository")
+POSTGRES_KEYS = ("user", "database", "schema", "stocks_database")
 PATH_KEYS = ("documents_root",)
 
 
@@ -107,6 +108,37 @@ def resolve_network_host(network: dict[str, object], key: str, *, bind: bool = F
 def load_ports(root: Path) -> dict[str, int]:
     network = load_network_settings(root)
     return {name: int(network[name + "_port"]) for name in NETWORK_PORT_KEYS}
+
+
+def load_postgres_settings(root: Path) -> dict[str, str]:
+    """Load non-secret PostgreSQL identity/configuration from settings.ini.
+
+    Older installations stored these non-secret values beside the password in
+    the external env file. Keep a read-only compatibility fallback so an old
+    install can still boot during migration, but new packages persist them in
+    [postgres] and reserve the env file for actual secrets.
+    """
+    parser = load_settings(root)
+    if parser.has_section("postgres"):
+        defaults = {
+            "user": "norm",
+            "database": "norm",
+            "schema": "norm_runtime",
+            "stocks_database": "stocks_api",
+        }
+        result = {
+            key: parser.get("postgres", key, fallback=defaults[key]).strip() or defaults[key]
+            for key in POSTGRES_KEYS
+        }
+        return result
+
+    legacy = load_secrets(root)
+    return {
+        "user": legacy.get("NORM_POSTGRES_USER", "norm").strip() or "norm",
+        "database": legacy.get("NORM_POSTGRES_DB", "norm").strip() or "norm",
+        "schema": legacy.get("NORM_POSTGRES_SCHEMA", "norm_runtime").strip() or "norm_runtime",
+        "stocks_database": legacy.get("NORM_STOCKS_DB", "stocks_api").strip() or "stocks_api",
+    }
 
 
 def load_secrets(root: Path) -> dict[str, str]:

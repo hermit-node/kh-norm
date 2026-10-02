@@ -39,6 +39,7 @@ def scan_text(label: str, text: str) -> None:
 
 SCAN_EXCLUSIONS = {
     HERE / "Publish-To-GitHub.ps1",
+    HERE / "tools" / "public_release_guard.py",
     HERE / "tests" / "test_public_release.py",
 }
 

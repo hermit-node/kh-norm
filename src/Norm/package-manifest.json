@@ -1,7 +1,7 @@
 {
   "package_schema": 1,
   "name": "Norm",
-  "version": "0.53.9",
+  "version": "0.53.11",
   "package_type": "portable-source",
   "source_dir": "core",
   "entrypoint": "core/norm_main.py",
@@ -72,7 +72,9 @@
     "plugins/stegosplit_key",
     "plugins/stegosplit_message",
     "plugins/rotor5_cipher",
-    "plugins/vision_parse"
+    "plugins/vision_parse",
+    "plugins/file_read",
+    "plugins/soft_delete"
   ],
   "built_in_plugins": {
     "backup": "plugins/backup",
@@ -80,7 +82,9 @@
     "stegosplit_key": "plugins/stegosplit_key",
     "stegosplit_message": "plugins/stegosplit_message",
     "rotor5_cipher": "plugins/rotor5_cipher",
-    "vision_parse": "plugins/vision_parse"
+    "vision_parse": "plugins/vision_parse",
+    "file_read": "plugins/file_read",
+    "soft_delete": "plugins/soft_delete"
   },
   "canonical_prompt_ingress": {
     "redis_db": 3,
@@ -142,10 +146,6 @@
     "partial_line_flush_chars": 1024,
     "degenerate_tail_chars": 8192,
     "behavior": "abort severe repetitive token loops so cancellation does not dump a giant buffered line"
-  },
-  "public_distribution": {
-    "repository": "https://github.com/hermit-node/kh-norm",
-    "configuration": "installer imprint; secrets are never stored in imprint files"
   },
   "operator_network_map": {
     "commands": [

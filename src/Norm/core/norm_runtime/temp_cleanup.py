@@ -67,8 +67,40 @@ def _task_is_safely_terminal(durable: Any, task_id: str) -> bool:
         return False
 
 
-def cleanup_task_temp(temp_root: str | Path, task_id: str, durable: Any, *, retention_root: str | Path | None = None) -> dict[str, Any]:
-    """Remove temp/tasks/<task_id> only after durable terminal verification."""
+def _remove_empty_tree(path: Path, root: Path) -> int:
+    root = root.resolve()
+    resolved = path.resolve()
+    if resolved == root or root not in resolved.parents:
+        raise ValueError(f"refusing to remove path outside temp root: {path}")
+    removed = 0
+    for directory in sorted((p for p in resolved.rglob("*") if p.is_dir() and not p.is_symlink()), key=lambda p: len(p.parts), reverse=True):
+        try:
+            directory.rmdir()
+            removed += 1
+        except OSError:
+            pass
+    try:
+        resolved.rmdir()
+        removed += 1
+    except OSError:
+        pass
+    return removed
+
+
+def cleanup_task_temp(
+    temp_root: str | Path,
+    task_id: str,
+    durable: Any,
+    *,
+    retention_root: str | Path | None = None,
+    deletion_queue: Any | None = None,
+) -> dict[str, Any]:
+    """Soft-delete verified terminal task temp after retaining its compact manifest.
+
+    No file in a task directory is permanently removed here.  If reversible trash is
+    unavailable or declines an item (for example a huge cross-volume move), the file is
+    preserved in place and reported.
+    """
     root = Path(temp_root).resolve()
     target = root / "tasks" / str(task_id)
     if not target.exists():
@@ -81,10 +113,37 @@ def cleanup_task_temp(temp_root: str | Path, task_id: str, durable: Any, *, rete
             retained_manifest = retain_task_manifest(target, retention_root)
         except Exception:
             logging.exception("Could not retain compact task-storage manifest before cleanup task=%s", task_id)
-    files, size = _safe_remove(target, root)
+            return {"removed": False, "task_id": str(task_id), "path": str(target), "reason": "retention_manifest_failed"}
+    files = [p for p in target.rglob("*") if p.is_file() and not p.is_symlink()]
+    if files and deletion_queue is None:
+        return {
+            "removed": False, "task_id": str(task_id), "path": str(target),
+            "reason": "reversible_trash_unavailable", "files_preserved": len(files),
+            "retained_manifest": str(retained_manifest) if retained_manifest else None,
+        }
+    staged = []
+    skipped = []
+    if files:
+        result = deletion_queue.stage_batch(
+            [{
+                "path": str(item),
+                "reason": "verified terminal task temp is reproducible from retained task state",
+                "task_id": str(task_id),
+                "reproduce_from": str(retained_manifest or "durable PostgreSQL task evidence"),
+                "reproducibility": "easy",
+            } for item in files],
+            task_id=str(task_id),
+            batch_reason="verified terminal task temp cleanup",
+            checkpoint=True,
+        )
+        staged = list(result.get("staged") or [])
+        skipped = list(result.get("skipped") or [])
+    _remove_empty_tree(target, root)
+    remaining = [p for p in target.rglob("*") if p.is_file()] if target.exists() else []
     return {
-        "removed": True, "task_id": str(task_id), "path": str(target),
-        "files_removed": files, "bytes_removed": size,
+        "removed": not target.exists(), "task_id": str(task_id), "path": str(target),
+        "files_soft_deleted": len(staged), "files_preserved": len(remaining),
+        "skipped": skipped,
         "retained_manifest": str(retained_manifest) if retained_manifest else None,
     }
 
@@ -96,6 +155,7 @@ def cleanup_temp_root(
     max_age_hours: int = 72,
     recovery_max_age_hours: int = 168,
     retention_root: str | Path | None = None,
+    deletion_queue: Any | None = None,
 ) -> dict[str, Any]:
     """Safely clean Norm's external disposable temp tree.
 
@@ -124,7 +184,7 @@ def cleanup_temp_root(
         for child in list(tasks_dir.iterdir()):
             if not child.is_dir():
                 continue
-            outcome = cleanup_task_temp(root, child.name, durable, retention_root=retention_root)
+            outcome = cleanup_task_temp(root, child.name, durable, retention_root=retention_root, deletion_queue=deletion_queue)
             if outcome.get("removed"):
                 result["task_dirs_removed"] += 1
                 result["files_removed"] += int(outcome.get("files_removed", 0))
@@ -156,13 +216,26 @@ def cleanup_temp_root(
         if _age_hours(item, now) < max(1, max_age_hours):
             continue
         try:
-            files, size = _safe_remove(item, root)
+            candidates = [item] if item.is_file() else [p for p in item.rglob("*") if p.is_file() and not p.is_symlink()]
+            if candidates and deletion_queue is None:
+                result["preserved"].append({"path": str(item), "reason": "reversible_trash_unavailable"})
+                continue
+            stage = {"staged": [], "skipped": []}
+            if candidates:
+                stage = deletion_queue.stage_batch(
+                    [{"path": str(p), "reason": "aged Norm temp output", "reproducibility": "easy"} for p in candidates],
+                    batch_reason="aged temp cleanup", checkpoint=True,
+                )
+            if item.is_dir():
+                _remove_empty_tree(item, root)
+            result["aged_items_removed"] += 1 if not item.exists() else 0
+            result["files_removed"] += len(stage.get("staged") or [])
+            result["bytes_removed"] += sum(int(x.get("size_bytes") or 0) for x in stage.get("staged") or [])
+            if stage.get("skipped") or item.exists():
+                result["preserved"].append({"path": str(item), "reason": "trash_stage_partial", "skipped": stage.get("skipped") or []})
         except Exception as exc:
-            logging.warning("Temp cleanup could not remove %s: %s", item, exc)
-            result["preserved"].append({"path": str(item), "reason": f"remove_failed:{type(exc).__name__}"})
+            logging.warning("Temp cleanup could not soft-delete %s: %s", item, exc)
+            result["preserved"].append({"path": str(item), "reason": f"soft_delete_failed:{type(exc).__name__}"})
             continue
-        result["aged_items_removed"] += 1
-        result["files_removed"] += files
-        result["bytes_removed"] += size
 
     return result

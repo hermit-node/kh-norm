@@ -206,6 +206,8 @@ class TaskStorageManager:
         reproducible: bool = False,
         recipe: str | None = None,
         retention: str = "ephemeral",
+        created_by_norm: bool = False,
+        user_requested: bool = False,
     ) -> dict[str, Any]:
         if not self.task_id:
             return {}
@@ -222,13 +224,54 @@ class TaskStorageManager:
             "reproducible": bool(reproducible),
             "recipe": recipe,
             "retention": retention,
+            "created_by_norm": bool(created_by_norm),
+            "user_requested": bool(user_requested),
             "created_at": _utc_stamp(),
             "step_id": self.step_id,
         }
         data = self._load()
-        data.setdefault("assets", []).append(item)
+        assets = data.setdefault("assets", [])
+        existing = next((x for x in assets if isinstance(x, dict) and x.get("path") == item["path"] and x.get("role") == item["role"]), None)
+        if existing is None:
+            assets.append(item)
+        else:
+            existing.update(item)
         self._save(data)
         return item
+
+    def cleanup_candidates(self, *, suppressed: bool = False) -> list[dict[str, Any]]:
+        """Return only Norm-created files safe enough for automatic soft deletion.
+
+        Explicit user outputs/durable assets are never candidates. Suppressed tasks are
+        stricter: only explicitly ephemeral+reproducible files qualify so resume state is
+        not damaged.
+        """
+        if not self.task_id:
+            return []
+        data = self._load()
+        result: list[dict[str, Any]] = []
+        for item in data.get("assets", []):
+            if not isinstance(item, dict) or not bool(item.get("created_by_norm")):
+                continue
+            if bool(item.get("user_requested")) or str(item.get("retention") or "") == "durable":
+                continue
+            path = Path(str(item.get("path") or "")).resolve(strict=False)
+            if not path.is_file():
+                continue
+            reproducible = bool(item.get("reproducible"))
+            retention = str(item.get("retention") or "review")
+            if suppressed and not (reproducible and retention == "ephemeral"):
+                continue
+            if not suppressed and not (reproducible or retention == "ephemeral"):
+                continue
+            result.append({
+                "path": str(path),
+                "reason": "task-created file is easy to reproduce from durable state",
+                "task_id": self.task_id,
+                "reproduce_from": item.get("recipe") or item.get("source") or "task evidence/recipe",
+                "reproducibility": "easy" if reproducible else "ephemeral",
+            })
+        return result
 
     def append_note(self, text: str, *, category: str = "notes") -> Path:
         if not self.task_id:
