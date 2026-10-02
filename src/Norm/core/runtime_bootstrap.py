@@ -15,8 +15,9 @@ from norm_runtime.live_log import RedisTaskLog
 from norm_runtime.prompt_queue import RedisPromptQueue
 from norm_runtime.conversation_store import ConversationStore
 from norm_runtime.file_tool_executor import FileToolExecutor
+from norm_runtime.file_access_policy import load_file_access_policy
 from norm_runtime.ollama_client import OllamaClient
-from norm_runtime.settings import load_ports, load_path_settings, load_plugin_settings, load_network_settings, resolve_network_host, load_secrets
+from norm_runtime.settings import load_ports, load_path_settings, load_plugin_settings, load_network_settings, load_postgres_settings, resolve_network_host, load_secrets
 from norm_runtime.conversation_service import ConversationService
 
 
@@ -71,14 +72,15 @@ def load_config(root: Path) -> dict[str, Any]:
     config.setdefault("http", {})["host"] = resolve_network_host(network, "norm_host", bind=True)
     config.setdefault("activity", {})["host"] = resolve_network_host(network, "activity_host", bind=True)
     pg_host = resolve_network_host(network, "postgres_host")
-    pg_user = secrets.get("NORM_POSTGRES_USER", "").strip()
+    pg = load_postgres_settings(root)
+    pg_user = pg["user"]
     pg_password = secrets.get("NORM_POSTGRES_PASSWORD", "").strip()
-    pg_db = secrets.get("NORM_POSTGRES_DB", "postgres").strip() or "postgres"
-    if not pg_user or not pg_password:
-        raise ValueError("NORM_POSTGRES_USER and NORM_POSTGRES_PASSWORD are required")
+    pg_db = pg["database"]
+    if not pg_password:
+        raise ValueError("NORM_POSTGRES_PASSWORD is required")
     config.setdefault("postgres", {})["conninfo"] = psycopg.conninfo.make_conninfo(host=pg_host, port=ports["postgres"], dbname=pg_db, user=pg_user, password=pg_password, connect_timeout=5)
-    config["postgres"]["schema"] = secrets.get("NORM_POSTGRES_SCHEMA", "norm_runtime").strip() or "norm_runtime"
-    stocks_db = secrets.get("NORM_STOCKS_DB", "stocks_api").strip() or "stocks_api"
+    config["postgres"]["schema"] = pg["schema"]
+    stocks_db = pg["stocks_database"]
     config["stocks_postgres"] = {"conninfo": psycopg.conninfo.make_conninfo(host=pg_host, port=ports["postgres"], dbname=stocks_db, user=pg_user, password=pg_password, connect_timeout=5)}
     config["_authority"] = {"host": redis_host, "port": ports["redis"], "required": bool(network.get("require_tailscale", True))}
     return config
@@ -94,6 +96,9 @@ def build_deletion_queue(root: Path) -> RedisDeletionQueue:
         db=int(dq.get("db", 2)),
         stream=str(dq.get("stream", "norm:deletion:queue")),
         trash_root=str(dq.get("trash_root", root / "state" / "deletion-trash")),
+        items_key=str(dq.get("items_key", "norm:trash:items")),
+        batches_key=str(dq.get("batches_key", "norm:trash:batches")),
+        cross_volume_move_max_bytes=int(dq.get("cross_volume_move_max_bytes", 268_435_456)),
     )
 
 
@@ -187,7 +192,8 @@ def build_conversation_service(
     plugin_cfg = load_plugin_settings(root)
     workspace_root = path_cfg["workspace_root"]
     temp_root = path_cfg["temp_root"]
-    allowed_roots = [str(workspace_root), str(temp_root), str(root / "docs"), str(plugin_cfg["plugin_root"]), *list(tools_cfg.get("allowed_roots", []))]
+    file_policy = load_file_access_policy(root)
+    allowed_roots = sorted({str(p) for p in (*file_policy.read_roots, *file_policy.write_roots)})
     file_tools = None
     if bool(tools_cfg.get("enabled", False)):
         deletion_queue = build_deletion_queue(root)
@@ -195,8 +201,14 @@ def build_conversation_service(
             allowed_roots,
             backup_root=str(tools_cfg.get("backup_root", root / "state" / "file-backups")),
             audit_log=str(tools_cfg.get("audit_log", root / "logs" / "tool-audit.jsonl")),
-            max_read_bytes=int(tools_cfg.get("max_read_bytes", 25_165_824)),
-            max_tool_return_bytes=int(tools_cfg.get("max_tool_return_bytes", 393_216)),
+            max_read_bytes=file_policy.read_processing_buffer_bytes,
+            max_tool_return_bytes=file_policy.read_chunk_bytes,
+            read_roots=[str(p) for p in file_policy.read_roots],
+            write_roots=[str(p) for p in file_policy.write_roots],
+            enforce_read_directories=file_policy.enforce_read_directories,
+            enforce_write_directories=file_policy.enforce_write_directories,
+            read_chunk_bytes=file_policy.read_chunk_bytes,
+            read_chunk_max_bytes=file_policy.read_chunk_max_bytes,
             max_write_bytes=int(tools_cfg.get("max_write_bytes", 5_242_880)),
             blocked_write_staging_root=str(tools_cfg.get("blocked_write_staging_root", temp_root / "blocked-writes")),
             write_retry_count=int(tools_cfg.get("write_retry_count", 3)),
