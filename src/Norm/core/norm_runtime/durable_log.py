@@ -117,6 +117,25 @@ class PostgresTaskLog:
                 sql.Identifier(f"idx_{self.schema}_task_evidence_task_step"), sql.Identifier(self.schema)
             ))
             cur.execute(sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {}.task_validations (
+                    task_id text NOT NULL REFERENCES {}.task_runs(task_id) ON DELETE CASCADE,
+                    subject text NOT NULL,
+                    last_value text NOT NULL,
+                    check_count integer NOT NULL DEFAULT 1,
+                    contradiction_count integer NOT NULL DEFAULT 0,
+                    source_counts jsonb NOT NULL DEFAULT '{{}}'::jsonb,
+                    value_counts jsonb NOT NULL DEFAULT '{{}}'::jsonb,
+                    first_checked_at timestamptz NOT NULL DEFAULT now(),
+                    last_checked_at timestamptz NOT NULL DEFAULT now(),
+                    last_step_id text NOT NULL DEFAULT '',
+                    last_note text NOT NULL DEFAULT '',
+                    PRIMARY KEY(task_id, subject)
+                )
+            """).format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
+            cur.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {}.task_validations(task_id,last_checked_at DESC)").format(
+                sql.Identifier(f"idx_{self.schema}_task_validations_recent"), sql.Identifier(self.schema)
+            ))
+            cur.execute(sql.SQL("""
                 CREATE TABLE IF NOT EXISTS {}.task_step_segments (
                     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                     task_id text NOT NULL REFERENCES {}.task_runs(task_id) ON DELETE CASCADE,
@@ -991,6 +1010,62 @@ class PostgresTaskLog:
                 archived += 1
                 after += len(json.dumps(compact, ensure_ascii=False))
         return {"archived_rows": archived, "before_chars": before, "after_chars": after}
+
+    def record_validations(self, task_id: str, step_id: str, items: list[dict]) -> list[dict]:
+        """Aggregate semantic validation history durably for reuse across steps/restarts."""
+        saved: list[dict] = []
+        if not items:
+            return saved
+        with self._connect() as conn, conn.cursor() as cur:
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                subject = str(item.get("subject") or "").strip()[:500]
+                value = str(item.get("value") or "").strip()[:4000]
+                source = str(item.get("source") or "unspecified").strip()[:500] or "unspecified"
+                note = str(item.get("note") or "").strip()[:2000]
+                if not subject or not value:
+                    continue
+                cur.execute(sql.SQL("SELECT last_value,check_count,contradiction_count,source_counts,value_counts,first_checked_at FROM {}.task_validations WHERE task_id=%s AND subject=%s").format(sql.Identifier(self.schema)), (task_id, subject))
+                row = cur.fetchone()
+                if row:
+                    old_value, checks, contradictions, source_counts, value_counts, first_checked = row
+                    source_counts = dict(source_counts or {}); value_counts = dict(value_counts or {})
+                    source_counts[source] = int(source_counts.get(source) or 0) + 1
+                    value_counts[value] = int(value_counts.get(value) or 0) + 1
+                    contradictions = int(contradictions or 0) + (1 if str(old_value) != value else 0)
+                    checks = int(checks or 0) + 1
+                    cur.execute(sql.SQL("UPDATE {}.task_validations SET last_value=%s,check_count=%s,contradiction_count=%s,source_counts=%s,value_counts=%s,last_checked_at=now(),last_step_id=%s,last_note=%s WHERE task_id=%s AND subject=%s").format(sql.Identifier(self.schema)), (value,checks,contradictions,Jsonb(source_counts),Jsonb(value_counts),step_id,note,task_id,subject))
+                else:
+                    source_counts={source:1}; value_counts={value:1}; checks=1; contradictions=0
+                    cur.execute(sql.SQL("INSERT INTO {}.task_validations(task_id,subject,last_value,check_count,contradiction_count,source_counts,value_counts,last_step_id,last_note) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)").format(sql.Identifier(self.schema)), (task_id,subject,value,checks,contradictions,Jsonb(source_counts),Jsonb(value_counts),step_id,note))
+                saved.append({"subject":subject,"value":value,"source":source,"check_count":checks,"contradiction_count":contradictions,"source_counts":source_counts,"value_counts":value_counts})
+        return saved
+
+    def recent_validations(self, task_id: str, *, subjects: list[str] | None = None, window_seconds: int = 600, limit: int = 20) -> list[dict]:
+        """Return recent validations for this task and its ancestor task chain."""
+        with self._connect() as conn, conn.cursor() as cur:
+            params: list = [task_id, max(1,int(window_seconds))]
+            subject_clause = sql.SQL("")
+            if subjects:
+                cleaned=[str(x).strip() for x in subjects if str(x).strip()]
+                if cleaned:
+                    subject_clause=sql.SQL(" AND v.subject = ANY(%s)")
+                    params.append(cleaned)
+            params.append(max(1,int(limit)))
+            query=sql.SQL("""
+                WITH RECURSIVE lineage(task_id,parent_task_id,depth) AS (
+                    SELECT task_id,parent_task_id,0 FROM {}.task_runs WHERE task_id=%s
+                    UNION ALL
+                    SELECT p.task_id,p.parent_task_id,lineage.depth+1 FROM {}.task_runs p JOIN lineage ON lineage.parent_task_id=p.task_id WHERE lineage.depth < 16
+                )
+                SELECT v.task_id,v.subject,v.last_value,v.check_count,v.contradiction_count,v.source_counts,v.value_counts,v.first_checked_at,v.last_checked_at,v.last_step_id,v.last_note,lineage.depth
+                FROM {}.task_validations v JOIN lineage ON lineage.task_id=v.task_id
+                WHERE v.last_checked_at >= now() - (%s * interval '1 second')
+            """).format(sql.Identifier(self.schema),sql.Identifier(self.schema),sql.Identifier(self.schema)) + subject_clause + sql.SQL(" ORDER BY lineage.depth ASC,v.last_checked_at DESC LIMIT %s")
+            cur.execute(query,tuple(params))
+            rows=cur.fetchall()
+        return [{"task_id":str(r[0]),"subject":str(r[1]),"value":str(r[2]),"check_count":int(r[3]),"contradiction_count":int(r[4]),"source_counts":dict(r[5] or {}),"value_counts":dict(r[6] or {}),"first_checked_at":r[7].isoformat(),"last_checked_at":r[8].isoformat(),"last_step_id":str(r[9] or ""),"note":str(r[10] or ""),"ancestor_depth":int(r[11] or 0)} for r in rows]
 
     def record_evidence(self, task_id: str, step_id: str, evidence: list[dict]) -> None:
         if not evidence:

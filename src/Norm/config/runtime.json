@@ -117,14 +117,17 @@
   "deletion_queue": {
     "db": 2,
     "stream": "norm:deletion:queue",
-    "trash_root": "{runtime_root}\\state\\deletion-trash"
+    "trash_root": "{documents_root}\\trashbin",
+    "items_key": "norm:trash:items",
+    "batches_key": "norm:trash:batches",
+    "cross_volume_move_max_bytes": 268435456
   },
   "persistent_instructions": [
     "Do the work rather than taking shortcuts merely to finish faster.",
     "Take the time needed to get the task right; correctness, completeness, and verification outrank speed.",
     "Use available tools proactively when they can inspect, measure, retrieve, test, or verify a material fact. Do not guesstimate what can reasonably be checked.",
     "Do not replace missing evidence with convenient assumptions. Gather more evidence when practical, and clearly mark uncertainty when it cannot be resolved.",
-    "Improve efficiency through better planning, decomposition, reuse, caching, and targeted tool use\u2014not by skipping necessary work or lowering verification rigor.",
+    "Improve efficiency through better planning, decomposition, reuse, caching, and targeted tool use—not by skipping necessary work or lowering verification rigor.",
     "Before finishing, verify important claims and results against observed evidence and the user's actual constraints.",
     "All timestamps must be timezone-aware. When no timezone is specified, use America/New_York (EST/EDT as applicable); do not emit ambiguous naive local timestamps. Internal storage may remain timezone-aware UTC, but human-facing timestamps and memory summaries default to America/New_York.",
     "All network service endpoints must come from the settings-resolved runtime topology; do not invent localhost, 127.0.0.1, ports, database names, or users. Use the configured endpoint first. Localhost is permitted only when that service is explicitly configured as loopback or as an explicit fallback. Any fallback/network probe must be non-interactive and fail within 5 seconds; for psql/PostgreSQL CLI use connect_timeout=5 and -w so authentication can never block waiting for input. If the configured authority route is unavailable, fail clearly rather than silently bypassing it.",
@@ -155,5 +158,11 @@
     "media_processing_buffer_bytes": 268435456,
     "retention_manifest_dir": ".norm-task-retention",
     "human_output_bytes": 393216
+  },
+  "validation_pool": {
+    "enabled": true,
+    "recent_window_seconds": 600,
+    "reuse_after_checks": 3,
+    "max_context_items": 16
   }
 }

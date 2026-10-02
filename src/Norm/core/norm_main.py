@@ -38,6 +38,11 @@ MODEL_STORE = r"<configured model store>"
 _WINDOWS_CTRL_HANDLER = None
 
 
+class RuntimeTransportFailure(RuntimeError):
+    """A startup-owned HTTP transport exited while the runtime was otherwise live."""
+
+
+
 def _install_service_signal_guard() -> None:
     """Keep console Ctrl+C/Ctrl+Break events from terminating service mode.
 
@@ -423,11 +428,37 @@ def _flush_console_suppressed_state(config: dict, section: str, *, default_prefi
         try:
             client.xack(stream, group, entry_id)
         except Exception:
-            pass
+            # Never delete the backing stream row after an ACK failure.  Doing so
+            # creates an invisible PEL ghost: XINFO still counts it while XRANGE
+            # and /queue-full cannot show it.
+            logging.exception("Could not ACK suppressed ingress entry %s; preserving stream row", entry_id)
+            continue
         try:
             stream_deleted += int(client.xdel(stream, entry_id) or 0)
         except Exception:
             pass
+
+    # Repair orphaned pending IDs left by older versions or interrupted cleanup.
+    pending_ghosts_cleared = 0
+    try:
+        pending = client.xpending_range(stream, group, "-", "+", 10000)
+    except Exception:
+        pending = []
+    for item in pending:
+        entry_id = str(item.get("message_id") or "")
+        if not entry_id:
+            continue
+        try:
+            backing = client.xrange(stream, min=entry_id, max=entry_id, count=1)
+        except Exception:
+            continue
+        if backing:
+            continue
+        try:
+            pending_ghosts_cleared += int(client.xack(stream, group, entry_id) or 0)
+            client.hdel(dispatching_key, entry_id)
+        except Exception:
+            logging.exception("Could not clear orphaned ingress PEL entry %s during flush", entry_id)
 
     # Keep only tombstones that still guard an in-flight HTTP dispatch.  Everything
     # else has been durably discarded and should disappear from future queue views.
@@ -441,6 +472,7 @@ def _flush_console_suppressed_state(config: dict, section: str, *, default_prefi
         "stream_deleted": stream_deleted,
         "prompt_tombstones_cleared": len(clear_ids),
         "prompt_tombstones_retained": len(retained),
+        "pending_ghosts_cleared": pending_ghosts_cleared,
     }
 
 
@@ -600,6 +632,29 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             result["delivery_errors"] = errors
         return result
 
+    def request_trash_list() -> dict:
+        try:
+            queue_obj = build_deletion_queue(root)
+            items = queue_obj.list_items()
+            return {"status": "ok", "count": len(items), "items": items}
+        except Exception as exc:
+            logging.exception("Could not list deletion trash")
+            return {"status": "error", "count": 0, "error": f"{type(exc).__name__}: {exc}"}
+
+    def request_trash_restore(deletion_id: str) -> dict:
+        try:
+            return {"status": "ok", **build_deletion_queue(root).restore(deletion_id)}
+        except Exception as exc:
+            logging.exception("Could not restore deletion id=%s", deletion_id)
+            return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+
+    def request_trash_purge() -> dict:
+        try:
+            return {"status": "ok", **build_deletion_queue(root).purge_all()}
+        except Exception as exc:
+            logging.exception("Could not purge deletion trash")
+            return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+
     def request_memory_condense(full: bool = False) -> dict:
         worker_obj = resources.get("worker")
         if worker_obj is None:
@@ -668,6 +723,9 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             stop_all=request_stop_all,
             suppress_task=request_suppress_task,
             flush_suppressed=request_flush_suppressed,
+            trash_list=request_trash_list,
+            trash_restore=request_trash_restore,
+            trash_purge=request_trash_purge,
             memory_condense=request_memory_condense,
             inject_context=request_inject_context,
             busy_status=request_busy_status,
@@ -765,7 +823,14 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         startup_completed = True
         logging.info("Conversation persistence ready")
 
-        shutdown_requested.wait()
+        # Do not remain alive-but-unreachable if a dedicated HTTP transport
+        # thread exits unexpectedly.  SelectorEventLoop prevents the observed
+        # Windows AcceptEx failure; this watchdog is the second line of defense.
+        while not shutdown_requested.wait(timeout=1.0):
+            if chat_thread is not None and not chat_thread.is_alive():
+                raise RuntimeTransportFailure("chat HTTP server thread exited unexpectedly")
+            if activity_thread is not None and not activity_thread.is_alive():
+                raise RuntimeTransportFailure("activity/control HTTP server thread exited unexpectedly")
         graceful_exit = True
         if worker:
             if stop_all_requested.is_set():
@@ -914,22 +979,37 @@ def main() -> int:
         print(json.dumps({"ollama": "ok", **statuses}))
         return 0
     startup_attempts = 3
-    for attempt in range(1, startup_attempts + 1):
+    postgres_attempt = 0
+    transport_restarts = 0
+    max_transport_restarts = 5
+    while True:
         try:
             run_host(root, ollama_process, ollama_url, model_name)
             return 0
         except psycopg.Error:
-            if attempt >= startup_attempts:
+            postgres_attempt += 1
+            if postgres_attempt >= startup_attempts:
                 raise
-            delay = attempt * 3
+            delay = postgres_attempt * 3
             logging.exception(
                 "PostgreSQL startup failed on attempt %s/%s; retrying in %ss",
-                attempt,
+                postgres_attempt,
                 startup_attempts,
                 delay,
             )
             time.sleep(delay)
-    return 1
+        except RuntimeTransportFailure:
+            transport_restarts += 1
+            if transport_restarts > max_transport_restarts:
+                raise
+            delay = min(30, 2 ** (transport_restarts - 1))
+            logging.exception(
+                "Norm HTTP transport failed while live; restarting runtime resources in %ss (%s/%s)",
+                delay,
+                transport_restarts,
+                max_transport_restarts,
+            )
+            time.sleep(delay)
 
 
 if __name__ == "__main__":
