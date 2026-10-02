@@ -22,6 +22,7 @@ from .ollama_client import ModelGenerationCancelled, ModelOutputTruncated, Ollam
 from .prompt_queue import PromptJob, RedisPromptQueue, normalize_request_type
 from .protocol import PROTOCOL_VERSION, final_verification_schema, normalize_command, step_verification_schema, validate_final_candidate, validate_final_verification, validate_step_verification
 from .resource_status import full_context_status, impaired_context_status, merge_resource_status
+from .settings import load_path_settings
 
 
 def _utc_now() -> datetime:
@@ -30,6 +31,10 @@ def _utc_now() -> datetime:
 
 
 class VerifierProtocolError(RuntimeError):
+    pass
+
+
+class TaskRoundBudgetExceeded(RuntimeError):
     pass
 
 
@@ -226,6 +231,10 @@ class PromptWorker:
                 snapshot = self.durable.suppress_task(target, reason, payload)
             else:
                 snapshot = {"task_id": target}
+            # Soft-delete only explicitly ephemeral+reproducible task-created assets.
+            # Suppression is conservative because resume may need review/durable intermediates.
+            for member_id in member_ids:
+                self._soft_delete_task_assets(member_id, suppressed=True)
             # PostgreSQL now owns the complete durable resume snapshot. Once that
             # transaction succeeds, live Redis copies are redundant and must be removed
             # so the worker can advance immediately to unrelated queued work. Resume
@@ -251,21 +260,41 @@ class PromptWorker:
                     self._suppress_requested.discard(member_id)
 
     def flush_suppressed(self) -> dict:
+        """Permanently flush every durably suppressed task without one stale Redis error blocking the batch."""
         if self.durable and hasattr(self.durable, "suppressed_task_ids"):
-            task_ids = list(self.durable.suppressed_task_ids(limit=10000))
+            task_ids = [str(x) for x in self.durable.suppressed_task_ids(limit=10000) if str(x).strip()]
         else:
             tasks = self.durable.suppressed_tasks(limit=10000) if self.durable else []
-            task_ids = [str(item.get("task_id") or "") for item in tasks]
-        active = self.active_task_id()
+            task_ids = [str(item.get("task_id") or "") for item in tasks if str(item.get("task_id") or "").strip()]
+        queue_cleanup = {"work": 0, "retry": 0, "escalation": 0, "dead": 0, "round_key": 0}
+        cleanup_errors: list[str] = []
         for task_id in task_ids:
-            if task_id:
-                self.queue.cleanup_task(task_id)
+            try:
+                counts = self.queue.cleanup_task(task_id)
+                for key in queue_cleanup:
+                    queue_cleanup[key] += int(counts.get(key) or 0)
+            except Exception as exc:
+                cleanup_errors.append(f"queue:{task_id}:{type(exc).__name__}:{exc}")
+                logging.warning("Suppressed queue cleanup failed task=%s: %s", task_id, exc)
+            try:
                 if hasattr(self.live, "cleanup"):
                     self.live.cleanup(task_id)
-                if task_id != active:
-                    self._clear_suppression_request(task_id)
+            except Exception as exc:
+                cleanup_errors.append(f"live:{task_id}:{type(exc).__name__}:{exc}")
+                logging.warning("Suppressed live-state cleanup failed task=%s: %s", task_id, exc)
+            self._clear_suppression_request(task_id)
+        # PostgreSQL is authoritative.  Even if a stale Redis artifact could not be
+        # removed, do not leave the suppressed task itself immortal. Startup/queue
+        # reconciliation can later remove any orphaned live entry because its task no
+        # longer exists durably.
         deleted = self.durable.flush_suppressed() if self.durable else 0
-        return {"status": "ok", "deleted": deleted}
+        return {
+            "status": "ok" if not cleanup_errors else "partial",
+            "deleted": deleted,
+            "suppressed_ids": task_ids,
+            "queue_cleanup": queue_cleanup,
+            "cleanup_errors": cleanup_errors,
+        }
 
     def wait_idle(self, timeout: float | None = None) -> bool:
         return self._idle.wait(timeout=timeout)
@@ -553,6 +582,9 @@ class PromptWorker:
             else:
                 self._handle_cancelled(redis_id, job, name, started, str(exc))
             return
+        except TaskRoundBudgetExceeded as exc:
+            self._handle_pathological_failure(redis_id, job, name, started, "task-round-budget", str(exc))
+            return
         except VerifierProtocolError as exc:
             self._handle_pathological_failure(redis_id, job, name, started, "verifier", str(exc))
             return
@@ -603,6 +635,7 @@ class PromptWorker:
         if self.durable and status is not None and status != "suppressed":
             payload = self.queue.snapshot_task_jobs(job.task_id)
             self.durable.suppress_task(job.task_id, reason or "Suppressed by operator.", payload)
+        self._soft_delete_task_assets(job.task_id, suppressed=True)
         # The suppression payload is the durable resume source. Remove all live
         # copies for this task so a cancelled active model call cannot leave queue
         # debris that shadows unrelated work.
@@ -1024,6 +1057,31 @@ class PromptWorker:
         except Exception:
             logging.exception("Could not record future-effectiveness note task=%s", task_id)
 
+    def _soft_delete_task_assets(self, task_id: str, *, suppressed: bool) -> dict:
+        """Batch soft-delete only Norm-created assets whose manifest says recreation is cheap."""
+        try:
+            tools = self._worker_tools()
+            if tools is None or tools.task_storage is None or tools.deletion_queue is None:
+                return {"staged": 0, "skipped": "unavailable"}
+            tools.set_task_context(task_id, None)
+            candidates = tools.task_storage.cleanup_candidates(suppressed=suppressed)
+            if not candidates:
+                return {"staged": 0, "skipped": 0}
+            result = tools.deletion_queue.stage_batch(
+                candidates, task_id=task_id,
+                batch_reason="suppressed task cleanup" if suppressed else "terminal task reproducible-artifact cleanup",
+                checkpoint=True,
+            )
+            staged = len(result.get("staged") or [])
+            logging.info(
+                "Task artifact soft-delete task=%s suppressed=%s candidates=%s staged=%s skipped=%s",
+                task_id, suppressed, len(candidates), staged, len(result.get("skipped") or []),
+            )
+            return {"staged": staged, "skipped": len(result.get("skipped") or []), "batch_id": result.get("batch_id")}
+        except Exception as exc:
+            logging.exception("Task artifact soft-delete failed task=%s suppressed=%s", task_id, suppressed)
+            return {"staged": 0, "error": f"{type(exc).__name__}: {exc}"}
+
     def _clear_terminal_redis(self, task_id: str) -> None:
         if not self.durable or not self.durable.terminal_summary_verified(task_id):
             raise RuntimeError(f"refusing Redis cleanup before durable terminal summary verification: {task_id}")
@@ -1033,6 +1091,8 @@ class PromptWorker:
         note = str((context or {}).get("effectiveness_note") or "").strip()
         if not self._is_literal_request(request) and not note:
             raise RuntimeError(f"refusing raw-thinking purge before effectiveness note: {task_id}")
+        status = self.durable.task_status(task_id) if self.durable else None
+        self._soft_delete_task_assets(task_id, suppressed=(status != "completed"))
         if hasattr(self.durable, "purge_raw_thinking"):
             purged = self.durable.purge_raw_thinking(task_id)
             if purged:
@@ -1044,9 +1104,9 @@ class PromptWorker:
             from norm_runtime.settings import load_path_settings
             _paths = load_path_settings(self._runtime_root())
             _retention = Path(_paths["workspace_root"]) / str(self._runtime_config().get("task_storage", {}).get("retention_manifest_dir", ".norm-task-retention"))
-            temp_result = cleanup_task_temp(_paths["temp_root"], task_id, self.durable, retention_root=_retention)
+            temp_result = cleanup_task_temp(_paths["temp_root"], task_id, self.durable, retention_root=_retention, deletion_queue=(self._worker_tools().deletion_queue if self._worker_tools() is not None else None))
             if temp_result.get("removed"):
-                logging.info("Removed verified terminal task temp task=%s files=%s bytes=%s", task_id, temp_result.get("files_removed", 0), temp_result.get("bytes_removed", 0))
+                logging.info("Soft-deleted verified terminal task temp task=%s staged=%s preserved=%s", task_id, temp_result.get("files_soft_deleted", 0), temp_result.get("files_preserved", 0))
         except Exception:
             logging.exception("Terminal task temp cleanup failed task=%s; leaving temp material in place", task_id)
         logging.info("Terminal Redis cleanup task=%s queue=%s live=cleared", task_id, queue_counts)
@@ -1082,10 +1142,14 @@ class PromptWorker:
         cfg = self._runtime_config().get("maintenance", {})
         if not bool(cfg.get("startup_redis_reconcile", True)):
             return
-        requeued = self.queue.requeue_pending_on_startup()
         self._last_redis_maintenance_check = monotonic()
-        self.durable.record_maintenance_note("startup", "Redis startup scan began.", details={"pending_requeued": requeued})
+        self.durable.record_maintenance_note("startup", "Redis startup scan began.", details={"pending_requeued": 0})
+        # PostgreSQL terminal state is authoritative. Reconcile stale Redis/PEL
+        # entries before requeueing anything so completed/failed/cancelled tasks
+        # cannot be resurrected simply because an old pending delivery survived.
         self._reconcile_redis(reason="startup", finalize_unrecoverable=True, include_durable_running=True)
+        requeued = self.queue.requeue_pending_on_startup()
+        self.durable.record_maintenance_note("startup", "Redis startup requeue completed.", details={"pending_requeued": requeued})
         try:
             temp_result = self._purge_temp_outputs()
             logging.info("Startup temp cleanup result=%s", temp_result)
@@ -1253,12 +1317,14 @@ class PromptWorker:
             return None
         root = self._runtime_root()
         from norm_runtime.deletion_queue import RedisDeletionQueue
+        from norm_runtime.file_access_policy import load_file_access_policy
         from norm_runtime.settings import load_path_settings, load_plugin_settings
         path_cfg = load_path_settings(root)
         plugin_cfg = load_plugin_settings(root)
         workspace_root = path_cfg["workspace_root"]
         temp_root = path_cfg["temp_root"]
-        allowed_roots = [str(workspace_root), str(temp_root), str(root / "docs"), str(plugin_cfg["plugin_root"]), *list(tools.get("allowed_roots", []))]
+        file_policy = load_file_access_policy(root)
+        allowed_roots = sorted({str(p) for p in (*file_policy.read_roots, *file_policy.write_roots)})
         redis_cfg = self._runtime_config().get("redis", {})
         dq = self._runtime_config().get("deletion_queue", {})
         deletion_queue = RedisDeletionQueue(
@@ -1267,13 +1333,22 @@ class PromptWorker:
             db=int(dq.get("db", 2)),
             stream=str(dq.get("stream", "norm:deletion:queue")),
             trash_root=str(dq.get("trash_root", root / "state" / "deletion-trash")),
+            items_key=str(dq.get("items_key", "norm:trash:items")),
+            batches_key=str(dq.get("batches_key", "norm:trash:batches")),
+            cross_volume_move_max_bytes=int(dq.get("cross_volume_move_max_bytes", 268_435_456)),
         )
         self._slice_file_tools = FileToolExecutor(
             allowed_roots,
             backup_root=str(tools.get("backup_root", root / "state" / "file-backups")),
             audit_log=str(tools.get("audit_log", root / "logs" / "tool-audit.jsonl")),
-            max_read_bytes=int(tools.get("max_read_bytes", 25_165_824)),
-            max_tool_return_bytes=int(tools.get("max_tool_return_bytes", 393_216)),
+            max_read_bytes=file_policy.read_processing_buffer_bytes,
+            max_tool_return_bytes=file_policy.read_chunk_bytes,
+            read_roots=[str(p) for p in file_policy.read_roots],
+            write_roots=[str(p) for p in file_policy.write_roots],
+            enforce_read_directories=file_policy.enforce_read_directories,
+            enforce_write_directories=file_policy.enforce_write_directories,
+            read_chunk_bytes=file_policy.read_chunk_bytes,
+            read_chunk_max_bytes=file_policy.read_chunk_max_bytes,
             max_write_bytes=int(tools.get("max_write_bytes", 5_242_880)),
             blocked_write_staging_root=str(tools.get("blocked_write_staging_root", root / "docs" / "blocked-writes")),
             write_retry_count=int(tools.get("write_retry_count", 3)),
@@ -1595,7 +1670,8 @@ class PromptWorker:
     def _recovery_note_path(self, task_id: str, step_id: str) -> Path:
         safe_task = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(task_id))[:180]
         safe_step = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(step_id))[:120]
-        path = self._runtime_root() / "docs" / "recovery-notes" / safe_task / f"{safe_step}.md"
+        temp_root = Path(load_path_settings(self._runtime_root())["temp_root"]).resolve()
+        path = temp_root / "recovery" / "handoff-notes" / safe_task / f"{safe_step}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -2276,12 +2352,99 @@ class PromptWorker:
         if self.durable and hasattr(self.durable, "record_evidence"):
             self.durable.record_evidence(job.task_id, job.step_id, evidence)
 
+    def _validation_pool_config(self) -> dict:
+        return dict(self._runtime_config().get("validation_pool") or {})
+
+    def _recent_validations(self, job: PromptJob, subjects: list[str] | None = None) -> list[dict]:
+        cfg = self._validation_pool_config()
+        if not bool(cfg.get("enabled", True)):
+            return []
+        limit = int(cfg.get("max_context_items", 16))
+        window = int(cfg.get("recent_window_seconds", 600))
+        if self.durable and hasattr(self.durable, "recent_validations"):
+            try:
+                rows = self.durable.recent_validations(job.task_id, subjects=subjects, window_seconds=window, limit=limit)
+                if rows:
+                    return rows
+            except Exception:
+                logging.exception("Durable validation-pool read failed task=%s", job.task_id)
+        if hasattr(self.live, "recent_validations"):
+            try:
+                return self.live.recent_validations(job.task_id, subjects=subjects, limit=limit)
+            except Exception:
+                logging.exception("Redis validation-pool read failed task=%s", job.task_id)
+        return []
+
+    def _validation_context(self, job: PromptJob) -> str:
+        rows = self._recent_validations(job)
+        if not rows:
+            return "RECENT VALIDATIONS: none recorded for this task yet."
+        threshold = int(self._validation_pool_config().get("reuse_after_checks", 3))
+        lines = ["RECENT VALIDATIONS (reuse recent consistent evidence; do not start from zero):"]
+        for item in rows:
+            checks = int(item.get("check_count") or 0)
+            contradictions = int(item.get("contradiction_count") or 0)
+            sources = dict(item.get("source_counts") or {})
+            reuse = checks >= threshold and contradictions == 0
+            lines.append(
+                f"- {item.get('subject')} = {item.get('value')} | checks={checks} | "
+                f"sources={len(sources)} ({', '.join(sorted(sources)[:6]) or 'unspecified'}) | "
+                f"contradictions={contradictions} | last={item.get('last_checked_at')} | "
+                f"recommendation={'REUSE unless concrete contrary evidence exists' if reuse else 'revalidate if material'}"
+            )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _validation_tool_schemas() -> list[dict]:
+        return [
+            {"type":"function","function":{"name":"review_validations","description":"Batch-review semantic facts you are considering re-checking. Use this before reacquiring recently verified facts.","parameters":{"type":"object","properties":{"subjects":{"type":"array","items":{"type":"string"},"minItems":1}},"required":["subjects"],"additionalProperties":False}}},
+            {"type":"function","function":{"name":"record_validations","description":"Batch-record semantic facts just established from observed evidence so later rounds/steps/retries can reuse them.","parameters":{"type":"object","properties":{"items":{"type":"array","minItems":1,"items":{"type":"object","properties":{"subject":{"type":"string"},"value":{"type":"string"},"source":{"type":"string"},"note":{"type":"string"}},"required":["subject","value","source"],"additionalProperties":False}}},"required":["items"],"additionalProperties":False}}},
+        ]
+
+    def _execute_validation_tool(self, job: PromptJob, name: str, arguments: dict) -> dict:
+        cfg = self._validation_pool_config()
+        if not bool(cfg.get("enabled", True)):
+            return {"ok": False, "tool": name, "error": "validation pool is disabled"}
+        threshold = int(cfg.get("reuse_after_checks", 3))
+        if name == "review_validations":
+            subjects = [str(x).strip() for x in (arguments.get("subjects") or []) if str(x).strip()]
+            rows = self._recent_validations(job, subjects)
+            by_subject = {str(row.get("subject")): row for row in rows}
+            reviewed=[]
+            for subject in subjects:
+                row=by_subject.get(subject)
+                if not row:
+                    reviewed.append({"subject":subject,"recommendation":"validate","reason":"no recent validation"}); continue
+                checks=int(row.get("check_count") or 0); contradictions=int(row.get("contradiction_count") or 0)
+                recommendation="reuse" if checks >= threshold and contradictions == 0 else "validate"
+                reviewed.append({**row,"recommendation":recommendation,"reason":("recent consistent checks make another casual read low-value" if recommendation=="reuse" else "insufficient or contradictory recent validation")})
+            return {"ok": True, "tool": name, "reviewed": reviewed}
+        if name == "record_validations":
+            items=[dict(x) for x in (arguments.get("items") or []) if isinstance(x,dict)]
+            if not items:
+                return {"ok": False, "tool": name, "error": "items must not be empty"}
+            durable_saved=[]; live_saved=[]
+            if self.durable and hasattr(self.durable,"record_validations"):
+                durable_saved=self.durable.record_validations(job.task_id,job.step_id,items)
+            if hasattr(self.live,"record_validations"):
+                live_saved=self.live.record_validations(job.task_id,job.step_id,items)
+            return {"ok": True, "tool": name, "recorded": durable_saved or live_saved, "count": len(durable_saved or live_saved)}
+        return {"ok": False, "tool": name, "error": "unknown validation-pool tool"}
+
     def _run_tool_slice(self, job: PromptJob, prompt: str, tools) -> dict:
         import json
 
         step_limit, task_limit = self._slice_limits()
         task_rounds = self.queue.task_rounds(job.task_id)
-        tool_prompt = tools.instructions() + "\n\n" + prompt
+        validation_context = self._validation_context(job)
+        validation_instructions = (
+            "VALIDATION POOL RULES:\n"
+            "- Skepticism is good, but repeated checks add little information. Before re-checking facts that may already be established, batch them through review_validations.\n"
+            "- A recommendation to reuse is advisory, not an absolute block: override it only when you have a concrete reason or contrary evidence.\n"
+            "- After establishing material semantic facts, batch-record them with record_validations immediately.\n"
+            "- Re-check things that were actually mutated or are genuinely volatile; do not repeatedly reacquire an unchanged local fact merely for reassurance.\n"
+        )
+        tool_prompt = tools.instructions() + "\n\n" + validation_instructions + "\n" + validation_context + "\n\n" + prompt
         messages: list[dict] = [{"role": "user", "content": tool_prompt}]
         pending_verification: dict[str, str] = {}
         evidence: list[dict] = []
@@ -2319,7 +2482,7 @@ class PromptWorker:
                 }
             response = self.client.chat_with_tools(
                 messages,
-                tools.schemas(),
+                tools.schemas() + self._validation_tool_schemas(),
                 think=True,
                 temperature=float(metadata.get("temperature", 0.2)),
                 num_predict=output_budget,
@@ -2441,6 +2604,8 @@ class PromptWorker:
                             arguments = {}
                     if not isinstance(name, str) or not isinstance(arguments, dict):
                         result = {"ok": False, "error": "invalid tool name or arguments"}
+                    elif name in {"review_validations", "record_validations"}:
+                        result = self._execute_validation_tool(job, name, arguments)
                     else:
                         result = tools.execute(name, arguments)
 
@@ -2491,7 +2656,12 @@ class PromptWorker:
                     }
 
         evidence.extend(self._verify_pending(job, pending_verification, tools))
-        reason = "task_round_limit" if task_rounds >= task_limit else "step_round_limit"
+        if task_rounds >= task_limit:
+            raise TaskRoundBudgetExceeded(
+                f"task tool/reasoning round budget exhausted ({task_rounds}/{task_limit}); "
+                "stopped instead of requeueing the same task indefinitely"
+            )
+        reason = "step_round_limit"
         checkpoint = self._continuation_checkpoint(
             job, prompt, messages, reason, step_rounds, task_rounds
         )
@@ -2752,8 +2922,6 @@ class PromptWorker:
             step_rounds=step_rounds,
             task_rounds=task_rounds,
         )
-        if reason == "task_round_limit":
-            self.queue.reset_task_rounds(job.task_id)
         logging.info(
             "Prompt yielded task=%s step=%s reason=%s step_rounds=%s task_rounds=%s",
             job.task_id,
@@ -2914,6 +3082,7 @@ class PromptWorker:
             max_age_hours=settings.getint("temp", "max_age_hours", fallback=72),
             recovery_max_age_hours=settings.getint("temp", "recovery_max_age_hours", fallback=168),
             retention_root=retention,
+            deletion_queue=(self._worker_tools().deletion_queue if self._worker_tools() is not None else None),
         )
 
     @staticmethod
@@ -2986,6 +3155,9 @@ class PromptWorker:
             marker["phase"] = "temp_cleanup"
             client.set(active_key, json.dumps(marker, sort_keys=True))
             temp_cleanup = self._purge_temp_outputs()
+            marker["phase"] = "trash_purge"
+            client.set(active_key, json.dumps(marker, sort_keys=True))
+            trash_purge = self._worker_tools().deletion_queue.purge_all() if self._worker_tools() is not None else {"purged": 0, "held": 0}
             marker["phase"] = "image_analysis_purge"
             client.set(active_key, json.dumps(marker, sort_keys=True))
             purge = {"files_removed": 0, "bytes_removed": 0, "skipped": "disabled"}
@@ -3016,11 +3188,11 @@ class PromptWorker:
             self.durable.record_maintenance_note(
                 "weekly_cleanup", f"{mode.capitalize()} cleanup completed successfully.",
                 details={"status": "success", "mode": mode, "run_id": run_id,
-                         "resumed": resumed, "temp_cleanup": temp_cleanup, "image_analysis_purge": purge,
+                         "resumed": resumed, "temp_cleanup": temp_cleanup, "trash_purge": trash_purge, "image_analysis_purge": purge,
                          "recovery_cleanup": recovery_cleanup, "maintenance_result": result},
             )
             client.delete(active_key)
-            logging.info("Weekly maintenance completed run_id=%s mode=%s temp=%s purge=%s result=%s", run_id, mode, temp_cleanup, purge, result)
+            logging.info("Weekly maintenance completed run_id=%s mode=%s temp=%s trash=%s purge=%s result=%s", run_id, mode, temp_cleanup, trash_purge, purge, result)
         except Exception as exc:
             failed = {**marker, "status": "failed", "failed_at": _utc_now().isoformat(), "error": str(exc)[:2000]}
             try:

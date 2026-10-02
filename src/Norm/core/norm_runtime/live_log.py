@@ -29,6 +29,9 @@ class RedisTaskLog:
     def _stream_key(self, task_id: str) -> str:
         return f"{self.prefix}:{task_id}:events"
 
+    def _validation_key(self, task_id: str) -> str:
+        return f"{self.prefix}:{task_id}:validations"
+
     def _model_buffer_key(self, task_id: str, step_id: str) -> str:
         return f"{self.prefix}:{task_id}:model-buffer:{step_id}"
 
@@ -186,8 +189,42 @@ class RedisTaskLog:
                     ids.add(task_id)
         return ids
 
+    def record_validations(self, task_id: str, step_id: str, items: list[dict]) -> list[dict]:
+        saved=[]
+        key=self._validation_key(task_id)
+        now=_now()
+        for item in items or []:
+            if not isinstance(item,dict): continue
+            subject=str(item.get("subject") or "").strip()[:500]
+            value=str(item.get("value") or "").strip()[:4000]
+            source=str(item.get("source") or "unspecified").strip()[:500] or "unspecified"
+            note=str(item.get("note") or "").strip()[:2000]
+            if not subject or not value: continue
+            raw=self.client.hget(key,subject); old={}
+            if raw:
+                try: old=json.loads(raw)
+                except Exception: old={}
+            checks=int(old.get("check_count") or 0)+1
+            contradictions=int(old.get("contradiction_count") or 0)+(1 if old.get("value") not in (None,value) else 0)
+            sources=dict(old.get("source_counts") or {}); sources[source]=int(sources.get(source) or 0)+1
+            values=dict(old.get("value_counts") or {}); values[value]=int(values.get(value) or 0)+1
+            record={"subject":subject,"value":value,"check_count":checks,"contradiction_count":contradictions,"source_counts":sources,"value_counts":values,"first_checked_at":old.get("first_checked_at") or now,"last_checked_at":now,"last_step_id":step_id,"note":note}
+            self.client.hset(key,subject,json.dumps(record,ensure_ascii=False,sort_keys=True)); saved.append(record)
+        return saved
+
+    def recent_validations(self, task_id: str, *, subjects: list[str] | None = None, limit: int = 20) -> list[dict]:
+        raw=self.client.hgetall(self._validation_key(task_id)); wanted={str(x).strip() for x in (subjects or []) if str(x).strip()}
+        rows=[]
+        for subject,payload in raw.items():
+            if wanted and subject not in wanted: continue
+            try: record=json.loads(payload)
+            except Exception: continue
+            if isinstance(record,dict): rows.append(record)
+        rows.sort(key=lambda x:str(x.get("last_checked_at") or ""),reverse=True)
+        return rows[:max(1,int(limit))]
+
     def cleanup(self, task_id: str) -> None:
-        keys = [self._state_key(task_id), self._stream_key(task_id)]
+        keys = [self._state_key(task_id), self._stream_key(task_id), self._validation_key(task_id)]
         keys.extend(self.client.scan_iter(match=f"{self.prefix}:{task_id}:model-buffer:*"))
         if keys:
             self.client.delete(*keys)

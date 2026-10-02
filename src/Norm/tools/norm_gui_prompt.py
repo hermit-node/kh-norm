@@ -312,6 +312,9 @@ def show_help() -> None:
     print("  /suppress-task      Park the active task tree, or oldest next queued task tree")
     print("  /resume-task [N]    List suppressed tasks, or resume an index/task-id/prefix directly")
     print("  /flush-suppressed   Permanently delete suppressed tasks and parked delivery records")
+    print("  /delete-list        List reversible soft-deleted files")
+    print("  /restore-delete ID  Restore one deletion ID; use all for every non-conflicting item")
+    print("  /delete-files       Permanently purge reversible trash now")
     print("  /backup             Create a portable installer/source backup")
     print("  /backup full        Create a sensitive full backup with private state and PostgreSQL")
     print("  /memory-condense    Incrementally refresh consolidated background memory when idle")
@@ -664,6 +667,22 @@ def main() -> int:
                 result = post_json(ep["flush_suppressed"], timeout=10)
                 print(f"Flushed {int(result.get('deleted') or 0)} suppressed task(s) and {int(result.get('delivery_deleted') or 0)} suppressed delivery record(s).")
                 continue
+            elif lowered == "/delete-list":
+                result = post_json(ep["delete_list"], timeout=10)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                continue
+            elif lowered == "/delete-files":
+                result = post_json(ep["delete_files"], timeout=10)
+                print(f"Purged {int(result.get('purged') or 0)} trash item(s); held {int(result.get('held') or 0)}.")
+                continue
+            elif lowered == "/restore-delete" or lowered.startswith("/restore-delete "):
+                parts = text.strip().split(maxsplit=1)
+                if len(parts) != 2 or not parts[1].strip():
+                    print("Usage: /restore-delete <deletion-id|all>")
+                    continue
+                result = post_json(ep["restore_delete"], payload={"deletion_id": parts[1].strip()}, timeout=10)
+                print(f"Restored {len(result.get('restored') or [])}; conflicts {len(result.get('conflicts') or [])}; missing {len(result.get('missing') or [])}.")
+                continue
             elif lowered in {"/memory-condense", "/memory-condense -full", "/memory-condense --full", "/memory-condense full"}:
                 full = lowered != "/memory-condense"
                 try:
@@ -704,7 +723,16 @@ def main() -> int:
                 else:
                     print(f"{command} not recognized, or arguments not supported. Type /help. Nothing queued.")
                 continue
-            entry_id, prompt_id = dispatcher.enqueue_prompt(text)
+            try:
+                entry_id, prompt_id = dispatcher.enqueue_prompt(text)
+            except Exception as exc:
+                # A foreground prompt must not kill the operator console merely
+                # because Redis/Tailscale/runtime transport is temporarily down.
+                # enqueue_prompt only returns after the DB3 XADD succeeds, so an
+                # exception here means acceptance was not confirmed.
+                print(f"Prompt was not accepted into Redis DB3: {type(exc).__name__}: {exc}")
+                print("Norm Prompt remains open; retry after connectivity recovers. Nothing was intentionally acknowledged.")
+                continue
             queued, uncertain = dispatcher.queue_stats()
             if queued is None:
                 print(f"Queued {prompt_id[:8]} in Redis as {entry_id} (queue depth unknown; {uncertain} uncertain).")

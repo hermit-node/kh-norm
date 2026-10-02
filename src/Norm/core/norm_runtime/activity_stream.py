@@ -81,6 +81,9 @@ def _activity_app(
     stop_all: Callable[[bool], dict] | None,
     suppress_task: Callable[[str | None, str], dict] | None,
     flush_suppressed: Callable[[], dict] | None,
+    trash_list: Callable[[], dict] | None,
+    trash_restore: Callable[[str], dict] | None,
+    trash_purge: Callable[[], dict] | None,
     memory_condense: Callable[[bool], dict] | None,
     busy_status: Callable[[], dict] | None,
     context_status: Callable[[], dict] | None,
@@ -227,6 +230,21 @@ def _activity_app(
                     if flush_suppressed is None:
                         return web.json_response({"error": "flush-suppressed control unavailable"}, status=503)
                     return web.json_response(await _call(flush_suppressed))
+                if path == "/control/delete-list":
+                    if trash_list is None:
+                        return web.json_response({"error": "trash list control unavailable"}, status=503)
+                    return web.json_response(await _call(trash_list))
+                if path == "/control/restore-delete":
+                    if trash_restore is None:
+                        return web.json_response({"error": "trash restore control unavailable"}, status=503)
+                    deletion_id = str(payload.get("deletion_id") or "").strip()
+                    if not deletion_id:
+                        return web.json_response({"error": "deletion_id is required"}, status=400)
+                    return web.json_response(await _call(trash_restore, deletion_id))
+                if path == "/control/delete-files":
+                    if trash_purge is None:
+                        return web.json_response({"error": "trash purge control unavailable"}, status=503)
+                    return web.json_response(await _call(trash_purge))
                 if path == "/control/memory-condense":
                     if memory_condense is None:
                         return web.json_response({"error": "memory-condense control unavailable"}, status=503)
@@ -254,6 +272,9 @@ def _activity_app(
             "/control/shutdown-norm-now",
             "/control/suppress-task",
             "/control/flush-suppressed",
+            "/control/delete-list",
+            "/control/restore-delete",
+            "/control/delete-files",
             "/control/memory-condense",
             "/control/stop-all",
             "/control/stop-all-now",
@@ -274,6 +295,9 @@ def start_activity_server(
     stop_all: Callable[[bool], dict] | None = None,
     suppress_task: Callable[[str | None, str], dict] | None = None,
     flush_suppressed: Callable[[], dict] | None = None,
+    trash_list: Callable[[], dict] | None = None,
+    trash_restore: Callable[[str], dict] | None = None,
+    trash_purge: Callable[[], dict] | None = None,
     memory_condense: Callable[[bool], dict] | None = None,
     busy_status: Callable[[], dict] | None = None,
     context_status: Callable[[], dict] | None = None,
@@ -291,6 +315,9 @@ def start_activity_server(
             stop_all=stop_all,
             suppress_task=suppress_task,
             flush_suppressed=flush_suppressed,
+            trash_list=trash_list,
+            trash_restore=trash_restore,
+            trash_purge=trash_purge,
             memory_condense=memory_condense,
             busy_status=busy_status,
             context_status=context_status,

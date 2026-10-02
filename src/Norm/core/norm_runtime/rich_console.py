@@ -38,6 +38,9 @@ class NormConsole:
         self.stop_all_now_url = control_base + "/stop-all-now"
         self.suppress_task_url = control_base + "/suppress-task"
         self.flush_suppressed_url = control_base + "/flush-suppressed"
+        self.delete_list_url = control_base + "/delete-list"
+        self.restore_delete_url = control_base + "/restore-delete"
+        self.delete_files_url = control_base + "/delete-files"
         self.memory_condense_url = control_base + "/memory-condense"
         self.busy_url = activity_url.rsplit("/", 1)[0] + "/status/busy"
         shared_endpoints = {
@@ -241,6 +244,25 @@ class NormConsole:
         except Exception as exc:
             self.console.print(f"[red]Could not flush suppressed tasks: {exc}[/]")
 
+    def _trash_command(self, action: str, deletion_id: str = "") -> None:
+        try:
+            if action == "list":
+                req = request.Request(self.delete_list_url, data=b"{}", method="POST")
+            elif action == "restore":
+                req = request.Request(self.restore_delete_url, data=json.dumps({"deletion_id": deletion_id}).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
+            else:
+                req = request.Request(self.delete_files_url, data=b"{}", method="POST")
+            with request.urlopen(req, timeout=10) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            if action == "list":
+                self.console.print_json(data=result)
+            elif action == "restore":
+                self.console.print(f"[yellow]Restored {len(result.get('restored') or [])}; conflicts {len(result.get('conflicts') or [])}; missing {len(result.get('missing') or [])}.[/]")
+            else:
+                self.console.print(f"[yellow]Permanently purged {int(result.get('purged') or 0)} trash item(s); held {int(result.get('held') or 0)}.[/]")
+        except Exception as exc:
+            self.console.print(f"[red]Trash operation failed: {exc}[/]")
+
     def _run_backup(self, full: bool = False) -> None:
         runtime_root = Path(__file__).resolve().parents[2]
         helper = runtime_root / "tools" / "norm_backup.py"
@@ -313,6 +335,9 @@ class NormConsole:
             "  /thread-resume NAME  Switch to a thread by exact title, unique prefix, ID, or ID prefix.\n"
             "  /suppress-task     Park the active root task tree, or oldest next queued task tree.\n"
             "  /flush-suppressed  Permanently delete suppressed tasks and parked delivery records.\n"
+            "  /delete-list       List reversible soft-deleted files.\n"
+            "  /restore-delete ID Restore one deletion ID; use all to restore all non-conflicting items.\n"
+            "  /delete-files      Permanently purge reversible trash now.\n"
             "  /backup            Create a portable installer/source backup.\n"
             "  /backup full       Create a sensitive full backup with private state and PostgreSQL.\n"
             "  /memory-condense   Incrementally refresh consolidated background memory when idle.\n"
@@ -373,6 +398,12 @@ class NormConsole:
             threading.Thread(target=self._suppress_task, daemon=True).start()
         elif parts == ["/flush-suppressed"]:
             threading.Thread(target=self._flush_suppressed, daemon=True).start()
+        elif parts == ["/delete-list"]:
+            threading.Thread(target=self._trash_command, args=("list",), daemon=True).start()
+        elif parts and parts[0] == "/restore-delete" and len(parts) == 2:
+            threading.Thread(target=self._trash_command, args=("restore", parts[1]), daemon=True).start()
+        elif parts == ["/delete-files"]:
+            threading.Thread(target=self._trash_command, args=("purge",), daemon=True).start()
         elif parts == ["/backup"]:
             threading.Thread(target=self._run_backup, kwargs={"full": False}, daemon=True).start()
         elif parts in (["/backup", "full"], ["/backup-zip"]):
