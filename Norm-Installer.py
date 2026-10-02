@@ -18,7 +18,9 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable
 
-INSTALLER_VERSION = "1.6.0-unified"
+import installer_environment as envtools
+
+INSTALLER_VERSION = "1.6.5-unified"
 PIP_VERSION = "26.2.1"
 PIP_MIN_VERSION = PIP_VERSION  # backward-compatible internal print helper
 PIP_SPEC = f"pip=={PIP_VERSION}"
@@ -396,6 +398,156 @@ def _has_protected_descendant(rel: str, protected: set[str]) -> bool:
     return False
 
 
+
+def _snapshot_existing_config(target: Path, log: LogFn) -> Path | None:
+    """Persist a rollback copy of operator config before an in-place package sync."""
+    config_dir = target / "config"
+    if not config_dir.is_dir():
+        return None
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    backup_root = target / "backups" / f"installer-config-{stamp}"
+    candidate = backup_root
+    suffix = 1
+    while candidate.exists():
+        candidate = target / "backups" / f"installer-config-{stamp}-{suffix}"
+        suffix += 1
+    shutil.copytree(config_dir, candidate)
+    log(f"Snapshotted existing config for rollback: {candidate}")
+    return candidate
+
+
+def _migrate_existing_settings(package_settings: Path, old_settings: Path, *, package_version: str, log: LogFn) -> dict[str, list[str]]:
+    """Rebuild settings.ini from the new schema, then migrate matching old values."""
+    result = {"migrated": [], "dropped": []}
+    if not old_settings.is_file() or not package_settings.is_file():
+        return result
+    new_parser = configparser.ConfigParser(interpolation=None)
+    old_parser = configparser.ConfigParser(interpolation=None)
+    with package_settings.open("r", encoding="utf-8-sig") as handle:
+        new_parser.read_file(handle)
+    with old_settings.open("r", encoding="utf-8-sig") as handle:
+        old_parser.read_file(handle)
+
+    package_owned = {("project", "version"), ("paths", "runtime_root")}
+    for section in old_parser.sections():
+        for key, old_value in old_parser.items(section, raw=True):
+            marker = (section, key)
+            label = f"{section}.{key}"
+            if marker in package_owned:
+                continue
+            if new_parser.has_option(section, key):
+                new_parser.set(section, key, old_value)
+                result["migrated"].append(label)
+            else:
+                result["dropped"].append(label)
+
+    if not new_parser.has_section("project"):
+        new_parser.add_section("project")
+    new_parser.set("project", "version", package_version)
+    with package_settings.open("w", encoding="utf-8", newline="\n") as handle:
+        new_parser.write(handle)
+    log(
+        f"Rebuilt settings.ini from new schema: migrated {len(result['migrated'])} existing values; "
+        f"dropped {len(result['dropped'])} retired/unknown keys into rollback-only history."
+    )
+    return result
+
+
+def _migrate_json_value(new_value: Any, old_value: Any, *, prefix: str = "") -> tuple[Any, list[str], list[str]]:
+    migrated: list[str] = []
+    dropped: list[str] = []
+    if isinstance(new_value, dict) and isinstance(old_value, dict):
+        result = _deep_copy(new_value)
+        for key, old_child in old_value.items():
+            label = f"{prefix}.{key}" if prefix else str(key)
+            if key not in new_value:
+                dropped.append(label)
+                continue
+            new_child = new_value[key]
+            if isinstance(new_child, dict) and isinstance(old_child, dict):
+                merged_child, child_migrated, child_dropped = _migrate_json_value(
+                    new_child, old_child, prefix=label
+                )
+                result[key] = merged_child
+                migrated.extend(child_migrated)
+                dropped.extend(child_dropped)
+            else:
+                result[key] = _deep_copy(old_child)
+                migrated.append(label)
+        return result, migrated, dropped
+    return _deep_copy(old_value), [prefix or "<root>"], []
+
+
+def _migrate_existing_json(package_path: Path, old_path: Path, log: LogFn) -> dict[str, list[str]]:
+    result = {"migrated": [], "dropped": []}
+    if not package_path.is_file() or not old_path.is_file():
+        return result
+    try:
+        new_value = json.loads(package_path.read_text(encoding="utf-8-sig"))
+        old_value = json.loads(old_path.read_text(encoding="utf-8-sig"))
+    except Exception as exc:
+        raise InstallerError(f"Could not migrate JSON config {package_path}: {exc}") from exc
+    merged, migrated, dropped = _migrate_json_value(new_value, old_value)
+    package_path.write_text(
+        json.dumps(merged, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    result["migrated"] = migrated
+    result["dropped"] = dropped
+    log(
+        f"Migrated matching existing values into {package_path.name}: "
+        f"{len(migrated)} migrated, {len(dropped)} retired/unknown keys left in rollback snapshot."
+    )
+    return result
+
+
+def _restore_operator_config(target: Path, snapshot: Path | None, *, package_version: str, log: LogFn) -> None:
+    """Migrate old config values into the freshly installed package schema."""
+    if snapshot is None or not snapshot.is_dir():
+        return
+    config_dir = target / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    audit: dict[str, Any] = {
+        "schema": 1,
+        "package_version": package_version,
+        "migrated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "settings": {},
+        "json": {},
+        "dropped_files": [],
+    }
+
+    audit["settings"] = _migrate_existing_settings(
+        config_dir / "settings.ini",
+        snapshot / "settings.ini",
+        package_version=package_version,
+        log=log,
+    )
+
+    package_json_paths = {
+        item.relative_to(config_dir).as_posix(): item
+        for item in config_dir.rglob("*.json")
+        if item.is_file()
+    }
+    for rel, package_json in sorted(package_json_paths.items()):
+        old_json = snapshot.joinpath(*PurePosixPath(rel).parts)
+        if old_json.is_file():
+            audit["json"][rel] = _migrate_existing_json(package_json, old_json, log)
+
+    for old_json in sorted(snapshot.rglob("*.json")):
+        rel = old_json.relative_to(snapshot).as_posix()
+        if rel not in package_json_paths and rel != "migration.json":
+            audit["dropped_files"].append(rel)
+
+    audit_path = snapshot / "migration.json"
+    audit_path.write_text(
+        json.dumps(audit, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    log(f"Config migration audit written to rollback snapshot: {audit_path}")
+
+
 def _sync_tree_contents(
     source_root: Path,
     target: Path,
@@ -751,9 +903,12 @@ def install_norm(
             ".norm-install-state.json",
         }
 
+        config_snapshot = _snapshot_existing_config(target, log) if target_nonempty else None
+
         progress(20, "Synchronizing Norm files")
         ignore_source = {"backup-state", "SENSITIVE_BACKUP.txt"} if staged_info.manifest.get("package_type") == "full-backup" else set()
         stats = _sync_tree_contents(extracted_root, target, protected=protected, log=log, ignore_source_roots=ignore_source)
+        _restore_operator_config(target, config_snapshot, package_version=staged_info.version, log=log)
         for subtree in staged_info.manifest.get("managed_persistent_subtrees", []) or []:
             rel = _norm_rel(Path(str(subtree)))
             src_subtree = extracted_root.joinpath(*PurePosixPath(rel).parts)
@@ -944,6 +1099,8 @@ def install_norm(
     if not manifest_path.is_file():
         raise InstallerError("Installed package-manifest.json is missing")
 
+    saved_imprint = save_local_imprint(options.imprint or {})
+    log(f"Saved accepted non-secret Environment values to private local imprint: {saved_imprint}")
     progress(100, "Installation complete")
     return InstallResult(
         package=PackageInfo(
@@ -992,6 +1149,7 @@ def _source_directory() -> Path:
 
 IMPRINT_SCHEMA_VERSION = 1
 LOCAL_IMPRINT_NAME = "norm-imprint.local.json"
+LOCAL_PRIVATE_DIR = ".norm-local"
 EXAMPLE_IMPRINT_NAME = "norm-imprint.example.json"
 _SECRET_KEY_RE = re.compile(r"(?:password|passwd|pwd|secret|token|authkey|api[_-]?key|private[_-]?key)", re.I)
 
@@ -1114,8 +1272,15 @@ def validate_imprint(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_imprint(path: Path | None = None) -> tuple[dict[str, Any], Path | None]:
-    candidate = Path(path).expanduser().resolve() if path else (_source_directory() / LOCAL_IMPRINT_NAME)
-    if not candidate.is_file():
+    if path is not None:
+        candidates = [Path(path).expanduser().resolve()]
+    else:
+        candidates = [
+            (_source_directory() / LOCAL_IMPRINT_NAME).resolve(),
+            envtools.persistent_imprint_path(LOCAL_IMPRINT_NAME),
+        ]
+    candidate = next((item for item in candidates if item.is_file()), None)
+    if candidate is None:
         return _deep_copy(DEFAULT_IMPRINT), None
     try:
         raw = json.loads(candidate.read_text(encoding="utf-8-sig"))
@@ -1131,8 +1296,9 @@ def _nonsecret_imprint_for_save(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def save_local_imprint(data: dict[str, Any], path: Path | None = None) -> Path:
-    destination = Path(path).expanduser().resolve() if path else (_source_directory() / LOCAL_IMPRINT_NAME)
+    destination = Path(path).expanduser().resolve() if path else envtools.persistent_imprint_path(LOCAL_IMPRINT_NAME)
     clean = _nonsecret_imprint_for_save(data)
+    destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(
         json.dumps(clean, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
@@ -1178,7 +1344,7 @@ def _update_env_file(path: Path, updates: dict[str, str], *, require_password: b
             existing[key.strip()] = value.strip()
 
     for key, value in updates.items():
-        if value is not None and str(value) != "":
+        if value is not None:
             existing[key] = str(value)
 
     if require_password and not existing.get("NORM_POSTGRES_PASSWORD", "").strip():
@@ -1223,6 +1389,7 @@ def _apply_imprint(
     secret_values: dict[str, str] | None,
     *,
     log: LogFn,
+    preserve_existing_secrets: bool = False,
 ) -> None:
     data = validate_imprint(imprint or {})
     settings_path = target / str(manifest["settings"])
@@ -1284,6 +1451,8 @@ def _apply_imprint(
         map_path.write_text(json.dumps(safe_map, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
 
     pg = data["postgres"]
+    for key in ("user", "database", "schema", "stocks_database"):
+        _set_ini_value(settings_path, "postgres", key, str(pg[key]))
     updates = {
         "NORM_POSTGRES_USER": str(pg.get("user") or "norm"),
         "NORM_POSTGRES_DB": str(pg.get("database") or "norm"),
@@ -1295,13 +1464,16 @@ def _apply_imprint(
             updates[key] = str(value)
 
     secrets_path = _resolve_secrets_path(settings_path)
-    _update_env_file(
-        secrets_path,
-        updates,
-        require_password=not secrets_path.is_file(),
-    )
-    log(f"Applied non-secret installer imprint from memory to {settings_path.name}.")
-    log(f"Secrets were written/preserved only in configured secrets file: {secrets_path} (values not logged).")
+    if preserve_existing_secrets:
+        log(f"Applied non-secret installer imprint to config baseline; existing secrets file left untouched: {secrets_path}.")
+    else:
+        _update_env_file(
+            secrets_path,
+            updates,
+            require_password=True,
+        )
+        log(f"Applied non-secret installer imprint from memory to {settings_path.name}.")
+        log(f"Secrets were written/preserved only in configured secrets file: {secrets_path} (values not logged).")
 
 def _peek_norm_source(path: Path) -> tuple[str, str] | None:
     """Return (version, package_type) for a Norm package without enforcing its companion SHA yet."""
@@ -1327,26 +1499,47 @@ def _peek_norm_source(path: Path) -> tuple[str, str] | None:
 def list_local_sources(directory: Path | None = None) -> list[Path]:
     """Return valid local Norm source ZIPs, highest package version first.
 
-    Every candidate is inspected from its package manifest. Modification time is
-    only a same-version tie-breaker, so copying an older ZIP later cannot make it
-    outrank a newer Norm release.
+    Local operator packages under .norm-local are considered first and win
+    same-version ties. The .norm-local directory is Git-ignored and is never
+    part of the public release bundle.
     """
     root = Path(directory).resolve() if directory else _source_directory()
-    candidates: list[tuple[tuple, int, str, Path]] = []
-    for path in root.glob("*.zip"):
-        if not path.is_file():
-            continue
-        meta = _peek_norm_source(path)
-        if meta is None:
-            continue
-        version, _ = meta
-        try:
-            mtime = path.stat().st_mtime_ns
-        except OSError:
-            mtime = 0
-        candidates.append((_version_key(version), mtime, path.name.lower(), path.resolve()))
-    candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-    return [item[3] for item in candidates]
+    candidates: list[tuple[tuple, int, int, str, Path]] = []
+
+    search_roots: list[tuple[Path, int]] = []
+    private_root = root / LOCAL_PRIVATE_DIR
+    if private_root.is_dir():
+        search_roots.append((private_root, 1))
+    search_roots.append((root, 0))
+
+    for search_root, private_priority in search_roots:
+        for path in search_root.glob("*.zip"):
+            if not path.is_file():
+                continue
+            meta = _peek_norm_source(path)
+            if meta is None:
+                continue
+            version, _ = meta
+            try:
+                mtime = path.stat().st_mtime_ns
+            except OSError:
+                mtime = 0
+            candidates.append(
+                (
+                    _version_key(version),
+                    private_priority,
+                    mtime,
+                    path.name.lower(),
+                    path.resolve(),
+                )
+            )
+
+    candidates.sort(
+        key=lambda item: (item[0], item[1], item[2], item[3]),
+        reverse=True,
+    )
+    return [item[4] for item in candidates]
+
 
 def find_latest_source(directory: Path | None = None) -> Path | None:
     sources = list_local_sources(directory)
@@ -1524,20 +1717,10 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
             raw_imprint = {}
 
     def nested_get(data: dict[str, Any], dotted: str, default: Any = "") -> Any:
-        current: Any = data
-        for part in dotted.split("."):
-            if not isinstance(current, dict) or part not in current:
-                return default
-            current = current[part]
-        return current
+        return envtools.nested_get(data, dotted, default)
 
     def provided_in_raw(dotted: str) -> bool:
-        current: Any = raw_imprint
-        for part in dotted.split("."):
-            if not isinstance(current, dict) or part not in current:
-                return False
-            current = current[part]
-        return True
+        return envtools.nested_has(raw_imprint, dotted)
 
     root = tk.Tk()
     root.title(f"Norm Installer {INSTALLER_VERSION}")
@@ -1576,6 +1759,7 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
     stocks_db_var = tk.StringVar(value=str(nested_get(imprint, "postgres.stocks_database", "stocks_api")))
     pg_password_var = tk.StringVar(value="")
     rotor_secret_var = tk.StringVar(value="")
+    rotor_previous_var = tk.StringVar(value="")
 
     documents_root_var = tk.StringVar(value=str(nested_get(imprint, "paths.documents_root", r"%USERPROFILE%\Documents\Norm")))
     workspace_root_var = tk.StringVar(value=str(nested_get(imprint, "paths.workspace_root", "workspace")))
@@ -1603,6 +1787,8 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
     selected_source: Path | None = initial_source.resolve() if initial_source else None
     selected_info: PackageInfo | None = None
     busy = False
+    environment_loaded_for: str | None = None
+    environment_origins: dict[str, str] = {}
     events: queue.Queue[tuple[str, object]] = queue.Queue()
     origin_labels: dict[str, Any] = {}
 
@@ -1737,6 +1923,9 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
             label.configure(text="[entered]")
 
     def origin_text(key: str) -> str:
+        origin = environment_origins.get(key)
+        if origin:
+            return f"[{origin}]"
         return "[imprint]" if provided_in_raw(key) else "[default]"
 
     def add_entry(parent: Any, row: int, label_text: str, var: Any, key: str, *, show: str | None = None, width: int = 34) -> Any:
@@ -1798,10 +1987,16 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
     add_entry(db_tab, 3, "Stocks database", stocks_db_var, "postgres.stocks_database")
     ttk.Label(db_tab, text="PostgreSQL password").grid(row=4, column=0, sticky="w", padx=(0, 8), pady=4)
     ttk.Entry(db_tab, textvariable=pg_password_var, show="•").grid(row=4, column=1, sticky="ew", pady=4)
-    ttk.Label(db_tab, text="[secret; never saved]").grid(row=4, column=2, sticky="w", padx=(8, 0))
+    pg_password_badge = ttk.Label(db_tab, text="[secret]", width=16)
+    pg_password_badge.grid(row=4, column=2, sticky="w", padx=(8, 0))
     ttk.Label(db_tab, text="Rotor5 secret (optional)").grid(row=5, column=0, sticky="w", padx=(0, 8), pady=4)
     ttk.Entry(db_tab, textvariable=rotor_secret_var, show="•").grid(row=5, column=1, sticky="ew", pady=4)
-    ttk.Label(db_tab, text="[secret; never saved]").grid(row=5, column=2, sticky="w", padx=(8, 0))
+    rotor_secret_badge = ttk.Label(db_tab, text="[secret]", width=16)
+    rotor_secret_badge.grid(row=5, column=2, sticky="w", padx=(8, 0))
+    ttk.Label(db_tab, text="Previous Rotor5 secrets").grid(row=6, column=0, sticky="w", padx=(0, 8), pady=4)
+    ttk.Entry(db_tab, textvariable=rotor_previous_var, show="*").grid(row=6, column=1, sticky="ew", pady=4)
+    rotor_previous_badge = ttk.Label(db_tab, text="[secret]", width=16)
+    rotor_previous_badge.grid(row=6, column=2, sticky="w", padx=(8, 0))
 
     ssh_cb = ttk.Checkbutton(
         db_tab,
@@ -1809,15 +2004,15 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
         variable=ssh_enabled_var,
         command=lambda: mark_entered("ssh.enabled"),
     )
-    ssh_cb.grid(row=6, column=1, sticky="w", pady=(12, 4))
+    ssh_cb.grid(row=7, column=1, sticky="w", pady=(12, 4))
     badge = ttk.Label(db_tab, text=origin_text("ssh.enabled"), width=11)
-    badge.grid(row=6, column=2, sticky="w", padx=(8, 0))
+    badge.grid(row=7, column=2, sticky="w", padx=(8, 0))
     origin_labels["ssh.enabled"] = badge
-    add_entry(db_tab, 7, "SSH user", ssh_user_var, "ssh.user")
-    add_entry(db_tab, 8, "Remote host", ssh_remote_var, "ssh.remote_host")
-    add_entry(db_tab, 9, "Docker host", ssh_docker_var, "ssh.docker_host")
-    add_entry(db_tab, 10, "SSH port", ssh_port_var, "ssh.port")
-    add_entry(db_tab, 11, "Identity filename", ssh_identity_var, "ssh.identity_file")
+    add_entry(db_tab, 8, "SSH user", ssh_user_var, "ssh.user")
+    add_entry(db_tab, 9, "Remote host", ssh_remote_var, "ssh.remote_host")
+    add_entry(db_tab, 10, "Docker host", ssh_docker_var, "ssh.docker_host")
+    add_entry(db_tab, 11, "SSH port", ssh_port_var, "ssh.port")
+    add_entry(db_tab, 12, "Identity filename", ssh_identity_var, "ssh.identity_file")
 
     add_entry(runtime_tab, 0, "Documents root", documents_root_var, "paths.documents_root")
     add_entry(runtime_tab, 1, "Workspace root", workspace_root_var, "paths.workspace_root")
@@ -1836,6 +2031,51 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
 
     def split_list(value: str) -> list[str]:
         return [item.strip() for item in value.split(";") if item.strip()]
+
+    def apply_environment_prefill() -> None:
+        nonlocal imprint, environment_loaded_for, environment_origins
+        target = Path(target_var.get().strip()).expanduser()
+        target_key = str(target.resolve())
+        if environment_loaded_for == target_key:
+            return
+        resolved, secrets, origins = envtools.resolve_environment_prefill(
+            target, imprint, raw_imprint, DEFAULT_IMPRINT
+        )
+        imprint = resolved
+        environment_origins = origins
+        scalar_vars = {
+            "paths.documents_root": documents_root_var, "paths.workspace_root": workspace_root_var,
+            "paths.temp_root": temp_root_var, "network.current_machine": machine_var,
+            "network.current_domain": domain_var, "network.ollama_host": ollama_host_var,
+            "network.ollama_port": ollama_port_var, "network.norm_host": norm_host_var,
+            "network.norm_port": norm_port_var, "network.activity_host": activity_host_var,
+            "network.activity_port": activity_port_var, "network.postgres_host": postgres_host_var,
+            "network.postgres_port": postgres_port_var, "network.redis_host": redis_host_var,
+            "network.redis_port": redis_port_var, "postgres.user": pg_user_var,
+            "postgres.database": pg_db_var, "postgres.schema": pg_schema_var,
+            "postgres.stocks_database": stocks_db_var, "ssh.user": ssh_user_var,
+            "ssh.remote_host": ssh_remote_var, "ssh.docker_host": ssh_docker_var,
+            "ssh.port": ssh_port_var, "ssh.identity_file": ssh_identity_var,
+            "runtime.storage_context.primary_name": storage_primary_name_var,
+            "runtime.storage_context.primary_root": storage_primary_root_var,
+            "runtime.storage_context.backup_name": storage_backup_name_var,
+        }
+        for dotted, var in scalar_vars.items():
+            var.set(str(envtools.nested_get(resolved, dotted, "")))
+        require_tailscale_var.set(bool(envtools.nested_get(resolved, "network.require_tailscale", False)))
+        ssh_enabled_var.set(bool(envtools.nested_get(resolved, "ssh.enabled", False)))
+        allowed_roots_var.set(";".join(str(x) for x in (envtools.nested_get(resolved, "runtime.allowed_roots", []) or [])))
+        never_probe_patterns_var.set(";".join(str(x) for x in (envtools.nested_get(resolved, "runtime.network_map.never_probe_name_patterns", []) or [])))
+        never_probe_cidrs_var.set(";".join(str(x) for x in (envtools.nested_get(resolved, "runtime.network_map.never_probe_cidrs", []) or [])))
+        pg_password_var.set(secrets.get("NORM_POSTGRES_PASSWORD", ""))
+        rotor_secret_var.set(secrets.get("NORM_ROTOR5_SECRET", ""))
+        rotor_previous_var.set(secrets.get("NORM_ROTOR5_PREVIOUS_SECRETS", ""))
+        pg_password_badge.configure(text="[current secret]" if pg_password_var.get() else "[blank]")
+        rotor_secret_badge.configure(text="[current secret]" if rotor_secret_var.get() else "[blank]")
+        rotor_previous_badge.configure(text="[current secret]" if rotor_previous_var.get() else "[blank]")
+        for key, label in origin_labels.items():
+            label.configure(text=f"[{environment_origins.get(key, 'imprint' if provided_in_raw(key) else 'default')}]")
+        environment_loaded_for = target_key
 
     def collect_imprint() -> dict[str, Any]:
         # Preserve complex explicit target definitions from the loaded imprint; the GUI
@@ -1917,9 +2157,38 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
         except Exception as exc:
             messagebox.showerror("Norm Installer", str(exc), parent=root)
 
+    def test_connections_clicked() -> None:
+        try:
+            data = collect_imprint()
+            secrets = {
+                "NORM_POSTGRES_PASSWORD": pg_password_var.get(),
+                "NORM_ROTOR5_SECRET": rotor_secret_var.get(),
+                "NORM_ROTOR5_PREVIOUS_SECRETS": rotor_previous_var.get(),
+            }
+            target = Path(target_var.get().strip()).expanduser()
+            candidates: list[Path] = []
+            settings_path = target / "config" / "settings.ini"
+            if settings_path.is_file():
+                settings = configparser.ConfigParser(interpolation=None)
+                settings.read(settings_path, encoding="utf-8-sig")
+                venv_rel = settings.get("environment", "venv_path", fallback=".venv").strip() or ".venv"
+                candidates.append(target / venv_rel / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
+            if python_var.get().strip():
+                candidates.append(Path(python_var.get().strip()).expanduser())
+            results = envtools.test_environment_connections(data, secrets, candidates)
+            symbols = {"ok": "?", "partial": "?", "error": "?"}
+            message = "\n".join(f"{symbols.get(status, '?')} {label}: {detail}" for label, status, detail in results)
+            if any(status == "error" for _, status, _ in results):
+                messagebox.showwarning("Connection test", message, parent=root)
+            else:
+                messagebox.showinfo("Connection test", message, parent=root)
+        except Exception as exc:
+            messagebox.showerror("Connection test", str(exc), parent=root)
+
     save_bar = ttk.Frame(page_environment)
     save_bar.grid(row=3, column=0, sticky="ew", pady=(10, 0))
     ttk.Button(save_bar, text=f"Save non-secret {LOCAL_IMPRINT_NAME}", command=save_imprint_clicked).pack(side="left")
+    ttk.Button(save_bar, text="Test connections", command=test_connections_clicked).pack(side="left", padx=(8, 0))
 
     # Page 3: install.
     page_install.columnconfigure(1, weight=1)
@@ -2001,7 +2270,11 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
             _verify_companion_sha256(selected_source)
             selected_info = inspect_package(selected_source)
             package_var.set(f"{selected_info.label}  •  {selected_source.name}")
-            package_detail_var.set("✓ Highest valid package version found beside installer  •  ✓ SHA-256 verified")
+            package_detail_var.set(
+                "✓ Local private package selected from .norm-local  •  ✓ SHA-256 verified"
+                if LOCAL_PRIVATE_DIR in selected_source.parts
+                else "✓ Highest valid public package version found beside installer  •  ✓ SHA-256 verified"
+            )
             if not python_var.get().strip():
                 default_py = choose_default_python(selected_source)
                 if default_py:
@@ -2048,11 +2321,13 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
             except Exception as exc:
                 append_log(f"Existing environment probe was inconclusive; repair path will continue: {exc}")
 
-        secrets: dict[str, str] = {}
-        if pg_password_var.get():
-            secrets["NORM_POSTGRES_PASSWORD"] = pg_password_var.get()
-        if rotor_secret_var.get():
-            secrets["NORM_ROTOR5_SECRET"] = rotor_secret_var.get()
+        if not pg_password_var.get().strip():
+            raise InstallerError("PostgreSQL password is required.")
+        secrets: dict[str, str] = {
+            "NORM_POSTGRES_PASSWORD": pg_password_var.get(),
+            "NORM_ROTOR5_SECRET": rotor_secret_var.get(),
+            "NORM_ROTOR5_PREVIOUS_SECRETS": rotor_previous_var.get(),
+        }
 
         return InstallOptions(
             source_zip=selected_source,
@@ -2089,6 +2364,7 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
     def show_environment() -> None:
         try:
             validate_setup()
+            apply_environment_prefill()
         except Exception as exc:
             messagebox.showerror("Norm Installer", str(exc), parent=root)
             return

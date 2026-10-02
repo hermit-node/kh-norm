@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -56,6 +57,12 @@ class FileToolExecutor:
         audit_log: str,
         max_read_bytes: int = 25_165_824,
         max_tool_return_bytes: int = 393_216,
+        read_roots: list[str] | None = None,
+        write_roots: list[str] | None = None,
+        enforce_read_directories: bool = False,
+        enforce_write_directories: bool = False,
+        read_chunk_bytes: int = 393_216,
+        read_chunk_max_bytes: int = 4_194_304,
         max_write_bytes: int = 5_242_880,
         blocked_write_staging_root: str | None = None,
         write_retry_count: int = 3,
@@ -84,6 +91,12 @@ class FileToolExecutor:
         if not allowed_roots:
             raise ValueError("at least one file-tool root is required")
         self.allowed_roots = tuple(Path(item).resolve() for item in allowed_roots)
+        self.read_roots = tuple(Path(item).resolve() for item in (read_roots or allowed_roots))
+        self.write_roots = tuple(Path(item).resolve() for item in (write_roots or allowed_roots))
+        self.enforce_read_directories = bool(enforce_read_directories)
+        self.enforce_write_directories = bool(enforce_write_directories)
+        self.read_chunk_bytes = max(1024, int(read_chunk_bytes))
+        self.read_chunk_max_bytes = max(self.read_chunk_bytes, int(read_chunk_max_bytes))
         self.backup_root = Path(backup_root).resolve()
         self.audit_log = Path(audit_log).resolve()
         # max_read_bytes is now a processing-buffer size, not a source-file ceiling.
@@ -141,7 +154,7 @@ class FileToolExecutor:
                 raise PermissionError("image_output_root must be inside an allowed root")
 
     def instructions(self) -> str:
-        roots = ", ".join(str(root) for root in self.allowed_roots)
+        roots = ", ".join(str(root) for root in sorted(set(self.read_roots + self.write_roots), key=str))
         image_help = ""
         if self.image_enabled:
             budgets = ", ".join(
@@ -166,10 +179,10 @@ class FileToolExecutor:
             "- read_file(path, start_line?, end_line?, start_byte?, max_bytes?): streams UTF-8 text from arbitrarily large source files; results are bounded and return continuation cursors plus sha256.\n"
             "- append_task_note(content, category?): append durable internal Markdown notes in automatically rotated <=5 MiB chunks for the active task.\n"
             "- make_directory(path): creates a directory inside an allowed root.\n"
-            "- write_file(path, content, expected_sha256?): creates a UTF-8 file; existing files "
+            "- write_file(path, content, expected_sha256?, reproducible?, retention?, user_requested?, recipe?): creates a UTF-8 file; mark explicit user outputs user_requested=true/retention=durable; mark easy-to-recreate helpers reproducible=true/retention=ephemeral. Existing files "
             "require the sha256 returned by read_file.\n"
             "- replace_text(path, old_text, new_text, expected_sha256, expected_occurrences?): hash-checked exact edit.\n"
-            "- delete_file(path, expected_sha256, reason): move a file into the deletion queue; permanent purge waits for graceful shutdown.\n"
+            "- delete_file(path, reason): move a file into reversible trash; permanent purge waits for graceful shutdown.\n"
             + (("- run_command(command, cwd?, timeout_seconds?, stdin_text?): execute a PowerShell command for running/tests/inspection; returns exit_code, stdout, and stderr. Prefer native file tools for file edits/deletes.\n" + (f"- For multiline or quote-heavy command work, use the operator helper at {self.verbatim_helper} with stdin_text containing the complete script (stdin is otherwise closed), then run that script and verify its result; do not build large nested PowerShell quoting expressions.\n" if self.verbatim_helper else "")) if self.shell_enabled else "")
             + image_help
             + (("\n" + self.plugin_manager.instructions()) if self.plugin_manager else "")
@@ -213,7 +226,8 @@ class FileToolExecutor:
                     "start_line": {"type": "integer", "minimum": 1},
                     "end_line": {"type": "integer", "minimum": 1},
                     "start_byte": {"type": "integer", "minimum": 0},
-                    "max_bytes": {"type": "integer", "minimum": 1024},
+                    "max_bytes": {"type": "integer", "minimum": 1},
+                    "mode": {"type": "string", "enum": ["text", "bytes_base64"]},
                     "include_sha256": {"type": "boolean", "description": "Force a full-file SHA-256 scan. Large sources omit it by default to preserve streaming behavior."},
                 },
                 ["path"],
@@ -240,6 +254,10 @@ class FileToolExecutor:
                     "path": path,
                     "content": {"type": "string"},
                     "expected_sha256": {"type": "string"},
+                    "reproducible": {"type": "boolean", "description": "True when the created file is easy to recreate from durable task state/source."},
+                    "retention": {"type": "string", "enum": ["ephemeral", "review", "durable"]},
+                    "user_requested": {"type": "boolean", "description": "True only when this file is an explicit user-requested output/artifact."},
+                    "recipe": {"type": "string", "description": "Short recreation recipe or durable source reference."},
                 },
                 ["path", "content"],
             ),
@@ -257,13 +275,12 @@ class FileToolExecutor:
             ),
             tool(
                 "delete_file",
-                "Queue a hash-checked file deletion. The file is moved to protected trash immediately and permanently purged during graceful shutdown.",
+                "Move a file into reversible trash immediately. No content hash is required; permanent purge waits for graceful shutdown.",
                 {
                     "path": path,
-                    "expected_sha256": {"type": "string"},
                     "reason": {"type": "string"},
                 },
-                ["path", "expected_sha256", "reason"],
+                ["path", "reason"],
             ),
             tool(
                 "check_connection",
@@ -374,9 +391,13 @@ class FileToolExecutor:
         self._audit(name, redact(arguments), redact(result), started)
         return result
 
-    def _resolve(self, raw_path: Any) -> Path:
+    def _resolve(self, raw_path: Any, *, access: str = "read") -> Path:
         if not isinstance(raw_path, str) or not raw_path.strip():
             raise ValueError("path must be a non-empty string")
+        if access not in {"read", "write"}:
+            raise ValueError("access must be read or write")
+        roots = self.read_roots if access == "read" else self.write_roots
+        hardlock = self.enforce_read_directories if access == "read" else self.enforce_write_directories
         candidate = Path(raw_path.strip())
         if not candidate.is_absolute():
             if self.storage is not None:
@@ -386,7 +407,7 @@ class FileToolExecutor:
                     raise RuntimeError("primary and backup local storage are unavailable")
                 candidate = active_root / candidate
             else:
-                candidate = self.allowed_roots[0] / candidate
+                candidate = roots[0] / candidate
         elif self.storage is not None and self.storage.primary_root is not None:
             primary_root = self.storage.primary_root
             if candidate == primary_root or candidate.is_relative_to(primary_root):
@@ -395,8 +416,13 @@ class FileToolExecutor:
                 if primary_status.get("responsive") is False:
                     raise ConnectionError(primary_status.get("error") or "ca8d storage is unresponsive")
         resolved = candidate.resolve(strict=False)
-        if not any(resolved == root or resolved.is_relative_to(root) for root in self.allowed_roots):
-            raise PermissionError(f"path is outside allowed roots: {resolved}")
+        if not any(resolved == root or resolved.is_relative_to(root) for root in roots):
+            if hardlock:
+                raise PermissionError(
+                    f"HARDLOCKED out of directory for {access}: {resolved}. "
+                    "Do not retry this filesystem operation through another Norm Python/native/plugin file capability."
+                )
+            raise PermissionError(f"path is outside allowed {access} roots: {resolved}")
         return resolved
 
     def _run_command(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -490,7 +516,7 @@ class FileToolExecutor:
         return value
 
     def _list_directory(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        path = self._resolve(arguments.get("path", "."))
+        path = self._resolve(arguments.get("path", "."), access="read")
         if not path.is_dir():
             raise NotADirectoryError(path)
         entries = []
@@ -505,7 +531,7 @@ class FileToolExecutor:
         return {"path": str(path), "entries": entries, "truncated": len(entries) == 200}
 
     def _read_file(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        path = self._resolve(arguments.get("path"))
+        path = self._resolve(arguments.get("path"), access="read")
         if is_secret_file(path):
             raise PermissionError("Secret files must be loaded internally; raw reads are disabled")
         if not path.is_file():
@@ -521,8 +547,11 @@ class FileToolExecutor:
         if self.task_storage is not None and self.task_storage.task_id:
             self.task_storage.register_source(path, sha256=sha)
 
-        requested = int(arguments.get("max_bytes") or self.max_tool_return_bytes)
-        return_cap = max(1024, min(requested, self.max_tool_return_bytes))
+        mode = str(arguments.get("mode") or "text").strip().lower()
+        if mode not in {"text", "bytes_base64"}:
+            raise ValueError("mode must be text or bytes_base64")
+        requested = int(arguments.get("max_bytes") or self.read_chunk_bytes)
+        return_cap = max(1 if mode == "bytes_base64" else 1024, min(requested, self.read_chunk_max_bytes))
         start_byte_arg = arguments.get("start_byte")
         start_line = max(1, int(arguments.get("start_line", 1)))
         end_line_raw = arguments.get("end_line")
@@ -590,7 +619,8 @@ class FileToolExecutor:
                     next_start_line = current_line
 
         raw = b"".join(chunks)
-        text = raw.decode("utf-8", errors="replace")
+        text = raw.decode("utf-8", errors="replace") if mode == "text" else None
+        encoded_bytes = base64.b64encode(raw).decode("ascii") if mode == "bytes_base64" else None
         # Counting an entire gigantic source on every chunk defeats streaming. For files
         # within one processing buffer, expose total_lines; otherwise leave it unknown.
         if size <= self.max_read_bytes:
@@ -612,7 +642,9 @@ class FileToolExecutor:
             "source_size_bytes": size,
             "source_size_limited": False,
             "processing_buffer_bytes": self.max_read_bytes,
-            "max_return_bytes": self.max_tool_return_bytes,
+            "default_chunk_bytes": self.read_chunk_bytes,
+            "max_return_bytes": self.read_chunk_max_bytes,
+            "mode": mode,
             "returned_bytes": returned,
             "start_byte": int(effective_start_byte),
             "next_byte": int(next_byte),
@@ -621,7 +653,7 @@ class FileToolExecutor:
             "next_start_line": next_start_line,
             "total_lines": total_lines,
             "truncated": bool(truncated),
-            "content": text,
+            **({"content": text} if mode == "text" else {"base64": encoded_bytes}),
             **processing,
         }
 
@@ -640,7 +672,7 @@ class FileToolExecutor:
         }
 
     def _make_directory(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        path = self._resolve(arguments.get("path"))
+        path = self._resolve(arguments.get("path"), access="write")
         existed = path.exists()
         if existed and not path.is_dir():
             raise NotADirectoryError(path)
@@ -656,7 +688,7 @@ class FileToolExecutor:
             raise FileNotFoundError(f"image analyzer script not found: {self.image_analyzer_script}")
         assert self.image_output_root is not None
         self.image_output_root.mkdir(parents=True, exist_ok=True)
-        path = self._resolve(arguments.get("path"))
+        path = self._resolve(arguments.get("path"), access="read")
         if not path.is_file():
             raise FileNotFoundError(path)
         # Source-file size is not a hard ceiling. Image decoding is handled by the
@@ -726,7 +758,7 @@ class FileToolExecutor:
         resolved: list[str] = []
         total_bytes = 0
         for raw in raw_paths:
-            path = self._resolve(raw)
+            path = self._resolve(raw, access="read")
             if not path.is_file():
                 raise FileNotFoundError(path)
             if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
@@ -742,7 +774,7 @@ class FileToolExecutor:
         return {"paths": resolved, "answer": answer, "image_count": len(resolved)}
 
     def _write_file(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        path = self._resolve(arguments.get("path"))
+        path = self._resolve(arguments.get("path"), access="write")
         content = arguments.get("content")
         if not isinstance(content, str):
             raise ValueError("content must be a string")
@@ -775,18 +807,35 @@ class FileToolExecutor:
             "bytes": len(encoded),
             "sha256": self._sha256(path),
         }
-        if self.task_storage is not None and self.task_storage.task_id:
+        if self.task_storage is not None and self.task_storage.task_id and created:
+            retention = str(arguments.get("retention") or "review").strip().lower()
+            if retention not in {"ephemeral", "review", "durable"}:
+                retention = "review"
+            user_requested = bool(arguments.get("user_requested", False))
+            reproducible = bool(arguments.get("reproducible", False))
             try:
-                path.relative_to(self.task_storage.task_root)
+                path.relative_to(self.task_storage.temp_root)
             except ValueError:
                 pass
             else:
-                self.task_storage.register_asset(path, role="task_file", reproducible=False, retention="review")
-                result["task_storage"] = self.task_storage.capacity()
+                if not user_requested and retention == "review":
+                    retention = "ephemeral"
+                    reproducible = True
+            self.task_storage.register_asset(
+                path, role="created_file", reproducible=reproducible,
+                recipe=str(arguments.get("recipe") or "").strip() or None,
+                retention="durable" if user_requested else retention,
+                created_by_norm=True, user_requested=user_requested,
+            )
+            result["task_storage"] = self.task_storage.capacity()
+            result["cleanup_metadata"] = {
+                "reproducible": reproducible, "retention": "durable" if user_requested else retention,
+                "user_requested": user_requested,
+            }
         return result
 
     def _replace_text(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        path = self._resolve(arguments.get("path"))
+        path = self._resolve(arguments.get("path"), access="write")
         if not path.is_file():
             raise FileNotFoundError(path)
         actual_hash = self._sha256(path)
@@ -821,19 +870,15 @@ class FileToolExecutor:
     def _delete_file(self, arguments: dict[str, Any]) -> dict[str, Any]:
         if self.deletion_queue is None:
             raise RuntimeError("deletion queue is unavailable")
-        path = self._resolve(arguments.get("path"))
+        path = self._resolve(arguments.get("path"), access="write")
         if not path.is_file():
             raise FileNotFoundError(path)
-        expected = arguments.get("expected_sha256")
-        if not isinstance(expected, str) or not expected:
-            raise ValueError("delete_file requires expected_sha256 from read_file")
-        actual = self._sha256(path)
-        if expected.lower() != actual:
-            raise ValueError("expected_sha256 does not match the current file")
         reason = arguments.get("reason")
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError("delete_file requires a non-empty reason")
-        return self.deletion_queue.stage_file(path, expected_sha256=actual, reason=reason)
+        return self.deletion_queue.stage_file(
+            path, reason=reason, task_id=(self.task_storage.task_id if self.task_storage else "")
+        )
 
     def _replace_with_retries(self, temporary: Path, path: Path, expected_sha256: Any, context: dict[str, Any]) -> None:
         attempts = self.write_retry_count + 1

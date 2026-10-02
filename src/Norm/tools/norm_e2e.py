@@ -98,6 +98,12 @@ postgres_host = postgres
 postgres_port = 5432
 redis_host = redis
 redis_port = 6379
+
+[postgres]
+user = norm_e2e
+database = norm_e2e
+schema = norm_runtime
+stocks_database = stocks_api
 """
     + f"""
 [documentation]
@@ -190,11 +196,7 @@ def runtime_config() -> dict:
 
 def secrets_text() -> str:
     return "\n".join([
-        "NORM_POSTGRES_USER=norm_e2e",
         "NORM_POSTGRES_PASSWORD=norm_e2e",
-        "NORM_POSTGRES_DB=norm_e2e",
-        "NORM_POSTGRES_SCHEMA=norm_runtime",
-        "NORM_STOCKS_DB=stocks_api",
         "",
     ])
 

@@ -11,6 +11,7 @@ import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(HERE))
 SPEC = importlib.util.spec_from_file_location("norm_installer_tested", HERE / "Norm-Installer.py")
 assert SPEC and SPEC.loader
 m = importlib.util.module_from_spec(SPEC)
@@ -51,13 +52,13 @@ def make_pkg(folder: Path, version: str) -> Path:
 with tempfile.TemporaryDirectory() as td_name:
     td = Path(td_name)
     older = make_pkg(td, "0.53.8")
-    newest = make_pkg(td, "0.53.9")
+    newest = make_pkg(td, "0.53.11")
     now = time.time()
     os.utime(newest, (now - 100, now - 100))
     os.utime(older, (now, now))
     found = m.find_latest_source(td)
     assert found == newest
-    assert m.inspect_package(found).version == "0.53.9"
+    assert m.inspect_package(found).version == "0.53.11"
     m._verify_companion_sha256(found)
     newest.write_bytes(newest.read_bytes() + b"x")
     try:
@@ -164,8 +165,13 @@ secrets_file = {secrets_path.as_posix()}
     installed_settings = (target / "config" / "settings.ini").read_text(encoding="utf-8")
     assert "current_machine = imprinted-host" in installed_settings
     assert "postgres_port = 55432" in installed_settings
+    assert "NORM_POSTGRES_USER=normuser" in secrets_text
+    assert "[postgres]" in installed_settings
+    assert "user = normuser" in installed_settings
+    assert "database = normdb" in installed_settings
+    assert "stocks_database = stocks" in installed_settings
 
-assert m.INSTALLER_VERSION == "1.6.0-unified"
+assert m.INSTALLER_VERSION == "1.6.5-unified"
 assert "imprint" in m.InstallOptions.__dataclass_fields__
 assert "secret_values" in m.InstallOptions.__dataclass_fields__
 
@@ -174,4 +180,204 @@ print("PASS: companion SHA verification/rejection")
 print("PASS: imprint merge and save")
 print("PASS: secret-like imprint keys rejected")
 print("PASS: secret values separated from imprint/log")
-print("PASS: installer version 1.6.0")
+print("PASS: installer version 1.6.5")
+
+
+with tempfile.TemporaryDirectory() as td_name:
+    td = Path(td_name)
+    target = td / "Norm"
+    config = target / "config"
+    config.mkdir(parents=True)
+    (config / "settings.ini").write_text(
+        "[project]\nversion = 0.53.9\n\n[worker]\ncustom = keep-me\n\n[paths]\nruntime_root = C:\\\\OldNorm\n",
+        encoding="utf-8",
+    )
+    (config / "runtime.json").write_text(json.dumps({"worker": {"poll_ms": 1234}, "custom": {"keep": True}}), encoding="utf-8")
+    (config / "network-map.json").write_text(json.dumps({"schema": 1, "targets": [{"name": "custom-target", "host": "example.invalid"}]}), encoding="utf-8")
+    (config / "custom-sidecar.json").write_text(json.dumps({"hello": "world"}), encoding="utf-8")
+    snap = m._snapshot_existing_config(target, lambda _: None)
+    assert snap is not None
+
+    # Simulate package mirror output.
+    (config / "settings.ini").write_text(
+        "[project]\nversion = 0.53.11\n\n[paths]\nruntime_root = .\n\n[new_section]\nnew_key = default\n",
+        encoding="utf-8",
+    )
+    (config / "runtime.json").write_text(json.dumps({"worker": {"poll_ms": 5000, "task_round_limit": 128}, "new": 1}), encoding="utf-8")
+    (config / "network-map.json").write_text(json.dumps({"schema": 1, "targets": []}), encoding="utf-8")
+    (config / "custom-sidecar.json").unlink(missing_ok=True)
+    m._restore_operator_config(target, snap, package_version="0.53.11", log=lambda _: None)
+
+    settings_text = (config / "settings.ini").read_text(encoding="utf-8")
+    assert "version = 0.53.11" in settings_text
+    assert "custom = keep-me" not in settings_text
+    assert "new_key = default" in settings_text
+    runtime = json.loads((config / "runtime.json").read_text(encoding="utf-8"))
+    assert runtime["worker"]["poll_ms"] == 1234
+    assert runtime["worker"]["task_round_limit"] == 128
+    assert runtime["new"] == 1
+    assert "custom" not in runtime
+    net = json.loads((config / "network-map.json").read_text(encoding="utf-8"))
+    assert net["targets"][0]["name"] == "custom-target"
+    assert not (config / "custom-sidecar.json").exists()
+    audit = json.loads((snap / "migration.json").read_text(encoding="utf-8"))
+    assert "worker.custom" in audit["settings"]["dropped"]
+    assert "custom" in audit["json"]["runtime.json"]["dropped"]
+    assert "custom-sidecar.json" in audit["dropped_files"]
+
+print("PASS: in-place config backup + schema migration")
+# Environment-page prefill and private persistent-imprint behavior.
+with tempfile.TemporaryDirectory() as td_name:
+    td = Path(td_name)
+    target = td / "Norm"
+    config = target / "config"
+    config.mkdir(parents=True)
+    secrets_path = td / "private.env"
+    (config / "settings.ini").write_text(
+        f"""[paths]
+documents_root = {td.as_posix()}/docs
+workspace_root = workspace
+temp_root = temp
+
+[network]
+current_machine = current-host
+current_domain = current.example
+require_tailscale = true
+ollama_host = loopback
+ollama_port = 11434
+norm_host = loopback
+norm_port = 12543
+activity_host = loopback
+activity_port = 8766
+postgres_host = db.current.example
+postgres_port = 5432
+redis_host = loopback
+redis_port = 6379
+
+[postgres]
+user = custom-user
+database = current-db
+schema = current_schema
+stocks_database = current-stocks
+
+[ssh]
+enabled = false
+ca8d_host =
+ca8d_docker_host =
+ca8d_port = 22
+ca8d_user =
+ca8d_identity_file = norm_remote_ed25519
+
+[environment]
+secrets_file = {secrets_path.as_posix()}
+""",
+        encoding="utf-8",
+    )
+    (config / "runtime.json").write_text(
+        json.dumps({"tools": {"allowed_roots": [str(td / "docs")]}}),
+        encoding="utf-8",
+    )
+    (config / "network-map.json").write_text(
+        json.dumps({"schema": 1, "targets": []}),
+        encoding="utf-8",
+    )
+    secrets_path.write_text(
+        "NORM_POSTGRES_PASSWORD=current-password\n"
+        "NORM_ROTOR5_SECRET=current-rotor\n"
+        "NORM_ROTOR5_PREVIOUS_SECRETS=older-rotor\n",
+        encoding="utf-8",
+    )
+    raw = {
+        "schema": 1,
+        "network": {"postgres_port": 55432},
+        "postgres": {"user": "imprint-user"},
+    }
+    merged = m.validate_imprint(raw)
+    resolved, secrets, origins = m.envtools.resolve_environment_prefill(
+        target, merged, raw, m.DEFAULT_IMPRINT
+    )
+    assert resolved["postgres"]["user"] == "custom-user"
+    assert origins["postgres.user"] == "current"
+    assert resolved["network"]["postgres_port"] == 55432
+    assert origins["network.postgres_port"] == "imprint"
+    assert resolved["network"]["current_machine"] == "current-host"
+    assert secrets["NORM_POSTGRES_PASSWORD"] == "current-password"
+    assert secrets["NORM_ROTOR5_SECRET"] == "current-rotor"
+    assert secrets["NORM_ROTOR5_PREVIOUS_SECRETS"] == "older-rotor"
+
+with tempfile.TemporaryDirectory() as td_name:
+    td = Path(td_name)
+    old_appdata = os.environ.get("APPDATA")
+    os.environ["APPDATA"] = str(td)
+    try:
+        saved = m.save_local_imprint(valid)
+        assert saved == (td / "Norm" / m.LOCAL_IMPRINT_NAME).resolve()
+        assert saved.is_file()
+        assert "password" not in saved.read_text(encoding="utf-8").lower()
+    finally:
+        if old_appdata is None:
+            os.environ.pop("APPDATA", None)
+        else:
+            os.environ["APPDATA"] = old_appdata
+
+assert m.envtools.connection_host("loopback", "host", "example") == "127.0.0.1"
+assert m.envtools.connection_host("current", "host", "example") == "host.example"
+
+print("PASS: Environment prefill current/imprint/default precedence")
+print("PASS: current secrets available for masked prefill")
+print("PASS: persistent local imprint is outside package tree and non-secret")
+print("PASS: connection host resolution")
+
+# Connection test must use only the explicitly configured endpoints.
+calls = []
+orig_http = m.envtools._http_probe
+orig_redis = m.envtools._redis_probe
+orig_pg = m.envtools._postgres_probe
+try:
+    m.envtools._http_probe = lambda host, port, path, timeout=2.5: (calls.append(("http", host, port, path)) or ("ok", "stub"))
+    m.envtools._redis_probe = lambda host, port, timeout=2.5: (calls.append(("redis", host, port)) or ("ok", "stub"))
+    m.envtools._postgres_probe = lambda host, port, user, password, database, python_candidates, timeout=3.0: (
+        calls.append(("postgres", host, port, user, database)) or ("ok", "stub")
+    )
+    probe_data = m.validate_imprint({
+        "schema": 1,
+        "network": {
+            "current_machine": "box",
+            "current_domain": "mesh.test",
+            "ollama_host": "ollama.test",
+            "ollama_port": 1111,
+            "norm_host": "norm.test",
+            "norm_port": 2222,
+            "activity_host": "activity.test",
+            "activity_port": 3333,
+            "redis_host": "redis.test",
+            "redis_port": 4444,
+            "postgres_host": "postgres.test",
+            "postgres_port": 5555,
+        },
+        "postgres": {
+            "user": "pg-user",
+            "database": "pg-db",
+            "schema": "pg-schema",
+            "stocks_database": "stocks-db",
+        },
+    })
+    probe_results = m.envtools.test_environment_connections(
+        probe_data,
+        {"NORM_POSTGRES_PASSWORD": "test-only"},
+        [],
+    )
+    assert len(probe_results) == 5
+    assert calls == [
+        ("http", "ollama.test", 1111, "/api/tags"),
+        ("http", "norm.test", 2222, "/health"),
+        ("http", "activity.test", 3333, "/health"),
+        ("redis", "redis.test", 4444),
+        ("postgres", "postgres.test", 5555, "pg-user", "pg-db"),
+    ]
+finally:
+    m.envtools._http_probe = orig_http
+    m.envtools._redis_probe = orig_redis
+    m.envtools._postgres_probe = orig_pg
+
+print("PASS: Test connections uses only configured endpoints")
