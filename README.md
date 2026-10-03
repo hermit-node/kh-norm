@@ -1,155 +1,250 @@
-# kh-norm
+# Norm
 
-Public installer/source distribution for **Norm 0.53.9**. The reviewable source tree is under `src/Norm`; the installer consumes the generated portable-source ZIP beside it.
+**A local-first AI agent runtime built for persistent memory, long-running work, and extensible tools.**
 
-This repository is intentionally split into:
+Norm runs on your own machine, coordinates multi-step tasks, remembers useful context across sessions, and can recover work instead of treating every conversation as disposable.
 
-- a generic, publishable Norm source package;
-- Unified Installer **1.6.0**, which asks for deployment-specific host/port/path values;
-- an optional local `norm-imprint.local.json` sidecar that auto-fills those non-secret values on later runs.
+It combines a Python agent runtime with PostgreSQL-backed memory and task history, Redis-backed live queues, local model support through Ollama, and hot-loadable Python plugins.
 
-No deployment-specific passwords, tokens, private keys, OAuth credentials, SSH keys, or private CA material belong in this repository.
+> Current public release: **Norm 0.53.9**
 
-## Install
+## What Norm does
 
-Keep these files together:
+* **Persistent memory** — useful facts, preferences, decisions, task history, and working context survive individual chats and restarts.
+* **Long-running tasks** — work is planned, bounded, checkpointed, verified, and recoverable rather than assumed to finish in a single model turn.
+* **Local models** — designed to work with Ollama and self-hosted model infrastructure.
+* **Hot-loaded tools** — add Python plugins without rebuilding the Norm executable.
+* **Durable task state** — PostgreSQL stores task history and recovery state; Redis handles live queues and short-lived coordination.
+* **Recoverable execution** — interrupted or deliberately suppressed work can be resumed instead of recreated from scratch.
+* **Large-file workflows** — large sources are streamed and processed incrementally rather than loaded wholesale into model context.
+* **Operator controls** — queue inspection, task suppression/resume, backup, memory maintenance, thread management, status, and recovery commands are built in.
+* **Local infrastructure awareness** — optional Tailscale inventory and explicitly allowlisted service checks without network-wide scanning.
+
+Norm is intended to be an agent you can keep running and gradually extend, rather than a thin chat wrapper around an LLM.
+
+## Quick start
+
+Norm currently targets **Windows** and uses a reusable installer.
+
+Download or clone the repository and keep the installer and portable source package together:
 
 ```text
 Norm-Installer.py
 Run-Norm-Installer.bat
 Norm-0.53.9-portable-source.zip
 Norm-0.53.9-portable-source.zip.sha256
-norm-imprint.example.json
 ```
 
-On Windows with Python 3.14 + Tkinter:
+Then run:
 
-```text
+```bat
 Run-Norm-Installer.bat
 ```
 
-The installer has four stages:
+The installer configures the environment, installs the required Python packages, synchronizes the Norm runtime, and can build `norm.exe`.
 
-1. **Package** — automatically selects the highest valid `Norm-*-portable-source.zip` beside the installer.
-2. **Environment** — hostnames, ports, paths, SSH convenience fields, and masked secret inputs.
-3. **Install** — synchronized update, venv/dependencies, validation, and `norm.exe` build.
-4. **Complete** — verified install summary.
+Existing installations are updated in place. Persistent state such as plugins, logs, SSH configuration, runtime state, and compatible Python environments is preserved.
 
-The installer verifies the package companion SHA-256 before use.
-
-## Local imprint
-
-Copy the example once:
-
-```powershell
-Copy-Item .\norm-imprint.example.json .\norm-imprint.local.json
-```
-
-or fill the Environment page and use **Save non-secret norm-imprint.local.json**.
-
-On the next launch, that local file is loaded automatically.
-
-The imprint may contain non-secret operator configuration such as:
-
-- install location and dependency mode;
-- current machine/domain;
-- Norm, Activity, Ollama, PostgreSQL, and Redis hosts/ports;
-- PostgreSQL username/database/schema names;
-- SSH convenience host/user/port settings;
-- documents/workspace/temp paths;
-- file-tool allowed roots;
-- storage-context names/paths;
-- `/network-map` never-probe rules and explicit active-probe targets.
-
-The imprint is ignored by Git.
-
-### Secrets are separate
-
-Secret-like keys are rejected if they appear in an imprint.
-
-The installer provides masked fields for values such as the PostgreSQL password. Those values are never written to the imprint or installer log. They are written only to Norm's configured external secrets file (`%APPDATA%\Norm\.env` with the public defaults).
-
-For headless installs, secrets can be supplied through files rather than command-line values:
-
-```powershell
-python .\Norm-Installer.py --install --imprint .\norm-imprint.local.json --postgres-password-file .\postgres-password.txt
-```
-
-The password file itself must remain outside Git.
-
-## Norm 0.53.9 network map
-
-`/network-map` and `/network-map --json` are synchronous operator commands. They are intercepted before normal DB3 prompt enqueue and do not become Norm tasks.
-
-The map uses passive `tailscale status --json` inventory. Active probes have a fail-closed policy:
-
-- discovered peers are **not** automatically probed;
-- only targets explicitly listed in `config/network-map.json` / the local imprint can be actively checked;
-- honeypot/decoy name patterns are observed but marked `probe_policy=never`;
-- resolved addresses are checked against `never_probe_cidrs` before connection;
-- HTTP probes do not follow redirects to a second destination;
-- there is no subnet sweep, ping sweep, or broad port scan.
-
-For automation/SSH:
+## Architecture
 
 ```text
-C:\Norm\tools\norm-network-map.cmd --json
+                 ┌──────────────┐
+                 │     Norm     │
+                 │ Agent Runtime│
+                 └──────┬───────┘
+                        │
+        ┌───────────────┼────────────────┐
+        │               │                │
+   PostgreSQL         Redis            Ollama
+  durable state    live queues       local models
+  memory/history   coordination
+        │               │
+        └───────────┬───┘
+                    │
+               Python tools
+               and plugins
 ```
 
-## Rebuilding the portable source ZIP
+Norm separates durable state from live runtime state.
 
-From the repository root:
+**PostgreSQL** is the long-term source of truth for task history, memories, recovery information, conversation state, and other durable records.
+
+**Redis** handles live ingress, queues, temporary coordination, and runtime buffers.
+
+**Ollama** provides local model inference.
+
+The runtime coordinates these pieces and exposes tools to the model through a controlled execution layer.
+
+## Plugins
+
+Norm's plugin system is deliberately simple: Python files placed in the configured `plugins` directory are discovered and exposed as native tools.
+
+```text
+C:\Norm\plugins\
+```
+
+Public functions in plugin modules become callable tools. Plugins are rescanned automatically and can be updated without rebuilding `norm.exe`.
+
+If a plugin update fails to load, Norm keeps the last known-good version active.
+
+The public distribution currently includes plugins for:
+
+* backup and recovery
+* exact/verbatim file editing
+* PDF and document vision parsing
+* paired-image steganography
+* key-based steganography
+* rotor-based text encoding
+
+The plugin directory is also intended for user-created capabilities.
+
+## Memory
+
+Norm does not treat conversation history as its only memory system.
+
+It can retain structured information such as:
+
+* facts
+* preferences
+* decisions
+* constraints
+* assumptions
+* future tasks
+* task history
+
+Mixed user messages can also be separated into the immediate task and reusable **Ingrained Details**, allowing useful side information to survive without turning every sentence into a new task.
+
+Memory is periodically condensed so the model can work from a smaller background context while the underlying PostgreSQL records remain available.
+
+## Task execution
+
+Norm treats substantial work as a task with explicit state rather than a single prompt/response.
+
+A task can contain multiple steps, tool calls, verification, recovery information, and child work.
+
+Large tasks can be checkpointed and resumed:
+
+```text
+/suppress-task
+/resume-task
+/queue-full
+/status
+/status/busy
+```
+
+Interrupted work therefore does not necessarily need to start over.
+
+Norm also tracks the distinction between the original user request and instructions generated internally by the planner, verifier, recovery system, or child tasks.
+
+## Files and large sources
+
+Norm uses bounded reads rather than assuming source files fit into model context.
+
+Large files can be streamed in chunks with continuation cursors, while task processing and temporary storage have explicit limits.
+
+Generated artifacts intended to survive are stored separately from disposable task scratch data.
+
+```text
+Documents\Norm\
+├─ workspace\    durable generated work
+└─ temp\         temporary task/recovery files
+```
+
+## PDF reading
+
+The bundled `vision_parse` plugin combines the PDF text layer with rendered-page vision.
+
+This is useful for PDFs where extracted text has broken columns, bad encoding, missing characters, or other layout problems. Visible page content can be used to correct unreliable raw extraction.
+
+## Backups
+
+Norm supports both portable and full-state backups.
+
+```text
+/backup
+```
+
+Creates portable source/install media.
+
+```text
+/backup full
+```
+
+Creates a private recovery package containing the state needed to reconstruct a configured Norm installation.
+
+Full backups can contain sensitive information and should not be published.
+
+## Configuration and privacy
+
+The public repository contains generic configuration only.
+
+Machine-specific settings can be supplied through a local:
+
+```text
+norm-imprint.local.json
+```
+
+The imprint may contain non-secret values such as hosts, ports, paths, usernames, and service locations.
+
+Passwords, API tokens, SSH private keys, OAuth credentials, and similar secrets are kept separately and are excluded from the public repository.
+
+See [SECURITY.md](SECURITY.md) for the publication and secret-handling boundary.
+
+## Network discovery
+
+Norm includes an optional `/network-map` operator command for environments using Tailscale.
+
+Discovery is passive by default.
+
+Active checks are performed only against explicitly configured targets. Discovered peers do not automatically become probe targets, and configured never-probe hosts or networks are excluded before network I/O.
+
+There is no automatic subnet or port sweep.
+
+## Repository layout
+
+```text
+src/Norm/       Norm source
+tests/          regression tests
+tools/          build and maintenance tools
+
+Norm-Installer.py
+Run-Norm-Installer.bat
+```
+
+The portable source package is generated from `src/Norm`.
+
+## Building from source
+
+Rebuild the portable source package:
 
 ```powershell
 python .\tools\build_source_package.py
 ```
 
-The script reads the version from `src/Norm/package-manifest.json`, rebuilds `Norm-<version>-portable-source.zip`, and regenerates its companion SHA-256.
+Build the Windows executable installer:
 
-## Building the Windows installer EXE
-
-Run:
-
-```text
+```bat
 Build-Norm-Installer-EXE.bat
 ```
 
-The build uses a reusable Python 3.14 venv under:
+Norm itself is packaged into a Windows executable with PyInstaller.
 
-```text
-%LOCALAPPDATA%\Norm\InstallerBuilder\public-py3.14
-```
+## Documentation
 
-It pins installer infrastructure to pip 26.2.1 and PyInstaller 6.22.3 and avoids reinstalling them when the cached builder is already correct.
+More detailed implementation and operator documentation lives inside the source tree:
 
-## Requirements modes
+* [`src/Norm/docs/README.md`](src/Norm/docs/README.md) — operator/runtime overview
+* [`src/Norm/docs/RELEASE_NOTES.md`](src/Norm/docs/RELEASE_NOTES.md) — release history
+* [`src/Norm/SOURCE_PACKAGE.md`](src/Norm/SOURCE_PACKAGE.md) — portable package details
+* [`AUDIT.md`](AUDIT.md) — public release audit
+* [`SECURITY.md`](SECURITY.md) — security and publication boundary
+* [`RELEASE.md`](RELEASE.md) — release information
+* [`PUBLISH.md`](PUBLISH.md) — maintainer publishing workflow
 
-**Newest available packages** derives package names from Norm's own exact lock and asks pip to resolve current non-prerelease versions accepted for the selected Python.
+## Status
 
-**Use package requirements** installs the exact `tools/requirements-lock.txt` shipped inside the selected Norm package.
+Norm is under active development.
 
-Newest mode records `state/installer/resolved-requirements.txt` for audit/reproduction.
+The current public source is primarily designed for a self-hosted Windows environment and assumes supporting services such as PostgreSQL, Redis, and an LLM provider such as Ollama.
 
-## Publishing
-
-`Publish-To-GitHub.ps1` stages only the known public release files rather than using `git add .`. It refuses to stage local imprint/secrets/key material.
-
-Authentication remains your normal Git/GitHub credential flow.
-
-## Validation
-
-The release bundle contains regression tests for:
-
-- version-first package selection;
-- package SHA verification;
-- imprint merge/save behavior;
-- rejection of secret-like imprint keys;
-- secret/log separation;
-- network-map honeypot/decoy probe policy;
-- public-release private-topology/credential scan.
-
-The Linux build environment can validate Python/source/package behavior but cannot perform the final Windows Tkinter/PyInstaller acceptance run.
-
-## Bundled plugins
-
-The 0.53.9 source carries forward the merged 0.53.8 plugin set, including `vision_parse`, `rotor5_cipher`, `backup`, `verbatim_lines`, `stegosplit_key`, and `stegosplit_message`.
+The architecture is intentionally modular: models, plugins, storage, and external services are separate pieces rather than being hard-wired into one monolithic assistant.
