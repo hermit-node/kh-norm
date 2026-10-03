@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def _call(mode: str, label: str = "", validate_only: bool = False) -> dict:
-    runtime_root = Path(__file__).resolve().parents[2]
+    runtime_root = Path(__file__).resolve().parents[3]
     python_exe = runtime_root / ".venv" / "Scripts" / "python.exe"
     if not python_exe.is_file():
         python_exe = Path(sys.executable)

@@ -10,39 +10,27 @@ CORE_ROOT = SOURCE_ROOT / "core"
 if str(CORE_ROOT) not in sys.path:
     sys.path.insert(0, str(CORE_ROOT))
 
-import psycopg
+from psycopg import sql
 
+from runtime_bootstrap import build_postgres_pool
 from norm_runtime.conversation_store import ConversationStore
 from norm_runtime.durable_log import PostgresTaskLog
-from norm_runtime.settings import load_network_settings, load_ports, load_secrets, resolve_network_host
+from norm_runtime.settings import load_postgres_settings
 
 
-def postgres_target(runtime_root: Path) -> tuple[str, str]:
-    network = load_network_settings(runtime_root)
-    ports = load_ports(runtime_root)
-    secrets = load_secrets(runtime_root)
-    user = secrets.get("NORM_POSTGRES_USER", "").strip()
-    password = secrets.get("NORM_POSTGRES_PASSWORD", "").strip()
-    database = secrets.get("NORM_POSTGRES_DB", "postgres").strip() or "postgres"
-    schema = secrets.get("NORM_POSTGRES_SCHEMA", "norm_runtime").strip() or "norm_runtime"
-    if not user or not password:
-        raise ValueError("NORM_POSTGRES_USER and NORM_POSTGRES_PASSWORD are required")
-    host = resolve_network_host(network, "postgres_host")
-    conninfo = psycopg.conninfo.make_conninfo(
-        host=host, port=ports["postgres"], dbname=database, user=user, password=password
-    )
-    return conninfo, schema
+def postgres_target(runtime_root: Path):
+    return build_postgres_pool(runtime_root), str(load_postgres_settings(runtime_root)["schema"])
 
 
-def recent_repairs(conninfo: str, schema: str) -> list[dict]:
-    with psycopg.connect(conninfo) as conn, conn.cursor() as cur:
+def recent_repairs(pool, schema: str) -> list[dict]:
+    with pool.connection("norm") as conn, conn.cursor() as cur:
         cur.execute(
-            psycopg.sql.SQL("""
+            sql.SQL("""
                 SELECT phase,note,details,created_at
                 FROM {}.runtime_maintenance_notes
                 WHERE phase IN ('task_lineage_repair','memory_thread_repair','deep_history_prune_lineage_repair')
                 ORDER BY created_at DESC LIMIT 12
-            """).format(psycopg.sql.Identifier(schema))
+            """).format(sql.Identifier(schema))
         )
         return [
             {"phase": str(r[0]), "note": str(r[1]), "details": r[2], "created_at": r[3].isoformat()}
@@ -60,18 +48,18 @@ def main() -> int:
     )
     args = parser.parse_args()
     runtime_root = Path(args.runtime_root).expanduser().resolve()
-    conninfo, schema = postgres_target(runtime_root)
+    pool, schema = postgres_target(runtime_root)
 
-    durable = PostgresTaskLog(conninfo, schema)
+    durable = PostgresTaskLog(pool, schema)
     durable.ensure_schema()
-    store = ConversationStore(conninfo, schema)
+    store = ConversationStore(pool, schema)
     store.ensure_schema()
 
     output = {
         "status": "ok",
         "runtime_root": str(runtime_root),
         "schema": schema,
-        "recent_integrity_repairs": recent_repairs(conninfo, schema),
+        "recent_integrity_repairs": recent_repairs(pool, schema),
     }
     print(json.dumps(output, indent=2, default=str))
     return 0

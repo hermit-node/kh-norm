@@ -2,7 +2,15 @@
 
 This is the active backlog/design notebook for behavior that is not fully implemented. `README.md` describes operation, `CURRENT_STATUS.md` describes current facts, `RELEASE_NOTES.md` records shipped/source-release deltas, and `DEVELOPMENT_NOTES.md` preserves engineering history.
 
-## Current backlog after 0.52.5 source consolidation
+## Boundary after the 2026-10-02 maintenance source
+
+Implemented: shared advisory validation counts/generations, Redis live versus PostgreSQL snapshot wording, budgeted context, no-op recovery completion, deterministic instrumented-write verification, explicit first-party plugin identity/checksums and docs consolidation. These are no longer design-only items.
+
+Deferred: refresh and validate the Installer 1.6.5 embedded payload, sanitize/synchronize the public source tree and publish only when authorized, rebuild/test the frozen executable, and promote live after acceptance. No live promotion is claimed by this source checkpoint. HTTP prompt-id idempotency and recovery-note relocation/self-healing are not implemented here.
+
+Remaining persistence limits: snapshots are observation-triggered, not a background timer; loss of Redis can lose confirmations since the last PostgreSQL snapshot or pending history. A stronger independently durable outbox/background flusher is future work. Plugin checksums are not signatures, and last-known-good hydration is in-process rather than a persisted cold-start rollback copy. Arbitrary shell writes/uninstrumented plugins still need explicit artifact evidence; this is not a general filesystem mutation monitor.
+
+## Continuing backlog (historical items retained)
 
 - Make installer source sync transactional: stage/validate dependencies and candidate executable before committing a new managed source tree, with a defined rollback path if post-sync dependency/build validation fails.
 - Add explicit plugin export declarations so compatibility `run` wrappers and helper functions do not automatically become model-visible native tools.

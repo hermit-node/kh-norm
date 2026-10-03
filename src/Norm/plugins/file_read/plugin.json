@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "name": "Norm File Read",
+  "version": "1.0.0",
+  "date": "2026-10-02",
+  "entrypoint": "src/main.py",
+  "description": "Python-backed bounded file reading using Norm's configured file-access policy.",
+  "capabilities": [
+    "chunked text read",
+    "literal byte read",
+    "base64 byte read",
+    "range read"
+  ],
+  "sha256": "4e1652ffb7c94fe1fb4bfe584d8fed4ab62a50c7d00d0b05b6f465fb6a1c294c"
+}

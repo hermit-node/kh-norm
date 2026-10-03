@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "name": "PostgreSQL Pool",
+  "version": "1.0.0",
+  "date": "2026-10-02",
+  "entrypoint": "src/main.py",
+  "description": "Own the bounded process-global PostgreSQL connection pools and expose one restricted diagnostic tool.",
+  "capabilities": [
+    "postgresql",
+    "connection pool",
+    "database health",
+    "bounded connections"
+  ],
+  "sha256": "5405c956e0833c2d009b9e89f03102be4d680eb25926d413876e2423f6233e55"
+}

@@ -1,12 +1,46 @@
 # Norm
 
-**Norm 0.53.9** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
+**Norm 0.53.11** is the local assistant/coordinator runtime maintained under `C:\Norm`. It plans bounded work, executes local tools and hot-loaded plugins, persists task/memory state in PostgreSQL, uses Redis for live queues/buffers, and returns normal English/Markdown.
 
-## Public installer imprint
+## 2026-10-02 maintenance source checkpoint
 
-The public package intentionally ships without machine-specific topology or credentials. `norm-imprint.local.json`, when present beside the unified installer, provides non-secret auto-fill values. Passwords/tokens are entered separately and are never written to the imprint.
+Norm remains **0.53.11**, with Installer **1.6.5-unified**. These changes are implemented in the maintenance source; this checkpoint does not claim a rebuilt executable, live promotion, installer payload refresh, or GitHub publication. See [current status](CURRENT_STATUS.md) and [verification evidence](MAINTENANCE_VERIFICATION.md).
 
-`/network-map` provides passive Tailscale inventory plus exact allowlisted probes; discovered peers are never automatically probed.
+### Advisory validation checklist
+
+`record_validations` and `review_validations` share semantic subjects across unrelated tasks. Redis holds the live checklist: `recent_checks` counts observations of the current value in the rolling 24-hour window; `generation_checks` counts all confirmations since that value began. An unchanged value increments its generation and preserves the generation start. A changed value starts at one, resets generation timestamps and recent observations, and queues the old compact generation for PostgreSQL history. Repeated checks remain allowed: no count, reason or status grants or denies permission.
+
+PostgreSQL `global_validations` stores compact current snapshots and `global_validation_generations` stores prior generations. Same-value snapshots are due after 12 hours, written on the next observation; new/changed values checkpoint immediately. Counts may lag Redis, especially during inactivity or outages. A PostgreSQL fallback has an **unknown** live recent count, not a fabricated zero. Redis is not seeded with imaginary recent observations. Completed generations remain pending in Redis until the history write succeeds; losing Redis before a checkpoint can still lose unsnapshotted counts/history.
+
+`config/runtime.json` `validation_pool` defaults: `recent_window_seconds=86400`, `observation_retention_seconds=604800`, `durable_snapshot_interval_seconds=43200`, `reuse_after_checks=3` (advice only), `context_token_budget=2500`, `context_char_budget=10000`, `emergency_row_cap=512`. The token allowance uses a four-characters-per-token estimate; the character limit is deterministic. The old `max_context_items` setting no longer limits context. Omitted rows can be explicitly reviewed by subject.
+
+### Recovery units and write verification
+
+Oversize units return internal answer results, so an evidence-backed finding that no edit is needed can complete without manufacturing a file. Independent step/final verification still checks the evidence. Root artifact requests still require artifacts. Native file writes and plugins reporting a `file_mutation` require a matching read **after the final write**; a successful write alone, pre-write read, missing hash, or mismatched hash cannot verify an artifact. The exact-text writer now supplies mutation/hash metadata to this same path.
+
+The compact durable recovery handoff remains unchanged: immutable scope, completed and unresolved work, authoritative facts, source/database locators, and next action; the parent parks while bounded children work from that note.
+
+## Plugin operation and verification
+
+Each visible direct plugin subfolder is a local capability. Schema-2 plugins keep metadata at the plugin root and executable code under `src/`; public functions defined in the declared `src/main.py` entrypoint become native tools while helper modules remain private implementation. Legacy third-party plugins may still use the older layout. The nine first-party plugins now carry a README, `plugin.json`, and `src/`.
+
+| Plugin | Purpose |
+|---|---|
+| [backup](../plugins/backup/README.md) | Portable source or sensitive full-state backup |
+| [file_read](../plugins/file_read/README.md) | Bounded text/byte reads under the file-access policy |
+| [postgres_pool](../plugins/postgres_pool/README.md) | Single bounded PostgreSQL connection pool tool with approved named connections |
+| [rotor5_cipher](../plugins/rotor5_cipher/README.md) | Independent reversible Rotor5 transform |
+| [soft_delete](../plugins/soft_delete/README.md) | Reversible trash, restoration and reconciliation |
+| [stegosplit_key](../plugins/stegosplit_key/README.md) | Password/map-key protected key-pair prototype |
+| [stegosplit_message](../plugins/stegosplit_message/README.md) | Two-PNG authenticated message carrier |
+| [verbatim_lines](../plugins/verbatim_lines/README.md) | Exact UTF-8 append/insert and private stdin CLI |
+| [vision_parse](../plugins/vision_parse/README.md) | Rendered PDF vision with text-layer reconciliation |
+
+`plugin.json` schema 2 declares the plugin name, version, release date, `src/main.py` injection point, description/capabilities, and one SHA-256 for the complete `src/` tree. The tree hash is deterministic over each source file's relative path and exact bytes, so editing or renaming anything under `src/` changes the identity hash. README and other root metadata do not affect the source SHA.
+
+At startup Norm recalculates each schema-2 source tree hash before loading it. A matching SHA means the declared code build is unchanged; a mismatch prevents the candidate from loading. Norm generates `plugins/.registry.json` from the plugin folders actually present on that installation and refreshes it as plugins are hot-swapped; the registry is disposable generated state and is not shipped as package authority. A damaged or failed update retains the in-process last-known-good plugin when one exists.
+
+Normal installer updates synchronize the package-managed built-ins while preserving unrelated local plugin folders. A full-backup restore intentionally restores the captured plugin tree. Stage complete plugin updates together to avoid transient refresh errors. Explicit export declarations and enforcing canonical allowed roots in `verbatim_lines` remain deferred; see [the backlog](FUTURE_IMPLEMENTATION_NOTES.md).
 
 ## Canonical layout
 
@@ -43,7 +77,7 @@ Human-facing completed replies are capped at 384 KiB. The full terminal summary 
 
 ## Runtime services
 
-`config\settings.ini` is the canonical operator configuration. `[paths]` records the installed `runtime_root` (normally `C:\Norm`), and `[network]` defines service topology. Public defaults are Ollama `11434`, Norm HTTP/chat `12543`, activity/control `8766`, Redis `6379`, and PostgreSQL `5432`; the installer imprint can override hosts and ports. Credentials are loaded from the configured external secrets file and are never included in the portable source package.
+`config\settings.ini` is the canonical operator configuration. `[paths]` records the installed `runtime_root` (normally `C:\Norm`), and `[network]` defines service topology. Current defaults are Ollama `11434`, Norm HTTP/chat `12543`, activity/control `8766`, Redis `6379`, and PostgreSQL `25434`. Credentials are loaded from the configured external secrets file and are never included in the portable source package.
 
 ## Tool and plugin model
 
@@ -51,7 +85,7 @@ The runtime lock includes `cryptography 50.0.2`/`cffi 2.0.0`, and `tools\build_n
 
 `core\norm_runtime\plugin_manager.py` automatically rescans `C:\Norm\plugins` before native tool schema use/dispatch. Public functions in non-underscore Python files become namespaced native tools; helper files/functions beginning with `_` stay private. Multi-file plugins and sibling imports are supported. If a changed plugin fails to load, the last-known-good hydrated version remains active and `.registry.json` records the refresh error.
 
-First-party plugins currently ship under `plugins\backup`, `plugins\verbatim_lines`, `plugins\stegosplit_key`, `plugins\stegosplit_message`, `plugins\rotor5_cipher`, and `plugins\vision_parse`. The StegoSplit plugins bundle their Python implementation so a `.venv` rebuild no longer depends on an external editable checkout. `stegosplit_message` is the two-image authenticated carrier; `rotor5_cipher` is an independent optional pre-encoding layer; `stegosplit_key` remains the password/map-key protected 256-bit key prototype.
+First-party plugins currently ship under `plugins\backup`, `plugins\verbatim_lines`, `plugins\stegosplit_key`, `plugins\stegosplit_message`, `plugins\rotor5_cipher`, `plugins\vision_parse`, `plugins\file_read`, and `plugins\soft_delete`. The StegoSplit plugins bundle their Python implementation so a `.venv` rebuild no longer depends on an external editable checkout. `stegosplit_message` is the two-image authenticated carrier; `rotor5_cipher` is an independent optional pre-encoding layer; `stegosplit_key` remains the password/map-key protected 256-bit key prototype.
 
 The backup plugin supports two package types. `/backup` creates a portable installer/source ZIP without private state. `/backup full` creates a sensitive full-state ZIP containing source/runtime, docs, all plugins, `.ssh`, configured secrets, external workspace, selected recovery/log/state, PostgreSQL, and environment rebuild metadata. `.venv` itself is intentionally omitted. Older backup aliases remain accepted for compatibility but are not advertised in help.
 
@@ -85,7 +119,7 @@ The GUI recognizes `help`/`/help`, `/about`, `/status`, `/status/busy`, `/queue-
 
 ## Build/update
 
-`tools\build_norm.py` is the repeatable PyInstaller path. Its analysis cache is reusable under `state\build-cache\pyinstaller`; use `--clean` only for an explicit cold rebuild. `package-manifest.json` defines the reusable installer contract. Normal updates should use the reusable Norm installer rather than deleting `C:\Norm`: it mirrors package-owned source files, preserves local/persistent state, reuses the venv when compatible, installs only missing/changed dependencies, and optionally rebuilds `core\norm.exe`. Installer 1.4.16 binds one exact source payload by filename and SHA-256. Its builder reads this package's requirements lock and can create a derived payload using either the locked version or the newest eligible stable/release-candidate version for each package; alpha, beta, and dev builds are excluded. The package schema remains 1.
+`tools\build_norm.py` is the repeatable PyInstaller path. Its analysis cache is reusable under `state\build-cache\pyinstaller`; use `--clean` only for an explicit cold rebuild. `package-manifest.json` defines the reusable installer contract. Normal updates should use the reusable Norm installer rather than deleting `C:\Norm`: it mirrors package-owned source files, preserves local/persistent state, reuses the venv when compatible, installs only missing/changed dependencies, and optionally rebuilds `core\norm.exe`. Installer 1.6.5 binds one exact source payload by filename and SHA-256. Its builder reads this package's requirements lock and can create a derived payload using either the locked version or the newest eligible stable/release-candidate version for each package; alpha, beta, and dev builds are excluded. The package schema remains 1.
 
 ## Documentation
 
@@ -124,7 +158,7 @@ The activity/control API starts before PostgreSQL schema initialization and repo
 
 ## 0.53.1 aiohttp transport
 
-Chat and activity/control HTTP are served by pinned aiohttp 3.14.3 on dedicated asyncio loops. Existing coordinator lifecycle semantics remain compatible; blocking runtime callbacks are offloaded with asyncio.to_thread. SSE disconnects are benign transport events.
+Chat and activity/control HTTP are served by pinned aiohttp 3.14.3 on dedicated asyncio loops; on Windows those socket-only server threads explicitly use SelectorEventLoop to avoid Proactor accept-loop listener loss. Existing coordinator lifecycle semantics remain compatible; blocking runtime callbacks are offloaded with asyncio.to_thread. SSE disconnects are benign transport events.
 
 ### PDF semantic reading
 For PDF study/extraction, use `vision_parse` when exact wording, names, dates, columns, or classifications matter. It combines the PDF text layer with a rendered-page vision pass; the rendered page wins when extraction is garbled. Calls cover up to four pages and return `next_page` for resumable traversal. Raw extraction is evidence, not authority, and Norm should not generate typo-regex variants merely to chase corrupted OCR/encoding.

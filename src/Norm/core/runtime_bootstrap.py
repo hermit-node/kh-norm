@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import importlib
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
-import psycopg
 import redis
 
 from norm_runtime.coordinator import TaskCoordinator
@@ -19,6 +20,41 @@ from norm_runtime.file_access_policy import load_file_access_policy
 from norm_runtime.ollama_client import OllamaClient
 from norm_runtime.settings import load_ports, load_path_settings, load_plugin_settings, load_network_settings, load_postgres_settings, resolve_network_host, load_secrets
 from norm_runtime.conversation_service import ConversationService
+
+
+def postgres_pool_class(root: Path):
+    """Load the built-in pool implementation from the schema-2 plugin source tree."""
+    import importlib.util
+
+    source_root = Path(__file__).resolve().parents[1]
+    runtime_root = Path(root).resolve()
+    candidates = [
+        source_root / "plugins" / "postgres_pool" / "src" / "_pool.py",
+        runtime_root / "plugins" / "postgres_pool" / "src" / "_pool.py",
+        # Read-only compatibility with an older installed tree during migration/recovery.
+        source_root / "plugins" / "postgres_pool" / "_pool.py",
+        runtime_root / "plugins" / "postgres_pool" / "_pool.py",
+    ]
+    pool_file = next((path for path in candidates if path.is_file()), None)
+    if pool_file is None:
+        raise FileNotFoundError("PostgreSQL pool plugin source is missing")
+    module_name = "norm_builtin_postgres_pool_internal"
+    module = sys.modules.get(module_name)
+    if module is None or Path(getattr(module, "__file__", "")).resolve() != pool_file.resolve():
+        spec = importlib.util.spec_from_file_location(module_name, pool_file)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"cannot load PostgreSQL pool plugin: {pool_file}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+    return module.PostgresPool
+
+
+def build_postgres_pool(root: Path):
+    pool = postgres_pool_class(root)
+    if not pool.configured():
+        pool.configure_from_runtime(root)
+    return pool
 
 
 def _expand_runtime_values(value: Any, substitutions: dict[str, str]) -> Any:
@@ -71,17 +107,10 @@ def load_config(root: Path) -> dict[str, Any]:
     config.setdefault("ollama", {})["host"] = resolve_network_host(network, "ollama_host")
     config.setdefault("http", {})["host"] = resolve_network_host(network, "norm_host", bind=True)
     config.setdefault("activity", {})["host"] = resolve_network_host(network, "activity_host", bind=True)
-    pg_host = resolve_network_host(network, "postgres_host")
     pg = load_postgres_settings(root)
-    pg_user = pg["user"]
-    pg_password = secrets.get("NORM_POSTGRES_PASSWORD", "").strip()
-    pg_db = pg["database"]
-    if not pg_password:
-        raise ValueError("NORM_POSTGRES_PASSWORD is required")
-    config.setdefault("postgres", {})["conninfo"] = psycopg.conninfo.make_conninfo(host=pg_host, port=ports["postgres"], dbname=pg_db, user=pg_user, password=pg_password, connect_timeout=5)
-    config["postgres"]["schema"] = pg["schema"]
-    stocks_db = pg["stocks_database"]
-    config["stocks_postgres"] = {"conninfo": psycopg.conninfo.make_conninfo(host=pg_host, port=ports["postgres"], dbname=stocks_db, user=pg_user, password=pg_password, connect_timeout=5)}
+    config.setdefault("postgres", {})["schema"] = pg["schema"]
+    config["postgres"]["connection"] = "norm"
+    config["stocks_postgres"] = {"connection": "stocks"}
     config["_authority"] = {"host": redis_host, "port": ports["redis"], "required": bool(network.get("require_tailscale", True))}
     return config
 
@@ -114,12 +143,18 @@ def build_runtime(root: Path, *, ensure_schema: bool = False):
     )
     client.ping()
     live = RedisTaskLog(client, prefix=redis_cfg.get("prefix", "norm:task"))
+    pg_pool = build_postgres_pool(root)
     durable = PostgresTaskLog(
-        conninfo=pg_cfg["conninfo"],
+        pool=pg_pool,
         schema=pg_cfg.get("schema", "norm_runtime"),
+        connection_name=pg_cfg.get("connection", "norm"),
     )
-    if ensure_schema:
-        durable.ensure_schema()
+    try:
+        if ensure_schema:
+            durable.ensure_schema()
+    except Exception:
+        pg_pool.close()
+        raise
     coordinator = TaskCoordinator(
         live=live,
         durable=durable,
@@ -170,9 +205,11 @@ def build_conversation_service(
 ) -> ConversationService:
     config = load_config(root)
     pg_cfg = config["postgres"]
+    pg_pool = build_postgres_pool(root)
     store = ConversationStore(
-        conninfo=pg_cfg["conninfo"],
+        pool=pg_pool,
         schema=pg_cfg.get("schema", "norm_runtime"),
+        connection_name=pg_cfg.get("connection", "norm"),
     )
     if ensure_schema:
         store.ensure_schema()
@@ -232,12 +269,11 @@ def build_conversation_service(
             temp_root=str(temp_root),
             workspace_root=str(workspace_root),
             task_storage_config=dict(config.get("task_storage", {})),
+            postgres_pool=pg_pool,
             connection_config={
-                "postgres": config.get("postgres", {}),
                 "redis": config.get("redis", {}),
                 "prompt_queue": config.get("prompt_queue", {}),
                 "ollama_base_url": f"http://{ollama_host}:{ports['ollama']}",
-                "stocks_postgres": config.get("stocks_postgres", {}),
                 "authority": config.get("_authority", {}),
             },
         )
@@ -284,9 +320,8 @@ def healthcheck(root: Path) -> dict[str, str]:
         )
         queue_client.ping()
         statuses["prompt_queue"] = "ok"
-    with psycopg.connect(pg_cfg["conninfo"]) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT 1")
-            cur.fetchone()
+    pg_health = build_postgres_pool(root).health("norm")
+    if not pg_health.get("responsive"):
+        raise RuntimeError("PostgreSQL pool health check failed")
     statuses["postgres"] = "ok"
     return statuses

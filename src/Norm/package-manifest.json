@@ -21,11 +21,14 @@
   ],
   "dynamic_plugins": {
     "root": "settings.ini:[plugins].root relative to runtime root",
-    "registry": "settings.ini:[plugins].registry_file relative to plugin root",
+    "registry": "generated plugins/.registry.json; never package authority",
     "hydration": "native-hot-reload",
-    "exposure": "public functions in non-underscore Python files",
+    "exposure": "public functions defined in declared schema-2 entrypoint; legacy plugins retain old scan behavior",
     "private_convention": "prefix files or functions with _",
-    "failure_mode": "last-known-good remains active until a valid refresh loads"
+    "failure_mode": "last-known-good remains active until a valid refresh loads",
+    "schema2_layout": "plugin.json + README.md + src/",
+    "entrypoint": "plugin.json:entrypoint (normally src/main.py)",
+    "source_identity": "plugin.json:sha256 over deterministic src/ tree"
   },
   "integrity_recovery": {
     "task_lineage": "reconcile surviving IDs/UUIDs, then nearest validated-history ancestor, else detach safely",
@@ -74,7 +77,8 @@
     "plugins/rotor5_cipher",
     "plugins/vision_parse",
     "plugins/file_read",
-    "plugins/soft_delete"
+    "plugins/soft_delete",
+    "plugins/postgres_pool"
   ],
   "built_in_plugins": {
     "backup": "plugins/backup",
@@ -84,7 +88,8 @@
     "rotor5_cipher": "plugins/rotor5_cipher",
     "vision_parse": "plugins/vision_parse",
     "file_read": "plugins/file_read",
-    "soft_delete": "plugins/soft_delete"
+    "soft_delete": "plugins/soft_delete",
+    "postgres_pool": "plugins/postgres_pool"
   },
   "canonical_prompt_ingress": {
     "redis_db": 3,
@@ -155,5 +160,6 @@
     "machine_entrypoint": "tools/norm-network-map.cmd --json",
     "inventory": "passive tailscale status --json",
     "active_probe_policy": "explicit config/network-map.json targets only; discovered peers never widen targets"
-  }
+  },
+  "imprint": "norm-imprint.json"
 }

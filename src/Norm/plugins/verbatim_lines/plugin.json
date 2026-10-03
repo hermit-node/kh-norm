@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "name": "Norm Verbatim Lines",
+  "version": "1.0.0",
+  "date": "2026-10-02",
+  "entrypoint": "src/main.py",
+  "description": "Append or insert exact UTF-8 text without shell quoting or newline mangling.",
+  "capabilities": [
+    "verbatim file append",
+    "verbatim line insertion",
+    "newline-safe writing",
+    "convenience script writer"
+  ],
+  "sha256": "edf2e4b0914948ec80f97d4f2581db1be4c8ef0bc5cf8477860781deb01b3b2c"
+}

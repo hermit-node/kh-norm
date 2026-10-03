@@ -1,79 +1,36 @@
-# Publication audit — Norm 0.53.9 / Unified Installer 1.6.0
+# Public Release Audit — Norm 0.53.11 / Installer 1.6.5
 
-Audit date: 2026-10-01
+Audit date: 2026-10-02
 
 ## Scope
 
-This audit reviews the corrected public repository bundle built from the true merged Norm 0.53.8 source baseline, then layered with the 0.53.9 operator network-map and public-installer/imprint changes.
+Reviewed the public installer source, generated portable-source ZIP, runtime source tree, public/private imprint migration, PostgreSQL pool, shared validation pool, suppression/resume behavior, plugin hot-swap identity model, and public/private configuration boundary.
 
-## Findings fixed before publication
+## Release findings
 
-### 1. Current-version documentation drift
+- Public source uses topology-neutral defaults; machine-specific network-map, storage roots, hostnames, and local imprint values are excluded.
+- `norm-imprint.json` inside the package is the public/default baseline used for upgrade comparisons.
+- `norm-imprint.local.json` remains private and Git-ignored; `.env` and secrets are never packaged.
+- Legacy PostgreSQL routing may be read from the external `.env`, while the password remains external.
+- Runtime PostgreSQL access is routed through the bounded first-party `postgres_pool`; direct runtime `psycopg.connect()` calls are rejected by maintenance tests.
+- Redis is the live shared semantic verification pool; PostgreSQL is the durable 12-hour checkpoint/history layer.
+- Changed verification values reset the generation count to 1; same values increment it.
+- Suppressed pending work is not resurrected at startup; resume restores captured queue work once.
+- The nine built-in plugins use schema 2: root `plugin.json` + README, code under `src/`, declared `src/main.py` injection point, and one deterministic SHA-256 of the complete `src/` tree.
+- `plugins/.registry.json` is generated from the plugins actually installed, Git-ignored, excluded from source media, and is not package authority.
+- Matching plugin source SHA is treated as the same code build; metadata-only edits update generated registry metadata without reloading unchanged functions.
+- Installer updates each known built-in plugin independently while preserving unrelated user plugin folders.
 
-`src/Norm/SOURCE_PACKAGE.md` and `src/Norm/docs/CURRENT_STATUS.md` still presented the package as the current 0.53.8 line even though `package-manifest.json`, the runtime docs, and the release package were 0.53.9.
+## Public release gate
 
-Resolution:
-- current package/status headings now say 0.53.9;
-- the 0.53.9 network-map/public configuration boundary is documented explicitly;
-- historical 0.53.8 sections remain intact as history;
-- `DEVELOPMENT_NOTES.md` now includes the 0.53.9 change.
-
-### 2. Never-probe CIDRs were checked only against literal configured IPs
-
-A configured hostname could be allowlisted by name and later resolve to an address inside `never_probe_cidrs`.
-
-Resolution:
-- every probe hostname is resolved before the connection;
-- every resolved address is checked against every configured never-probe CIDR;
-- if any resolved address is forbidden, the active probe fails closed;
-- TCP probes connect to the already-approved resolved address rather than resolving again for the connection.
-
-### 3. HTTP probes could follow redirects
-
-The previous urllib-based HTTP check could follow an allowed service's redirect to a second destination, defeating the exact-target policy.
-
-Resolution:
-- HTTP/HTTPS checks now use an address-pinned connection;
-- the logical Host/SNI identity is preserved;
-- redirects are returned as 3xx results but never followed;
-- regression coverage asserts that only one destination is contacted.
-
-## Plugin/baseline verification
-
-The corrected 0.53.9 source carries forward the merged 0.53.8 package-managed plugin set:
-
-- `backup`
-- `verbatim_lines`
-- `stegosplit_key`
-- `stegosplit_message`
-- `rotor5_cipher`
-- `vision_parse`
-
-It also preserves:
-- PyMuPDF 1.28.2 and PyInstaller `--collect-all pymupdf`;
-- the Ollama repetitive-output degeneration watchdog;
-- suppression handoff/live-queue cleanup.
-
-## Public/private boundary
-
-The repository contains only topology-neutral public defaults. `norm-imprint.local.json`, `.env`, SSH material, private keys, CA keys, tokens, and backup archives are excluded from publication.
-
-The public-release scan rejects:
-- Tailscale CGNAT addresses;
-- known private host/domain signatures from the deployment used to build this release;
-- common private-key and credential signatures;
-- a local imprint accidentally included in the repository.
-
-## Validation performed
-
-- Python syntax compile: all 79 Norm source Python files plus installer/tests/tools.
-- Installer regressions: PASS.
-- Network-map passive/allowlist/never-probe regressions: PASS.
-- Hostname resolving into never-probe CIDR: PASS.
-- HTTP redirect no-follow policy: PASS.
-- Public source checksum: PASS.
-- Public topology/credential scan: PASS.
-
-## Remaining acceptance boundary
-
-The Windows Tkinter installer UI, PyInstaller executable build, Windows service launch, and full live runtime startup still require acceptance on Windows. The Linux packaging environment cannot prove those Windows-specific behaviors.
+- Source-tree public-release guard: PASS (127 files)
+- Source-ZIP public-release guard: PASS (127 files)
+- Installer regression suite: PASS
+- Plugin maintenance/runtime suite: PASS (22 tests)
+- Nine built-ins hydrate with zero errors / 42 native tools
+- Real Redis/PostgreSQL validation integration: PASS
+- Real Redis suppression/resume integration: PASS
+- Network-map policy suite: PASS
+- Public topology/credential scan: PASS
+- Ingress reconciliation regression: PASS
+- Frozen Installer 1.6.5 self-test and source validation: PASS

@@ -795,14 +795,24 @@ class PromptWorker:
                 continue
             path = str(result.get("path") or "")
             sha = str(result.get("sha256") or "")
-            if tool in {"write_file", "replace_text"} and path and sha:
+            if (tool in {"write_file", "replace_text"} or result.get("file_mutation")) and path:
                 writes[path] = sha
-            if tool == "read_file" and path and sha:
+                verified = {entry for entry in verified if entry[0] != path}
+            if tool == "read_file" and path and sha and writes.get(path) == sha:
                 verified.add((path, sha))
         return [
             {"path": path, "sha256": sha, "verified": (path, sha) in verified}
             for path, sha in sorted(writes.items())
         ]
+
+    @staticmethod
+    def _final_artifact_state(candidate: dict) -> bool:
+        expected_type = str(candidate.get("command", {}).get("expected_output", {}).get("type") or "answer")
+        requires_artifact = expected_type in {"artifact", "artifact_and_response"}
+        artifacts = candidate.get("artifacts") or []
+        if artifacts:
+            return all(bool(item.get("verified")) for item in artifacts)
+        return not requires_artifact
 
     @staticmethod
     def _resource_status_from_evidence(evidence: list[dict]) -> dict:
@@ -951,10 +961,7 @@ class PromptWorker:
             candidate = validate_final_candidate(json.loads(job.prompt))
         except (json.JSONDecodeError, ValueError) as exc:
             raise VerifierProtocolError(f"queued final candidate failed deterministic schema validation: {exc}") from exc
-        expected_type = str(candidate.get("command", {}).get("expected_output", {}).get("type") or "answer")
-        requires_artifact = expected_type in {"artifact", "artifact_and_response"}
-        artifacts = candidate.get("artifacts") or []
-        artifact_state = (not requires_artifact) or (bool(artifacts) and all(bool(item.get("verified")) for item in artifacts))
+        artifact_state = self._final_artifact_state(candidate)
         verification = self._structured_verifier_result(
             self._final_verification_prompt(job, candidate, artifact_state)
         )
@@ -1592,6 +1599,18 @@ class PromptWorker:
                 "input_has_media": False,
                 "output_requires_media": False,
                 "expected_output": {"type": "answer", "format": "json"},
+            }, instruction)
+        elif prompt_origin == "runtime_oversize_recovery_unit":
+            # A recovery unit returns a bounded internal result to its parent.
+            # It may edit an artifact when its instruction requires it, but a
+            # legitimate evidence-backed no-op must not inherit the parent's
+            # root-level requirement to manufacture an artifact.
+            command = normalize_command({
+                **command,
+                "intent": instruction[:500],
+                "input_has_media": False,
+                "output_requires_media": False,
+                "expected_output": {"type": "answer", "format": "text"},
             }, instruction)
         work_step = next(step for step in steps if step.id == "work")
         final_verify_step = next(step for step in steps if step.id == "final-verify")
@@ -2355,80 +2374,274 @@ class PromptWorker:
     def _validation_pool_config(self) -> dict:
         return dict(self._runtime_config().get("validation_pool") or {})
 
+    @staticmethod
+    def _parse_iso_timestamp(value: object) -> datetime | None:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
     def _recent_validations(self, job: PromptJob, subjects: list[str] | None = None) -> list[dict]:
         cfg = self._validation_pool_config()
         if not bool(cfg.get("enabled", True)):
             return []
-        limit = int(cfg.get("max_context_items", 16))
-        window = int(cfg.get("recent_window_seconds", 600))
+        limit = max(1, min(4096, int(cfg.get("emergency_row_cap", 512))))
+        window = max(1, int(cfg.get("recent_window_seconds", 86400)))
+        retention = max(window, int(cfg.get("observation_retention_seconds", 604800)))
+        cleaned = [str(x).strip() for x in (subjects or []) if str(x).strip()]
+        rows: list[dict] = []
+
+        # Redis is the live authority for rolling recent counts and current generation counts.
+        if hasattr(self.live, "global_validation"):
+            try:
+                if cleaned:
+                    for subject in cleaned[:limit]:
+                        row = self.live.global_validation(subject, recent_window_seconds=window, retention_seconds=retention)
+                        if row:
+                            rows.append(row)
+                elif hasattr(self.live, "recent_global_validations"):
+                    rows = self.live.recent_global_validations(
+                        recent_window_seconds=window, retention_seconds=retention, limit=limit
+                    )
+            except Exception:
+                logging.exception("Redis global validation-pool read failed task=%s", job.task_id)
+                rows = []
+
+        # Explicit review searches PostgreSQL too. Durable counts may lag repetitive
+        # same-value Redis confirmations by the configured checkpoint interval.
+        if cleaned and self.durable and hasattr(self.durable, "global_validations"):
+            try:
+                durable_rows = self.durable.global_validations(cleaned, limit=limit)
+                durable_by = {str(row.get("subject")): row for row in durable_rows}
+                live_by = {str(row.get("subject")): row for row in rows}
+                merged = []
+                for subject in cleaned[:limit]:
+                    live_row = live_by.get(subject)
+                    durable_row = durable_by.get(subject)
+                    if live_row:
+                        item = dict(live_row)
+                        if durable_row:
+                            item["durable_generation_checks"] = int(durable_row.get("generation_check_count") or 0)
+                            item["durable_snapshot_at"] = durable_row.get("snapshot_at")
+                        merged.append(item)
+                    elif durable_row:
+                        merged.append({
+                            "subject": subject,
+                            "value": durable_row.get("current_value"),
+                            "generation_checks": int(durable_row.get("generation_check_count") or 0),
+                            "generation_started_at": durable_row.get("generation_started_at"),
+                            "last_checked_at": durable_row.get("last_checked_at"),
+                            "source_counts": dict(durable_row.get("source_counts") or {}),
+                            "recent_checks": None,
+                            "storage": "postgres_snapshot",
+                            "durable_generation_checks": int(durable_row.get("generation_check_count") or 0),
+                            "durable_snapshot_at": durable_row.get("snapshot_at"),
+                        })
+                rows = merged
+            except Exception:
+                logging.exception("PostgreSQL global validation-pool read failed task=%s", job.task_id)
+
+        if rows:
+            return rows[:limit]
+
+        # Compatibility fallback while older task-scoped observations age out.
         if self.durable and hasattr(self.durable, "recent_validations"):
             try:
-                rows = self.durable.recent_validations(job.task_id, subjects=subjects, window_seconds=window, limit=limit)
-                if rows:
-                    return rows
+                legacy = self.durable.recent_validations(
+                    job.task_id, subjects=cleaned or None, window_seconds=window, limit=limit
+                )
+                for item in legacy:
+                    item["storage"] = "legacy_task"
+                    item["generation_checks"] = int(item.get("check_count") or 0)
+                    item["recent_checks"] = None  # Legacy totals are not a rolling-window count.
+                return legacy
             except Exception:
-                logging.exception("Durable validation-pool read failed task=%s", job.task_id)
-        if hasattr(self.live, "recent_validations"):
-            try:
-                return self.live.recent_validations(job.task_id, subjects=subjects, limit=limit)
-            except Exception:
-                logging.exception("Redis validation-pool read failed task=%s", job.task_id)
+                logging.exception("Legacy validation-pool read failed task=%s", job.task_id)
         return []
 
     def _validation_context(self, job: PromptJob) -> str:
         rows = self._recent_validations(job)
+        cfg = self._validation_pool_config()
+        token_budget = max(1, int(cfg.get("context_token_budget", 2500)))
+        char_budget = max(1, min(int(cfg.get("context_char_budget", 10000)), token_budget * 4))
+        hours = max(1, int(cfg.get("recent_window_seconds", 86400)) // 3600)
         if not rows:
-            return "RECENT VALIDATIONS: none recorded for this task yet."
-        threshold = int(self._validation_pool_config().get("reuse_after_checks", 3))
-        lines = ["RECENT VALIDATIONS (reuse recent consistent evidence; do not start from zero):"]
+            return (
+                f"RECENT VALIDATIONS: no live Redis observations in the last {hours}h. "
+                "Use review_validations for a subject if a durable older PostgreSQL checklist entry may still be useful."
+            )[:char_budget]
+        threshold = max(1, int(cfg.get("reuse_after_checks", 3)))
+        lines = [
+            f"RECENT VALIDATIONS: live Redis rolling {hours}h checklist (advisory, never a permission gate):",
+            "PostgreSQL is the durable compact checklist; same-value counts can lag until the next observation-triggered snapshot. "
+            "A Redis/PostgreSQL count difference is expected and is not itself a reason to re-check.",
+        ]
+        used = sum(len(line) + 1 for line in lines)
+        omitted = 0
         for item in rows:
-            checks = int(item.get("check_count") or 0)
-            contradictions = int(item.get("contradiction_count") or 0)
+            recent = int(item.get("recent_checks") or 0)
+            generation = int(item.get("generation_checks") or item.get("check_count") or 0)
             sources = dict(item.get("source_counts") or {})
-            reuse = checks >= threshold and contradictions == 0
-            lines.append(
-                f"- {item.get('subject')} = {item.get('value')} | checks={checks} | "
-                f"sources={len(sources)} ({', '.join(sorted(sources)[:6]) or 'unspecified'}) | "
-                f"contradictions={contradictions} | last={item.get('last_checked_at')} | "
-                f"recommendation={'REUSE unless concrete contrary evidence exists' if reuse else 'revalidate if material'}"
+            if item.get("recent_checks") is None:
+                advice = "live recent count unknown; use timestamps and volatility"
+            elif recent >= max(6, threshold):
+                advice = f"already checked {recent} times in {hours}h; another check is allowed but likely low-value unless this could have changed"
+            elif recent >= threshold:
+                advice = f"repeatedly confirmed in {hours}h; consider reuse, but check again if useful"
+            else:
+                advice = "recently observed; decide based on volatility and task needs"
+            value = str(item.get("value") or "")
+            display_value = value if len(value) <= 1000 else value[:1000] + " [truncated; review subject for full value]"
+            line = (
+                f"- {str(item.get('subject') or '')[:500]} = {display_value} | "
+                f"storage={item.get('storage')} | recent_{hours}h={item.get('recent_checks')} | "
+                f"generation_checks={generation} | sources={len(sources)} "
+                f"({', '.join(sorted(sources)[:6]) or 'unspecified'}) | "
+                f"generation_started={item.get('generation_started_at')} | last={item.get('last_checked_at')} | {advice}"
             )
-        return "\n".join(lines)
+            if used + len(line) + 80 > char_budget:
+                omitted += 1
+                continue
+            lines.append(line)
+            used += len(line) + 1
+        if omitted:
+            lines.append(f"{omitted} rows omitted by context budget; use review_validations for specific subjects.")
+        return "\n".join(lines)[:char_budget]
 
     @staticmethod
     def _validation_tool_schemas() -> list[dict]:
         return [
-            {"type":"function","function":{"name":"review_validations","description":"Batch-review semantic facts you are considering re-checking. Use this before reacquiring recently verified facts.","parameters":{"type":"object","properties":{"subjects":{"type":"array","items":{"type":"string"},"minItems":1}},"required":["subjects"],"additionalProperties":False}}},
-            {"type":"function","function":{"name":"record_validations","description":"Batch-record semantic facts just established from observed evidence so later rounds/steps/retries can reuse them.","parameters":{"type":"object","properties":{"items":{"type":"array","minItems":1,"items":{"type":"object","properties":{"subject":{"type":"string"},"value":{"type":"string"},"source":{"type":"string"},"note":{"type":"string"}},"required":["subject","value","source"],"additionalProperties":False}}},"required":["items"],"additionalProperties":False}}},
+            {"type":"function","function":{"name":"review_validations","description":"Review the shared validation checklist before reacquiring facts. Redis provides live recent counts; PostgreSQL provides durable older/current generations. Results are advisory only.","parameters":{"type":"object","properties":{"subjects":{"type":"array","items":{"type":"string"},"minItems":1}},"required":["subjects"],"additionalProperties":False}}},
+            {"type":"function","function":{"name":"record_validations","description":"Batch-record semantic facts just established from observed evidence so later rounds, steps, retries, and unrelated tasks can see the current shared generation.","parameters":{"type":"object","properties":{"items":{"type":"array","minItems":1,"items":{"type":"object","properties":{"subject":{"type":"string"},"value":{"type":"string"},"source":{"type":"string"},"note":{"type":"string"}},"required":["subject","value","source"],"additionalProperties":False}}},"required":["items"],"additionalProperties":False}}},
         ]
+
+    def _record_global_validations(self, job: PromptJob, items: list[dict]) -> list[dict]:
+        cfg = self._validation_pool_config()
+        window = max(1, int(cfg.get("recent_window_seconds", 86400)))
+        retention = max(window, int(cfg.get("observation_retention_seconds", 604800)))
+        snapshot_interval = max(60, int(cfg.get("durable_snapshot_interval_seconds", 43200)))
+        subjects = [str(item.get("subject") or "").strip() for item in items if str(item.get("subject") or "").strip()]
+
+        durable_rows = []
+        if self.durable and hasattr(self.durable, "global_validations") and subjects:
+            try:
+                durable_rows = self.durable.global_validations(subjects, limit=max(1, len(subjects)))
+            except Exception:
+                logging.exception("Could not read durable global validation snapshots")
+        durable_by = {str(row.get("subject")): row for row in durable_rows}
+
+        if hasattr(self.live, "seed_global_validation"):
+            for row in durable_rows:
+                try:
+                    self.live.seed_global_validation(row)
+                except Exception:
+                    logging.exception("Could not seed Redis global validation subject=%s", row.get("subject"))
+
+        live_saved = []
+        if hasattr(self.live, "record_global_validations"):
+            live_saved = self.live.record_global_validations(
+                job.task_id, job.step_id, items,
+                recent_window_seconds=window, retention_seconds=retention,
+            )
+
+        # Completed generations survive transient PostgreSQL failures in Redis.
+        if self.durable and hasattr(self.durable, "archive_global_validation_generation") and hasattr(self.live, "pending_validation_generations"):
+            for previous in self.live.pending_validation_generations():
+                try:
+                    self.durable.archive_global_validation_generation(previous)
+                    self.live.acknowledge_validation_generation(previous["_pending_id"])
+                except Exception:
+                    logging.exception("Validation history checkpoint deferred; Redis retains the generation")
+
+        # Preserve the legacy task-scoped ledger for provenance/backward compatibility.
+        if self.durable and hasattr(self.durable, "record_validations"):
+            self.durable.record_validations(job.task_id, job.step_id, items)
+        if hasattr(self.live, "record_validations"):
+            self.live.record_validations(job.task_id, job.step_id, items)
+
+        if self.durable and live_saved and hasattr(self.durable, "upsert_global_validation"):
+            now = _utc_now()
+            for record in live_saved:
+                previous = record.get("_previous_generation")
+                if previous and hasattr(self.durable, "archive_global_validation_generation"):
+                    try:
+                        self.durable.archive_global_validation_generation(previous)
+                    except Exception:
+                        logging.exception("Could not archive validation generation subject=%s", record.get("subject"))
+                prior_snapshot = durable_by.get(str(record.get("subject")))
+                snapshot_at = self._parse_iso_timestamp((prior_snapshot or {}).get("snapshot_at"))
+                due = (
+                    prior_snapshot is None
+                    or bool(record.get("value_changed"))
+                    or str((prior_snapshot or {}).get("current_value")) != str(record.get("value"))
+                    or self._parse_iso_timestamp((prior_snapshot or {}).get("generation_started_at")) != self._parse_iso_timestamp(record.get("generation_started_at"))
+                    or snapshot_at is None
+                    or (now - snapshot_at).total_seconds() >= snapshot_interval
+                )
+                if due:
+                    try:
+                        saved = self.durable.upsert_global_validation(record)
+                        durable_by[str(record.get("subject"))] = saved
+                    except Exception:
+                        logging.exception("Could not checkpoint global validation subject=%s", record.get("subject"))
+        return live_saved
 
     def _execute_validation_tool(self, job: PromptJob, name: str, arguments: dict) -> dict:
         cfg = self._validation_pool_config()
         if not bool(cfg.get("enabled", True)):
             return {"ok": False, "tool": name, "error": "validation pool is disabled"}
-        threshold = int(cfg.get("reuse_after_checks", 3))
+        threshold = max(1, int(cfg.get("reuse_after_checks", 3)))
+        hours = max(1, int(cfg.get("recent_window_seconds", 86400)) // 3600)
+        snapshot_hours = max(1, int(cfg.get("durable_snapshot_interval_seconds", 43200)) // 3600)
         if name == "review_validations":
             subjects = [str(x).strip() for x in (arguments.get("subjects") or []) if str(x).strip()]
             rows = self._recent_validations(job, subjects)
             by_subject = {str(row.get("subject")): row for row in rows}
-            reviewed=[]
+            reviewed = []
             for subject in subjects:
-                row=by_subject.get(subject)
+                row = by_subject.get(subject)
                 if not row:
-                    reviewed.append({"subject":subject,"recommendation":"validate","reason":"no recent validation"}); continue
-                checks=int(row.get("check_count") or 0); contradictions=int(row.get("contradiction_count") or 0)
-                recommendation="reuse" if checks >= threshold and contradictions == 0 else "validate"
-                reviewed.append({**row,"recommendation":recommendation,"reason":("recent consistent checks make another casual read low-value" if recommendation=="reuse" else "insufficient or contradictory recent validation")})
-            return {"ok": True, "tool": name, "reviewed": reviewed}
+                    reviewed.append({
+                        "subject": subject,
+                        "recommendation": "check_if_useful",
+                        "reason": "not present in the live recent checklist or durable current checklist",
+                    })
+                    continue
+                recent = int(row.get("recent_checks") or 0)
+                storage = str(row.get("storage") or "")
+                if storage == "postgres_snapshot" and recent == 0:
+                    recommendation = "reuse_or_check_freshness"
+                    reason = (
+                        f"durable checklist entry found; live recent count is unknown. PostgreSQL snapshots "
+                        f"are due after {snapshot_hours}h on the next observation and may lag longer during inactivity or outages; "
+                        "decide based on whether the fact could have changed"
+                    )
+                elif recent >= threshold:
+                    recommendation = "consider_reuse"
+                    reason = f"checked {recent} times in the live {hours}h window; another check is still allowed whenever useful"
+                else:
+                    recommendation = "check_or_reuse"
+                    reason = "recent evidence exists but repetition pressure is low; decide based on volatility and task needs"
+                reviewed.append({**row, "recommendation": recommendation, "reason": reason})
+            return {
+                "ok": True, "tool": name, "reviewed": reviewed,
+                "policy": "advisory only; no validation count blocks another check",
+            }
         if name == "record_validations":
-            items=[dict(x) for x in (arguments.get("items") or []) if isinstance(x,dict)]
+            items = [dict(x) for x in (arguments.get("items") or []) if isinstance(x, dict)]
             if not items:
                 return {"ok": False, "tool": name, "error": "items must not be empty"}
-            durable_saved=[]; live_saved=[]
-            if self.durable and hasattr(self.durable,"record_validations"):
-                durable_saved=self.durable.record_validations(job.task_id,job.step_id,items)
-            if hasattr(self.live,"record_validations"):
-                live_saved=self.live.record_validations(job.task_id,job.step_id,items)
-            return {"ok": True, "tool": name, "recorded": durable_saved or live_saved, "count": len(durable_saved or live_saved)}
+            recorded = self._record_global_validations(job, items)
+            return {
+                "ok": True, "tool": name, "recorded": recorded, "count": len(recorded),
+                "policy": "same value continues the generation; a changed value starts a new generation at one",
+            }
         return {"ok": False, "tool": name, "error": "unknown validation-pool tool"}
 
     def _run_tool_slice(self, job: PromptJob, prompt: str, tools) -> dict:
@@ -2436,13 +2649,16 @@ class PromptWorker:
 
         step_limit, task_limit = self._slice_limits()
         task_rounds = self.queue.task_rounds(job.task_id)
-        validation_context = self._validation_context(job)
+        # The shared Redis verification pool is refreshed immediately before each
+        # model/tool-decision round below; avoid an extra stale read here.
+        validation_context = ""
         validation_instructions = (
-            "VALIDATION POOL RULES:\n"
-            "- Skepticism is good, but repeated checks add little information. Before re-checking facts that may already be established, batch them through review_validations.\n"
-            "- A recommendation to reuse is advisory, not an absolute block: override it only when you have a concrete reason or contrary evidence.\n"
-            "- After establishing material semantic facts, batch-record them with record_validations immediately.\n"
-            "- Re-check things that were actually mutated or are genuinely volatile; do not repeatedly reacquire an unchanged local fact merely for reassurance.\n"
+            "VALIDATION CHECKLIST RULES:\n"
+            "- This is context, not a permission system. You may always check again when you judge it useful; no count is a hard ceiling.\n"
+            "- There is one shared semantic verification pool across tasks and tools. Redis is the live checklist and owns rolling recent counts/current generation counts. PostgreSQL is the compact durable checklist and repetitive same-value counts may lag Redis until the periodic snapshot; that difference is expected, not a contradiction.\n"
+            "- Before re-checking a fact, inspect the recent checklist below. If the fact is absent and an older/static fact may still be useful, call review_validations for the subject; it searches the durable checklist too.\n"
+            "- After establishing material semantic facts, batch-record them with record_validations. Same-value confirmations continue the current generation; observing a different value automatically starts a new generation at count 1 and resets its generation start time.\n"
+            "- Prefer existing consistent evidence when another read adds little information, but re-check volatile or actually changed things whenever appropriate.\n"
         )
         tool_prompt = tools.instructions() + "\n\n" + validation_instructions + "\n" + validation_context + "\n\n" + prompt
         messages: list[dict] = [{"role": "user", "content": tool_prompt}]
@@ -2480,6 +2696,13 @@ class PromptWorker:
                     "task_rounds": task_rounds,
                     "evidence": evidence,
                 }
+            # Refresh the one shared Redis verification pool before every model/tool
+            # decision round so repeated checks performed earlier in this same step
+            # immediately influence whether another lookup is worth doing.
+            messages[0]["content"] = (
+                tools.instructions() + "\n\n" + validation_instructions + "\n"
+                + self._validation_context(job) + "\n\n" + prompt
+            )
             response = self.client.chat_with_tools(
                 messages,
                 tools.schemas() + self._validation_tool_schemas(),
@@ -2629,7 +2852,7 @@ class PromptWorker:
                 if result.get("ok"):
                     observed_path = str(result.get("path") or "")
                     observed_hash = str(result.get("sha256") or "")
-                    if name in {"write_file", "replace_text"} and observed_path and observed_hash:
+                    if (name in {"write_file", "replace_text"} or result.get("file_mutation")) and observed_path and observed_hash:
                         pending_verification[observed_path] = observed_hash
                     elif name == "read_file" and observed_path and observed_hash:
                         if pending_verification.get(observed_path) == observed_hash:
@@ -2716,7 +2939,7 @@ class PromptWorker:
             compact_result = {}
             if isinstance(result, dict):
                 for key in (
-                    "ok", "path", "paths", "sha256", "created", "error", "staged", "staged_path", "note_path",
+                    "ok", "path", "paths", "sha256", "file_mutation", "created", "error", "staged", "staged_path", "note_path",
                     "attempts", "answer", "content", "text", "summary", "analysis", "observations", "data", "items",
                     "image_count", "output_dir", "analysis_json", "geometry_overlay", "horizontal_consensus", "profile",
                     "device", "width", "height", "reconstruction_similarity", "artifact_fraction", "resource_status", "storage_context",

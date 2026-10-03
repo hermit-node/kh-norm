@@ -31,8 +31,8 @@ Download or clone the repository and keep the installer and portable source pack
 ```text
 Norm-Installer.py
 Run-Norm-Installer.bat
-Norm-0.53.9-portable-source.zip
-Norm-0.53.9-portable-source.zip.sha256
+Norm-0.53.11-portable-source.zip
+Norm-0.53.11-portable-source.zip.sha256
 ```
 
 Then run:
@@ -77,26 +77,24 @@ The runtime coordinates these pieces and exposes tools to the model through a co
 
 ## Plugins
 
-Norm's plugin system is deliberately simple: Python files placed in the configured `plugins` directory are discovered and exposed as native tools.
+Norm's plugin system is deliberately simple and hot-swappable. Each schema-2 plugin is a folder containing root metadata plus executable source:
 
 ```text
-C:\Norm\plugins\
+C:\Norm\plugins\example\
+├─ plugin.json
+├─ README.md
+└─ src\
+   ├─ main.py
+   └─ ...helpers
 ```
 
-Public functions in plugin modules become callable tools. Plugins are rescanned automatically and can be updated without rebuilding `norm.exe`.
+`plugin.json` declares the plugin's name, version, release date, injection point (normally `src/main.py`), and one SHA-256 covering the complete deterministic `src/` tree. If the recalculated source SHA still matches, Norm treats it as the same code build; metadata-only edits do not force a code reload.
 
-If a plugin update fails to load, Norm keeps the last known-good version active.
+Public functions in the declared entrypoint become callable native tools. Helper modules under `src/` remain implementation details. Norm scans the actual plugin folders at startup and generates `plugins/.registry.json`; that registry is disposable local state, is ignored by Git, and is not package authority. Later tool-schema/dispatch access rescans for hot swaps. If changed code fails verification or import, Norm keeps the last known-good version active when available.
 
-The public distribution currently includes plugins for:
+The public distribution currently includes plugins for backup/recovery, bounded file reads, PostgreSQL pooling, exact/verbatim editing, PDF/document vision parsing, paired-image and key-based steganography, soft delete/restore, and rotor-based text encoding.
 
-* backup and recovery
-* exact/verbatim file editing
-* PDF and document vision parsing
-* paired-image steganography
-* key-based steganography
-* rotor-based text encoding
-
-The plugin directory is also intended for user-created capabilities.
+The plugin directory is also intended for user-created capabilities. Installer updates manage the known built-ins independently so unrelated local plugin folders survive normal upgrades.
 
 ## Memory
 

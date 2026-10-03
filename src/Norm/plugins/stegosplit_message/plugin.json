@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "name": "stegosplit_message",
+  "version": "0.3.0",
+  "date": "2026-10-02",
+  "entrypoint": "src/main.py",
+  "description": "StegoSplit V2 paired-image carrier for arbitrary text/bytes; cipher layers are separate plugins.",
+  "capabilities": [
+    "steganography",
+    "embed hidden message in image pair",
+    "extract hidden message from image pair",
+    "paired differential image encoding",
+    "rotate stegosplit password",
+    "reconstruct stegosplit cover",
+    "inspect stegosplit pair"
+  ],
+  "sha256": "51d993225512c775b5117fd53a0e3b199799e454cffa8e117f5a67dabf89def7"
+}

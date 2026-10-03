@@ -176,8 +176,7 @@ def _source_backup(cfg: configparser.ConfigParser, *, label: str, validate_only:
 
 def _full_backup(cfg: configparser.ConfigParser, *, label: str, validate_only: bool) -> dict:
     # Full backups need live network/secrets only here; source backups deliberately do not.
-    from runtime_bootstrap import load_config
-    from psycopg.conninfo import conninfo_to_dict
+    from runtime_bootstrap import build_postgres_pool, load_config
 
     paths = load_path_settings(ROOT)
     plugins = load_plugin_settings(ROOT)
@@ -190,8 +189,7 @@ def _full_backup(cfg: configparser.ConfigParser, *, label: str, validate_only: b
     pg_dump = expand_path(cfg.get("backup", "postgres_dump_executable"))
     pg_restore = expand_path(cfg.get("backup", "postgres_restore_executable"))
     schema = str(resolved["postgres"].get("schema") or cfg.get("backup", "postgres_schema", fallback="norm_runtime"))
-    conninfo = str(resolved["postgres"]["conninfo"])
-    conn_parts = conninfo_to_dict(conninfo)
+    conn_parts = build_postgres_pool(ROOT).connection_parameters("norm", include_password=True)
     secrets_file = expand_path(cfg.get("environment", "secrets_file"))
     runtime_excludes = split_dirs(cfg.get("backup_policy", "runtime_exclude_dirs", fallback=""))
     workspace_excludes = split_dirs(cfg.get("backup_policy", "workspace_exclude_dirs", fallback=""))

@@ -1,10 +1,21 @@
 # Norm current status
 
-Updated 2026-10-01 for the clean **0.53.9** portable source line.
+Updated 2026-10-02 for the **0.53.11 maintenance source**; Installer **1.6.5-unified** remains unchanged. Live installation and installer payload are not promoted by this checkpoint.
+
+## Implemented and verified in maintenance source
+
+- Shared advisory validation generations, a rolling 24-hour window, bounded context, optimistic Redis concurrency protection, compact PostgreSQL snapshots/history, retryable completed-generation history, and live/durable count wording.
+- Evidence-backed no-op recovery units; unchanged recovery handoff; deterministic read-after-write verification including exact-writer plugin mutation results.
+- Nine per-plugin READMEs and explicit identity/checksum files; runtime and diagnostic verification; failed candidate reload keeps the loaded version.
+- Regression and isolated Redis/PostgreSQL test evidence: [MAINTENANCE_VERIFICATION.md](MAINTENANCE_VERIFICATION.md). Operator semantics and plugin index: [README.md](README.md).
+
+## Not promoted or claimed
+
+The live executable, installer embedded source payload, and public GitHub worktree have not been updated by this maintenance checkpoint. Frozen-runtime/installer acceptance and live deployment remain separate work. No version bump is required by these source changes.
 
 ## Source/layout
 
-- Version: **0.53.9**.
+- Version: **0.53.11**.
 - Runtime root: `C:\Norm` (relocatable by installer); the installed absolute path is written to `config\settings.ini` `[paths].runtime_root`.
 - Runtime source/executable directory: `core\`; compiled executable target is `core\norm.exe`.
 - Maintained docs: `C:\Norm\docs`.
@@ -15,17 +26,7 @@ Updated 2026-10-01 for the clean **0.53.9** portable source line.
 - Disposable/recovery root: `%USERPROFILE%\Documents\Norm\temp`.
 - `.venv` is generated/reusable and is intentionally omitted from source and full backup ZIPs.
 
-
-## 0.53.9 operator network map and public configuration split
-
-- `/network-map` and `/network-map --json` are synchronous operator commands handled before normal DB3 prompt ingress; they do not become queued Norm tasks.
-- Tailscale inventory is passive. Discovered peers never widen the active-probe set.
-- Active probes are limited to exact targets in `config\\network-map.json`; never-probe name patterns and CIDRs are rechecked before network I/O.
-- Hostname targets are resolved before probing and every resolved address is checked against the never-probe CIDR set. HTTP probes are pinned to an approved resolved address and do not follow redirects.
-- The public installer/source ships topology-neutral defaults. Deployment-specific non-secret values live in `norm-imprint.local.json`; secrets remain outside the imprint.
-- The merged 0.53.8 plugin/reliability baseline is preserved, including `vision_parse`, PyMuPDF 1.28.2, the Ollama degeneration watchdog, and suppression handoff cleanup.
-
-## 0.53.8 mixed-turn context routing and unresolved bits
+## 0.53.9 mixed-turn context routing and unresolved bits
 
 - The full user turn is still stored verbatim, but planning now operates on a separately preserved **primary task request**. Meaningful side information is typed as an **Ingrained Detail** instead of being silently discarded or misrepresented as another execution step.
 - Confident details go directly to an existing durable final home: fact/terminology/correction, preference, decision, reusable constraint, future task/backlog item, assumption, or task-local context. Corrections can supersede an explicitly matched active memory.
@@ -62,10 +63,10 @@ Terminal cleanup is lineage-aware. Task-local image-analysis variants and other 
 
 ## Built-in capabilities and plugin hydration
 
-First-party package-managed plugin subtrees are `plugins\backup`, `plugins\verbatim_lines`, `plugins\stegosplit_key`, `plugins\stegosplit_message`, `plugins\rotor5_cipher`, and `plugins\vision_parse`. User-added plugin folders remain persistent and are not deleted by normal base updates. The StegoSplit key and message sources are bundled privately inside their plugin folders, eliminating the old editable-install dependency. Rotor5 is now a separate first-party plugin rather than being embedded in the StegoSplit message codec.
+First-party package-managed plugin subtrees are `plugins\\backup`, `plugins\\verbatim_lines`, `plugins\\stegosplit_key`, `plugins\\stegosplit_message`, `plugins\\rotor5_cipher`, `plugins\\vision_parse`, `plugins\\file_read`, `plugins\\soft_delete`, and `plugins\\postgres_pool`. User-added plugin folders remain persistent and are not deleted by normal base updates. The StegoSplit key and message sources are bundled privately inside their plugin folders, eliminating the old editable-install dependency. Rotor5 is now a separate first-party plugin rather than being embedded in the StegoSplit message codec.
 
 
-`cryptography 50.0.2` is the locked runtime/build dependency and the PyInstaller build explicitly collects cryptography/cffi so ChaCha20-Poly1305 remains available inside the frozen `norm.exe` plugin host.
+`cryptography 50.0.2` and `psycopg-pool 3.3.3` are locked runtime/build dependencies and the PyInstaller build explicitly collects cryptography/cffi so ChaCha20-Poly1305 remains available inside the frozen `norm.exe` plugin host.
 
 Plugins are first-class native tools. Norm rescans the plugin tree before schema use and dispatch, supports multi-file/sibling imports, hot-reloads changed code without an executable rebuild, and keeps the last-known-good loaded capability when a new edit fails to import. The legacy `tools\norm_plugins.py` remains a diagnostic/manual broker.
 
@@ -91,7 +92,9 @@ Portable base/source ZIPs remain secrets-free and safe to treat separately from 
 
 ## Installer behavior
 
-The reusable installer performs an in-place managed sync. Changed package files are replaced and package-owned files no longer present are removed. Persistent local directories (`.venv`, `.ssh`, plugins, logs/state) survive normal base updates. Existing compatible venvs are reused. Recommended Installer 1.4.16 binds one exact source payload by filename and SHA-256 and can build a derived payload from locked or newest eligible stable/RC dependency versions. Alpha, beta, and dev releases are excluded. Full-backup packages additionally restore their private state payload.
+The reusable installer performs an in-place managed sync. Changed package files are replaced and package-owned files no longer present are removed. Persistent local directories (`.venv`, `.ssh`, plugins, logs/state) survive normal base updates. Existing compatible venvs are reused. Recommended Installer 1.6.5 binds one exact source payload by filename and SHA-256 and can build a derived payload from locked or newest eligible stable/RC dependency versions. Alpha, beta, and dev releases are excluded. Full-backup packages additionally restore their private state payload.
+
+Installer 1.6.5 additionally snapshots existing configuration before synchronization, migrates legacy PostgreSQL identity to normal settings, pre-fills environment values from the installation before imprint/defaults, and retains secrets in masked fields. Successful installs persist non-secret choices to the private local imprint; the public example stays generic. The Environment connection check uses only configured endpoints. These are recovered installer-source features, not newly tested installer UI claims.
 
 ## Current validation boundary
 
@@ -135,7 +138,7 @@ The Windows launcher now starts `norm.exe --service`. Service mode ignores and l
 
 ## 0.53.1 aiohttp transport
 
-Chat and activity/control HTTP are served by pinned aiohttp 3.14.3 on dedicated asyncio loops. Existing coordinator lifecycle semantics remain compatible; blocking runtime callbacks are offloaded with asyncio.to_thread. SSE disconnects are benign transport events.
+Chat and activity/control HTTP are served by pinned aiohttp 3.14.3 on dedicated asyncio loops; on Windows those socket-only server threads explicitly use SelectorEventLoop to avoid Proactor accept-loop listener loss. Existing coordinator lifecycle semantics remain compatible; blocking runtime callbacks are offloaded with asyncio.to_thread. SSE disconnects are benign transport events.
 
 ### 2026-09-30 same-version startup cleanup correction
 - `core\norm_runtime\prompt_worker.py` imports `pathlib.Path` at module scope. Startup temp cleanup and verified terminal task-temp cleanup therefore execute the existing 0.53.7 retention policy instead of failing with `NameError` and preserving all temp material.

@@ -378,7 +378,7 @@ def _probe_http(url: str, timeout_seconds: float, config: dict[str, Any]) -> dic
             "GET",
             path,
             headers={
-                "User-Agent": "Norm-Network-Map/0.53.9",
+                "User-Agent": "Norm-Network-Map/0.53.11",
                 "Host": host_header,
                 "Connection": "close",
             },

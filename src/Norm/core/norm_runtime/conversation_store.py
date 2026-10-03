@@ -3,10 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 import uuid
-from contextlib import contextmanager
-from typing import Iterator
 
-import psycopg
 from psycopg import sql
 
 from .integrity_repair import repair_memory_threads_cur
@@ -15,18 +12,17 @@ _MEMORY_TYPES = {"fact", "preference", "decision", "constraint", "task", "assump
 
 
 class ConversationStore:
-    def __init__(self, conninfo: str, schema: str = "norm_runtime") -> None:
-        if not conninfo:
-            raise ValueError("An explicit PostgreSQL connection string is required")
+    def __init__(self, pool, schema: str = "norm_runtime", connection_name: str = "norm") -> None:
+        if pool is None or not hasattr(pool, "connection"):
+            raise ValueError("ConversationStore requires the configured postgres_pool tool")
         if not _SCHEMA_RE.fullmatch(schema):
             raise ValueError("Unsafe PostgreSQL schema name")
-        self.conninfo = conninfo
+        self.pool = pool
+        self.connection_name = str(connection_name or "norm")
         self.schema = schema
 
-    @contextmanager
-    def _connect(self) -> Iterator[psycopg.Connection]:
-        with psycopg.connect(self.conninfo) as conn:
-            yield conn
+    def _connect(self):
+        return self.pool.connection(self.connection_name)
 
     def ensure_schema(self) -> None:
         with self._connect() as conn, conn.cursor() as cur:

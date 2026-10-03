@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "name": "vision_parse",
+  "version": "0.1.0",
+  "date": "2026-10-02",
+  "entrypoint": "src/main.py",
+  "description": "Read PDF pages with rendered-page local AI vision while treating the PDF text layer only as an untrusted hint.",
+  "capabilities": [
+    "PDF vision parsing",
+    "PDF transcription",
+    "text-layer reconciliation"
+  ],
+  "sha256": "31a6d23a3dc1716a0c505423c9b5120512d2f69105072f511e1812003b4483cd"
+}
