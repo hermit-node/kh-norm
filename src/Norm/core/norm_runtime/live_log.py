@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import uuid
 from .secret_redaction import redact
 from datetime import datetime, timezone
 from typing import Any
@@ -13,9 +15,10 @@ def _now() -> str:
 
 
 class RedisTaskLog:
-    def __init__(self, client: redis.Redis, prefix: str = "norm:task") -> None:
+    def __init__(self, client: redis.Redis, prefix: str = "norm:task", validation_prefix: str = "norm:validation") -> None:
         self.client = client
         self.prefix = prefix.rstrip(":")
+        self.validation_prefix = validation_prefix.rstrip(":")
 
     @classmethod
     def localhost(cls, db: int = 0) -> "RedisTaskLog":
@@ -31,6 +34,16 @@ class RedisTaskLog:
 
     def _validation_key(self, task_id: str) -> str:
         return f"{self.prefix}:{task_id}:validations"
+
+    def _global_validation_key(self) -> str:
+        return f"{self.validation_prefix}:facts"
+
+    def _global_validation_recent_index_key(self) -> str:
+        return f"{self.validation_prefix}:recent"
+
+    def _global_validation_observation_key(self, subject: str) -> str:
+        digest = hashlib.sha256(subject.encode("utf-8")).hexdigest()[:32]
+        return f"{self.validation_prefix}:observations:{digest}"
 
     def _model_buffer_key(self, task_id: str, step_id: str) -> str:
         return f"{self.prefix}:{task_id}:model-buffer:{step_id}"
@@ -128,7 +141,7 @@ class RedisTaskLog:
         compact = []
         arg_keys = ("path", "paths", "expected_sha256", "profile")
         result_keys = (
-            "ok", "path", "paths", "sha256", "created", "error", "staged", "staged_path", "note_path",
+            "ok", "path", "paths", "sha256", "file_mutation", "created", "error", "staged", "staged_path", "note_path",
             "attempts", "answer", "content", "text", "summary", "analysis", "observations", "data", "items",
             "image_count", "output_dir", "analysis_json", "geometry_overlay", "horizontal_consensus", "profile",
             "device", "width", "height", "reconstruction_similarity", "artifact_fraction", "resource_status", "storage_context"
@@ -222,6 +235,159 @@ class RedisTaskLog:
             if isinstance(record,dict): rows.append(record)
         rows.sort(key=lambda x:str(x.get("last_checked_at") or ""),reverse=True)
         return rows[:max(1,int(limit))]
+
+    def seed_global_validation(self, record: dict) -> bool:
+        """Seed Redis from a durable PostgreSQL snapshot only when no live fact exists."""
+        subject = str(record.get("subject") or "").strip()
+        value = str(record.get("current_value") or record.get("value") or "").strip()
+        if not subject or not value:
+            return False
+        payload = {
+            "subject": subject,
+            "value": value,
+            "generation_checks": int(record.get("generation_check_count") or record.get("generation_checks") or 1),
+            "generation_started_at": str(record.get("generation_started_at") or record.get("first_checked_at") or _now()),
+            "last_checked_at": str(record.get("last_checked_at") or _now()),
+            "source_counts": dict(record.get("source_counts") or {}),
+            "last_task_id": str(record.get("last_task_id") or ""),
+            "last_step_id": str(record.get("last_step_id") or ""),
+            "note": str(record.get("last_note") or record.get("note") or ""),
+        }
+        created = bool(self.client.hsetnx(self._global_validation_key(), subject, json.dumps(payload, ensure_ascii=False, sort_keys=True)))
+        if created:
+            try:
+                score = datetime.fromisoformat(payload["last_checked_at"]).timestamp()
+            except Exception:
+                score = datetime.now(timezone.utc).timestamp()
+            self.client.zadd(self._global_validation_recent_index_key(), {subject: score}, gt=True)
+        return created
+
+    def pending_validation_generations(self, limit: int = 64) -> list[dict]:
+        rows = []
+        for key, raw in self.client.hscan_iter(self.validation_prefix + ":pending-generations"):
+            row = json.loads(raw)
+            row["_pending_id"] = key
+            rows.append(row)
+            if len(rows) >= limit:
+                break
+        return rows
+
+    def acknowledge_validation_generation(self, pending_id: str) -> None:
+        self.client.hdel(self.validation_prefix + ":pending-generations", pending_id)
+
+    def global_validation(self, subject: str, *, recent_window_seconds: int = 86400, retention_seconds: int = 604800) -> dict | None:
+        subject = str(subject or "").strip()
+        if not subject:
+            return None
+        raw = self.client.hget(self._global_validation_key(), subject)
+        if not raw:
+            return None
+        try:
+            record = json.loads(raw)
+        except Exception:
+            return None
+        if not isinstance(record, dict):
+            return None
+        now_ts = datetime.now(timezone.utc).timestamp()
+        obs_key = self._global_validation_observation_key(subject)
+        self.client.zremrangebyscore(obs_key, 0, now_ts - max(1, int(retention_seconds)))
+        record["recent_checks"] = int(self.client.zcount(obs_key, now_ts - max(1, int(recent_window_seconds)), "+inf"))
+        record["retained_observations"] = int(self.client.zcard(obs_key))
+        record["storage"] = "redis_live"
+        return record
+
+    def recent_global_validations(self, *, recent_window_seconds: int = 86400, retention_seconds: int = 604800, limit: int = 64) -> list[dict]:
+        cutoff = datetime.now(timezone.utc).timestamp() - max(1, int(recent_window_seconds))
+        subjects = self.client.zrevrange(self._global_validation_recent_index_key(), 0, max(0, int(limit) * 4 - 1), withscores=True)
+        rows: list[dict] = []
+        for subject, score in subjects:
+            if float(score) < cutoff:
+                break
+            row = self.global_validation(str(subject), recent_window_seconds=recent_window_seconds, retention_seconds=retention_seconds)
+            if not row or int(row.get("recent_checks") or 0) <= 0:
+                continue
+            rows.append(row)
+            if len(rows) >= max(1, int(limit)):
+                break
+        return rows
+
+    def record_global_validations(self, task_id: str, step_id: str, items: list[dict], *, recent_window_seconds: int = 86400, retention_seconds: int = 604800) -> list[dict]:
+        """Record live shared validation generations and rolling observations."""
+        saved: list[dict] = []
+        facts_key = self._global_validation_key()
+        index_key = self._global_validation_recent_index_key()
+        now_dt = datetime.now(timezone.utc)
+        now_iso = now_dt.isoformat()
+        now_ts = now_dt.timestamp()
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            subject = str(item.get("subject") or "").strip()[:500]
+            value = str(item.get("value") or "").strip()[:4000]
+            source = str(item.get("source") or "unspecified").strip()[:500] or "unspecified"
+            note = str(item.get("note") or "").strip()[:2000]
+            if not subject or not value:
+                continue
+            for attempt in range(32):
+                try:
+                    with self.client.pipeline(transaction=True) as pipe:
+                        pipe.watch(facts_key)
+                        now_dt = datetime.now(timezone.utc)
+                        now_iso = now_dt.isoformat()
+                        now_ts = now_dt.timestamp()
+                        raw = pipe.hget(facts_key, subject)
+                        prior = {}
+                        if raw:
+                            try:
+                                prior = json.loads(raw)
+                            except Exception:
+                                prior = {}
+                        same_generation = bool(prior) and str(prior.get("value") or "") == value
+                        value_changed = bool(prior) and not same_generation
+                        generation_checks = int(prior.get("generation_checks") or 0) + 1 if same_generation else 1
+                        generation_started_at = str(prior.get("generation_started_at") or now_iso) if same_generation else now_iso
+                        source_counts = dict(prior.get("source_counts") or {}) if same_generation else {}
+                        source_counts[source] = int(source_counts.get(source) or 0) + 1
+                        record = {
+                            "subject": subject, "value": value, "generation_checks": generation_checks,
+                            "generation_started_at": generation_started_at, "last_checked_at": now_iso,
+                            "source_counts": source_counts, "last_task_id": str(task_id), "last_step_id": str(step_id), "note": note,
+                        }
+                        obs = {"id": uuid.uuid4().hex, "at": now_iso, "value": value, "source": source, "task_id": str(task_id), "step_id": str(step_id)}
+                        obs_key = self._global_validation_observation_key(subject)
+                        pipe.multi()
+                        if value_changed:
+                            # Retain a compact completed generation until PostgreSQL accepts it.
+                            pending_id = hashlib.sha256((subject + "|" + str(prior.get("generation_started_at"))).encode()).hexdigest()
+                            pipe.hset(self.validation_prefix + ":pending-generations", pending_id, json.dumps(prior, ensure_ascii=False))
+                            pipe.delete(obs_key)
+                        pipe.hset(facts_key, subject, json.dumps(record, ensure_ascii=False, sort_keys=True))
+                        pipe.zadd(index_key, {subject: now_ts})
+                        pipe.zadd(obs_key, {json.dumps(obs, ensure_ascii=False, sort_keys=True): now_ts})
+                        pipe.zremrangebyscore(obs_key, 0, now_ts - max(1, int(retention_seconds)))
+                        pipe.zcount(obs_key, now_ts - max(1, int(recent_window_seconds)), "+inf")
+                        pipe.zcard(obs_key)
+                        results = pipe.execute()
+                        record["recent_checks"] = int(results[-2])
+                        record["retained_observations"] = int(results[-1])
+                        record["storage"] = "redis_live"
+                        record["value_changed"] = value_changed
+                        if record["value_changed"]:
+                            record["_previous_generation"] = {
+                                "subject": subject, "value": str(prior.get("value") or ""),
+                                "generation_checks": int(prior.get("generation_checks") or 0),
+                                "generation_started_at": str(prior.get("generation_started_at") or ""),
+                                "last_checked_at": str(prior.get("last_checked_at") or now_iso),
+                                "source_counts": dict(prior.get("source_counts") or {}),
+                                "last_task_id": str(prior.get("last_task_id") or ""),
+                                "last_step_id": str(prior.get("last_step_id") or ""), "note": str(prior.get("note") or ""),
+                            }
+                        saved.append(record)
+                    break
+                except redis.WatchError:
+                    if attempt == 31:
+                        raise
+        return saved
 
     def cleanup(self, task_id: str) -> None:
         keys = [self._state_key(task_id), self._stream_key(task_id), self._validation_key(task_id)]

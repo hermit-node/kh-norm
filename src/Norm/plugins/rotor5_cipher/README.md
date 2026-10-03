@@ -41,3 +41,7 @@ If no live secret is configured, Rotor5 remains password-only. Adding a live sec
 - `run(payload)` legacy action wrapper
 
 Envelope: `R5E2`, plugin version `0.1.0`.
+
+## Package identity
+
+`plugin.json` schema 2 records this plugin's name, version, release date, `src/main.py` injection point, and one SHA-256 for the complete `src/` tree. Norm recalculates that tree hash before loading the plugin. README changes do not change the code SHA; edits or renames anywhere under `src/` do.

@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "name": "Norm Backup",
+  "version": "1.1.0",
+  "date": "2026-10-02",
+  "entrypoint": "src/main.py",
+  "description": "Create installer-compatible source backups or sensitive full-state backups without archiving the reproducible .venv.",
+  "capabilities": [
+    "backup",
+    "portable source backup",
+    "full disaster recovery",
+    "installer package",
+    "postgres backup"
+  ],
+  "sha256": "5c634219e4a3fb6b60cf00ae71b3b5ba64f5579cf2382a7a2b64d7ffd531f540"
+}

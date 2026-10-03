@@ -10,7 +10,6 @@ from datetime import datetime
 from urllib import request
 from urllib.parse import quote
 
-import psycopg
 from psycopg import sql
 
 from prompt_toolkit import PromptSession
@@ -30,6 +29,7 @@ from norm_gui_common import (
     load_runtime_config,
 )
 from norm_runtime.about import format_about
+from runtime_bootstrap import build_postgres_pool
 
 
 PROJECT_ID = "default"
@@ -120,7 +120,7 @@ def load_last_turn_from_postgres() -> tuple[str | None, str | None, str | None]:
         "WHERE t.project_id=%s AND mt.is_primary AND m.role IN ('user','assistant') "
         "ORDER BY m.created_at DESC LIMIT 50"
     ).format(sql.Identifier(schema), sql.Identifier(schema), sql.Identifier(schema))
-    with psycopg.connect(pg["conninfo"]) as conn, conn.cursor() as cur:
+    with build_postgres_pool(ROOT).connection("norm") as conn, conn.cursor() as cur:
         cur.execute(query, (PROJECT_ID,))
         rows = cur.fetchall()
     last_submission = next((row[1] for row in rows if row[0] == "user"), None)

@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 from urllib import request as urlrequest
 
-import psycopg
 import redis as redis_lib
 
 from .secret_redaction import redact, is_secret_file
@@ -77,6 +76,7 @@ class FileToolExecutor:
         deletion_queue: RedisDeletionQueue | None = None,
         storage_config: dict[str, Any] | None = None,
         connection_config: dict[str, Any] | None = None,
+        postgres_pool: Any | None = None,
         shell_enabled: bool = False,
         shell_executable: str = "powershell.exe",
         shell_timeout_seconds: int = 120,
@@ -117,6 +117,7 @@ class FileToolExecutor:
         self.deletion_queue = deletion_queue
         self.storage = StorageContext(storage_config) if storage_config else None
         self.connection_config = dict(connection_config or {})
+        self.postgres_pool = postgres_pool
         self.authority_config = dict(self.connection_config.get("authority") or {})
         self.shell_enabled = bool(shell_enabled)
         self.shell_executable = str(shell_executable or "powershell.exe")
@@ -124,6 +125,11 @@ class FileToolExecutor:
         self.shell_max_output_chars = max(1000, int(shell_max_output_chars))
         self.verbatim_helper = Path(verbatim_helper).resolve() if verbatim_helper else None
         self.plugin_manager = PluginManager(plugin_root, plugin_registry_file) if plugin_root else None
+        if self.plugin_manager is not None:
+            # The plugin tree is authoritative. Build disposable registry state from the
+            # plugins actually present on this installation at startup; later schema/
+            # dispatch calls keep rescanning for hot swaps.
+            self.plugin_manager.refresh()
         self.task_storage = (
             TaskStorageManager(temp_root, workspace_root, task_storage_config)
             if temp_root and workspace_root else None
@@ -349,6 +355,9 @@ class FileToolExecutor:
                 result = method(arguments)
             elif self.plugin_manager is not None and self.plugin_manager.has_tool(name):
                 result = self.plugin_manager.execute(name, arguments)
+                payload = result.get("result")
+                if isinstance(payload, dict) and payload.get("file_mutation"):
+                    result.update({key: payload.get(key) for key in ("path", "sha256", "file_mutation")})
             else:
                 raise ValueError(f"unsupported tool: {name}; deletion is not available")
             result.update({"ok": True, "tool": name})
@@ -464,15 +473,10 @@ class FileToolExecutor:
                 return {"target": target, "configured": True, "queried": True, "responsive": False, "error": f"{type(exc).__name__}: {exc}"}
         cfg = self.connection_config
         if target == "postgres":
-            pg = cfg.get("postgres") or {}
-            conninfo = str(pg.get("conninfo") or "")
-            if not conninfo:
+            if self.postgres_pool is None:
                 return {"target": target, "configured": False, "queried": False, "responsive": False}
             try:
-                with psycopg.connect(conninfo, connect_timeout=3) as conn, conn.cursor() as cur:
-                    cur.execute("SELECT 1")
-                    cur.fetchone()
-                return {"target": target, "configured": True, "queried": True, "responsive": True}
+                return {"target": target, "configured": True, "queried": True, **self.postgres_pool.health("norm")}
             except Exception as exc:
                 return {"target": target, "configured": True, "queried": True, "responsive": False, "error": f"{type(exc).__name__}: {exc}"}
         if target in {"redis", "prompt_queue"}:

@@ -1,6 +1,7 @@
 pytest==9.1.1
 redis==8.1.0
 psycopg[binary]==3.3.5
+psycopg-pool==3.3.3
 aiohttp==3.14.3
 pillow==12.3.0
 cryptography==50.0.2

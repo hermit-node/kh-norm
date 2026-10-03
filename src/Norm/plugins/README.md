@@ -1,18 +1,13 @@
-# Norm plugins
+# Norm plugin index
 
-Each non-hidden direct subfolder is a hot-swappable plugin. Public functions defined in non-underscore `.py` files are exposed to Norm as namespaced native tools. Prefix implementation-only files or functions with `_` to keep them private.
+See [the maintained operator docs](../docs/README.md#plugin-operation-and-verification) for hydration, identity/checksums, reload behavior and installer persistence.
 
-`init.py` / `__init__.py` may contain literal metadata (`NAME`, `VERSION`, `CAPABILITIES`, `DESCRIPTION`, `ENTRYPOINT`) and `README.md` may describe the capability, but neither is required for native hydration.
-
-Plugin folders are persistent local state during normal installer upgrades. Package-shipped plugin files may be updated by a newer base, while unrelated local plugin folders are preserved. A full-backup restore intentionally restores the captured plugin tree.
-
-
-Built-in package-managed plugin folders:
-- `backup` — source/full installer-compatible backups.
-- `verbatim_lines` — exact UTF-8 append/insert plus private stdin CLI.
-- `stegosplit_key` — password/map-key protected 256-bit key pair prototype.
-- `stegosplit_message` — two-PNG UTF-8 message carrier.
-- `rotor5_cipher` — independent reversible message transform.
-- `vision_parse` — rendered-page PDF reading with local vision and text-layer reconciliation.
-
-These built-ins are synchronized by the installer; other plugin folders are local persistent state.
+- [backup](backup/README.md)
+- [file_read](file_read/README.md)
+- [postgres_pool](postgres_pool/README.md)
+- [rotor5_cipher](rotor5_cipher/README.md)
+- [soft_delete](soft_delete/README.md)
+- [stegosplit_key](stegosplit_key/README.md)
+- [stegosplit_message](stegosplit_message/README.md)
+- [verbatim_lines](verbatim_lines/README.md)
+- [vision_parse](vision_parse/README.md)

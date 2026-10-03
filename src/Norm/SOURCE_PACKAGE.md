@@ -1,22 +1,13 @@
-# Norm 0.53.9 portable source package
+# Norm 0.53.11 portable source package
 
-This archive is the clean source baseline for installing or rebuilding Norm.
+This tree is the Norm 0.53.11 maintenance source. See `docs/CURRENT_STATUS.md` and `docs/MAINTENANCE_VERIFICATION.md` for implemented work and the unpromoted deployment boundary.
 
 It intentionally contains **no `.venv` and no compiled `norm.exe`**. Those are generated during installation. The canonical source/executable directory is `core\`; the historical `app\` layout is no longer used.
 
-Machine-specific persistent data and secrets are external to this package. `config\\settings.ini` ships topology-neutral public defaults; the unified installer applies deployment-specific non-secret values from its Environment page or local imprint while runtime-owned paths remain relocatable.
+Machine-specific persistent data and secrets are external to this package. `config\settings.ini` retains the current Norm service topology while runtime-owned paths are relocatable.
 
 Use `package-manifest.json` as the installer's package contract.
-
-## 0.53.9 operator network map and public installer boundary
-
-`/network-map` and `/network-map --json` are synchronous operator commands. They collect passive Tailscale inventory and may perform only the exact active checks listed in `config\\network-map.json`. Passive discovery never authorizes probing. Never-probe name patterns and CIDRs are enforced before network I/O; resolved addresses are checked against forbidden CIDRs and HTTP checks do not follow redirects.
-
-The public source package contains no deployment-specific topology or secrets. Unified Installer 1.6.0 may load a local `norm-imprint.local.json` for non-secret host/port/path values, while passwords/tokens remain separate and are never written to the imprint.
-
-The 0.53.9 line carries forward the merged 0.53.8 reliability/plugin baseline, including `vision_parse`, PyMuPDF 1.28.2, the Ollama degeneration watchdog, and suppression handoff cleanup.
-
-## 0.53.8 Ingrained Details and unresolved bits
+## 0.53.9 Ingrained Details and unresolved bits
 
 Norm now interprets a mixed user turn into one actionable primary request plus optional **Ingrained Details** without altering the verbatim conversation message. Confident details are routed directly to existing durable homes (fact, preference, decision, constraint, task/backlog, assumption, or current-task context); only genuinely unplaced details enter PostgreSQL `unresolved_bits`. `unresolved_bit_trials` records later bounded attempts to fit those bits to real tasks. Promotion/application removes the temporary unresolved state; broad repeated irrelevance can garbage-collect a singly-mentioned bit after the configured trial/domain thresholds. Background-memory condensation sees unresolved state and aggregate trial evidence.
 
@@ -30,7 +21,7 @@ Task-local image-analysis derivatives now live under task temp storage and are t
 
 ## Dynamic plugins
 
-Norm automatically hydrates local plugins from the configured runtime `plugins\` directory. Public functions defined in non-hidden `.py` files become namespaced native tools and are rescanned/hot-reloaded without rebuilding `norm.exe`. Prefix helper files/functions with `_` to keep them private. Manifest `init.py`/`__init__.py` and `README.md` files remain supported as optional metadata. A failed plugin refresh leaves the last-known-good hydrated version active and records the error in `.registry.json`.
+Norm automatically hydrates local plugins from the configured runtime `plugins\` directory. Schema-2 plugins keep `plugin.json` and README metadata at the plugin root and executable code under `src/`; `plugin.json` declares the `src/main.py` injection point and one deterministic SHA-256 over the complete `src/` tree. Startup verifies those hashes, builds `plugins/.registry.json` from the folders actually present, and later schema/dispatch access rescans for hot swaps. The generated registry is disposable runtime state and is not shipped as package authority. Legacy third-party plugins using the older layout remain supported. A failed plugin refresh leaves the last-known-good hydrated version active and records the error in the generated registry.
 
 
 ## PostgreSQL integrity recovery
@@ -51,7 +42,7 @@ The first-party `plugins\backup` capability creates a **sensitive** installer-co
 
 `config\settings.ini` explicitly carries `paths.runtime_root`; portable media stores `.` and the installer rewrites the installed copy to its actual target (normally `C:\Norm`). Queued workers use the same resolved runtime configuration as the host, and optional image-analysis Python dependencies are validated only when image analysis is called.
 
-Package-managed built-in plugin subtrees are `plugins\backup`, `plugins\verbatim_lines`, `plugins\stegosplit_key`, `plugins\stegosplit_message`, `plugins\rotor5_cipher`, and `plugins\vision_parse`. Unrelated user plugins remain persistent across normal installer updates. The two StegoSplit plugins bundle their implementation rather than depending on an editable external checkout.
+Package-managed built-in plugin subtrees are `plugins\backup`, `plugins\verbatim_lines`, `plugins\stegosplit_key`, `plugins\stegosplit_message`, `plugins\rotor5_cipher`, `plugins\vision_parse`, `plugins\file_read`, and `plugins\soft_delete`. Unrelated user plugins remain persistent across normal installer updates. The two StegoSplit plugins bundle their implementation rather than depending on an editable external checkout.
 
 `/backup` creates portable/source installer media; `/backup full` creates the sensitive private-state format; `/backup-zip` is the legacy full-backup alias. `/memory-condense` performs a safe incremental background-memory snapshot refresh and `/memory-condense -full` rebuilds that snapshot from the full surviving source set without creating a user task. `/condense-memories` remains intentionally absent until the complete fail-closed curated-memory housekeeping policy is implemented.
 
@@ -82,7 +73,7 @@ Suppressed operator cleanup is two-layer: `/flush-suppressed` removes suppressed
 
 ## 0.53.1 aiohttp transport
 
-Chat and activity/control HTTP are served by pinned aiohttp 3.14.3 on dedicated asyncio loops. Existing coordinator lifecycle semantics remain compatible; blocking runtime callbacks are offloaded with asyncio.to_thread. SSE disconnects are benign transport events.
+Chat and activity/control HTTP are served by pinned aiohttp 3.14.3 on dedicated asyncio loops; on Windows those socket-only server threads explicitly use SelectorEventLoop to avoid Proactor accept-loop listener loss. Existing coordinator lifecycle semantics remain compatible; blocking runtime callbacks are offloaded with asyncio.to_thread. SSE disconnects are benign transport events.
 
 
 ## 0.53.6 recovery cleanup and prompt-origin enforcement

@@ -24,13 +24,13 @@ git config --global user.email "YOUR GITHUB EMAIL"
 After `main` is pushed:
 
 ```powershell
-git tag -a v0.53.9 -m "Norm 0.53.9 / Unified Installer 1.6.0"
-git push origin v0.53.9
+git tag -a v0.53.11 -m "Norm 0.53.11 / Unified Installer 1.6.5"
+git push origin v0.53.11
 ```
 
 ## GitHub Release
 
-GitHub CLI is optional. In the repository web UI choose **Releases → Draft a new release**, select `v0.53.9`, use `RELEASE.md` as the release notes, and attach:
+GitHub CLI is optional. In the repository web UI choose **Releases â†’ Draft a new release**, select `v0.53.11`, use `RELEASE.md` as the release notes, and attach:
 
-- `Norm-0.53.9-portable-source.zip`
-- `Norm-0.53.9-portable-source.zip.sha256`
+- `Norm-0.53.11-portable-source.zip`
+- `Norm-0.53.11-portable-source.zip.sha256`

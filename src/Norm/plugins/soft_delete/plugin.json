@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "name": "Norm Soft Delete",
+  "version": "1.0.0",
+  "date": "2026-10-02",
+  "entrypoint": "src/main.py",
+  "description": "Batch-oriented reversible trash management backed by Redis and one consolidated JSON checkpoint.",
+  "capabilities": [
+    "soft delete",
+    "trash list",
+    "restore delete",
+    "trash reconciliation",
+    "trash purge"
+  ],
+  "sha256": "69bd773ba7771115aa01d6a8d630c900cb6a369ed551369cda06a848fb7f4410"
+}

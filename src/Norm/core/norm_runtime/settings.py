@@ -55,7 +55,7 @@ def load_path_settings(root: Path) -> dict[str, Path]:
         verbatim_path = Path(os.path.expandvars(os.path.expanduser(verbatim_raw)))
         verbatim = verbatim_path.resolve() if verbatim_path.is_absolute() else (root / verbatim_path).resolve()
     else:
-        verbatim = (root / "plugins" / "verbatim_lines" / "_cli.py").resolve()
+        verbatim = (root / "plugins" / "verbatim_lines" / "src" / "_cli.py").resolve()
     temp_raw = parser.get("paths", "temp_root", fallback="temp").strip() or "temp"
     temp_path = Path(os.path.expandvars(os.path.expanduser(temp_raw)))
     temp_root = temp_path.resolve() if temp_path.is_absolute() else (documents / temp_path).resolve()

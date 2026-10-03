@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
+import sys
 import threading
 from collections.abc import Callable
 
@@ -86,8 +87,19 @@ class AiohttpThreadServer:
     def server_close(self) -> None:
         self.shutdown()
 
+    @staticmethod
+    def _new_event_loop() -> asyncio.AbstractEventLoop:
+        # On Windows, the default ProactorEventLoop can permanently lose a TCP
+        # listening socket after a transient AcceptEx WinError 64/10054.  These
+        # dedicated aiohttp threads only need socket I/O (no asyncio subprocesses),
+        # so use the selector implementation there and leave Norm's process-wide
+        # event-loop policy untouched.
+        if sys.platform == "win32":
+            return asyncio.SelectorEventLoop()
+        return asyncio.new_event_loop()
+
     def _thread_main(self) -> None:
-        loop = asyncio.new_event_loop()
+        loop = self._new_event_loop()
         self._loop = loop
         asyncio.set_event_loop(loop)
         self._stop_event = asyncio.Event()

@@ -8,8 +8,8 @@ from typing import Literal
 
 
 def _runtime_root() -> Path:
-    # .../Norm/plugins/vision_parse/vision_parse.py -> .../Norm
-    return Path(__file__).resolve().parents[2]
+    # .../Norm/plugins/vision_parse/src/main.py -> .../Norm
+    return Path(__file__).resolve().parents[3]
 
 
 def _ollama_settings() -> tuple[str, str]:

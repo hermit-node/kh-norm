@@ -20,6 +20,9 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "core"))
+from norm_runtime.plugin_identity import source_tree_sha256, verify_identity
+
 SETTINGS = ROOT / "config" / "settings.ini"
 PLUGIN_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://github.com/hermit-node/norm/plugins/v1")
 MANIFEST_KEYS = {"NAME", "VERSION", "ENTRYPOINT", "CAPABILITIES", "DESCRIPTION"}
@@ -60,10 +63,11 @@ def _literal_manifest(path: Path) -> dict[str, Any]:
     return values
 
 
-def _script_records(folder: Path, name: str, version: str) -> list[dict[str, Any]]:
+def _script_records(folder: Path, name: str, version: str, *, source_root: Path | None = None) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
-    for path in sorted(folder.rglob("*.py")):
-        if "__pycache__" in path.parts or any(part.startswith(".") for part in path.relative_to(folder).parts):
+    root = (source_root or folder).resolve()
+    for path in sorted(root.rglob("*.py")):
+        if "__pycache__" in path.parts or any(part.startswith(".") for part in path.relative_to(root).parts):
             continue
         rel = path.relative_to(folder).as_posix()
         digest = _sha256(path)
@@ -77,42 +81,69 @@ def _plugin_record(folder: Path) -> dict[str, Any]:
     if not manifest_path.is_file():
         alt = folder / "__init__.py"
         manifest_path = alt if alt.is_file() else manifest_path
+    legacy = _literal_manifest(manifest_path) if manifest_path.is_file() else {}
+    identity = verify_identity(folder, legacy)
+
     readme_path = folder / "README.md"
-    if not manifest_path.is_file():
-        raise FileNotFoundError("init.py is required")
     if not readme_path.is_file():
         raise FileNotFoundError("README.md is required")
-    meta = _literal_manifest(manifest_path)
-    name = str(meta.get("NAME") or folder.name).strip()
-    version = str(meta.get("VERSION") or "").strip()
-    entrypoint = str(meta.get("ENTRYPOINT") or "").strip()
-    description = str(meta.get("DESCRIPTION") or "").strip()
-    capabilities_raw = meta.get("CAPABILITIES") or []
-    if not version or not entrypoint:
-        raise ValueError("VERSION and ENTRYPOINT are required in init.py")
+
+    if identity and identity.get("schema_version") == 2:
+        name = str(identity["name"]).strip()
+        version = str(identity["version"]).strip()
+        entrypoint = str(identity["entrypoint"]).strip()
+        description = str(identity.get("description") or "").strip()
+        capabilities_raw = identity.get("capabilities") or []
+        source_root = folder / "src"
+        entry_file_rel = entrypoint
+        function = ""
+        scripts = _script_records(folder, name, version, source_root=source_root)
+        aggregate_sha = str(identity["sha256"])
+    else:
+        if not manifest_path.is_file():
+            raise FileNotFoundError("legacy plugin requires init.py or __init__.py")
+        name = str(legacy.get("NAME") or folder.name).strip()
+        version = str(legacy.get("VERSION") or "").strip()
+        entrypoint = str(legacy.get("ENTRYPOINT") or "").strip()
+        description = str(legacy.get("DESCRIPTION") or "").strip()
+        capabilities_raw = legacy.get("CAPABILITIES") or []
+        if not version:
+            raise ValueError("VERSION is required in init.py")
+        entry_file_rel = ""
+        function = ""
+        if entrypoint:
+            entry_file_raw, sep, function = entrypoint.partition(":")
+            function = function.strip() if sep else "run"
+            entry_file = (folder / entry_file_raw.strip()).resolve()
+            if entry_file.suffix.lower() != ".py" or not entry_file.is_file() or not entry_file.is_relative_to(folder.resolve()):
+                raise ValueError(f"ENTRYPOINT must reference an existing .py inside {folder.name}")
+            entry_file_rel = entry_file.relative_to(folder.resolve()).as_posix()
+        scripts = _script_records(folder, name, version)
+        readme_sha = _sha256(readme_path)
+        aggregate_material = json.dumps(
+            {"name": name, "version": version, "entrypoint": entrypoint, "readme_sha256": readme_sha, "scripts": scripts},
+            sort_keys=True, ensure_ascii=False,
+        ).encode("utf-8")
+        aggregate_sha = hashlib.sha256(aggregate_material).hexdigest()
+
     if not isinstance(capabilities_raw, (list, tuple)):
-        raise ValueError("CAPABILITIES must be a literal list or tuple")
+        raise ValueError("capabilities must be a list or tuple")
     capabilities = [str(item).strip() for item in capabilities_raw if str(item).strip()]
-    entry_file_raw, sep, function = entrypoint.partition(":")
-    function = function.strip() if sep else "run"
-    entry_file = (folder / entry_file_raw.strip()).resolve()
-    if entry_file.suffix.lower() != ".py" or not entry_file.is_file() or not entry_file.is_relative_to(folder.resolve()):
-        raise ValueError(f"ENTRYPOINT must reference an existing .py inside {folder.name}")
     readme = readme_path.read_text(encoding="utf-8-sig", errors="replace")
-    scripts = _script_records(folder, name, version)
     readme_sha = _sha256(readme_path)
-    aggregate_material = json.dumps({"name": name, "version": version, "entrypoint": entrypoint, "readme_sha256": readme_sha, "scripts": scripts}, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    aggregate_sha = hashlib.sha256(aggregate_material).hexdigest()
     version_uuid = uuid.uuid5(PLUGIN_NAMESPACE, f"version|{name}|{version}")
     plugin_uuid = uuid.uuid5(PLUGIN_NAMESPACE, f"plugin|{name}|{version}|{aggregate_sha}")
     return {
         "name": name,
         "folder": folder.name,
         "version": version,
+        "date": str(identity.get("date") or "") if identity else "",
         "version_uuid": str(version_uuid),
+        "identity": identity,
+        "identity_verified": identity is not None,
         "entrypoint": entrypoint,
-        "entry_file": entry_file.relative_to(folder.resolve()).as_posix(),
-        "entry_function": function or "run",
+        "entry_file": entry_file_rel,
+        "entry_function": function,
         "description": description,
         "capabilities": capabilities,
         "readme_sha256": readme_sha,
@@ -135,7 +166,7 @@ def _scan(write_registry: bool = True) -> dict[str, Any]:
             plugins.append(_plugin_record(folder))
         except Exception as exc:
             errors.append({"folder": folder.name, "error": f"{type(exc).__name__}: {exc}"})
-    registry = {"schema_version": 1, "generated_at": datetime.now().astimezone().isoformat(), "plugin_root": str(plugin_root), "plugins": plugins, "errors": errors}
+    registry = {"schema_version": 2, "generated_at": datetime.now().astimezone().isoformat(), "plugin_root": str(plugin_root), "plugins": plugins, "errors": errors}
     if write_registry:
         registry_path.parent.mkdir(parents=True, exist_ok=True)
         temp = registry_path.with_name(registry_path.name + ".writing")
@@ -171,19 +202,22 @@ def _match(registry: dict[str, Any], query: str, limit: int = 8) -> list[dict[st
     return [{"score": score, **plugin} for score, plugin in ranked[: max(1, limit)]]
 
 
-def _load_entry(plugin_root: Path, plugin: dict[str, Any]):
+def _load_entry(plugin_root: Path, plugin: dict[str, Any], function_name: str = ""):
     folder = (plugin_root / str(plugin["folder"])).resolve()
+    if not str(plugin.get("entry_file") or "").strip():
+        raise RuntimeError("plugin has no entrypoint")
     entry = (folder / str(plugin["entry_file"])).resolve()
+    source_root = folder / "src" if str(plugin.get("entry_file") or "").startswith("src/") else folder
     for cache in folder.rglob("__pycache__"):
         if cache.is_dir():
             shutil.rmtree(cache, ignore_errors=True)
     importlib.invalidate_caches()
-    for path in folder.glob("*.py"):
+    for path in source_root.glob("*.py"):
         alias = path.stem
         existing = sys.modules.get(alias)
         existing_file = getattr(existing, "__file__", None) if existing is not None else None
         try:
-            if existing is not None and (not existing_file or not Path(existing_file).resolve().is_relative_to(folder)):
+            if existing is not None and (not existing_file or not Path(existing_file).resolve().is_relative_to(source_root)):
                 sys.modules.pop(alias, None)
         except Exception:
             sys.modules.pop(alias, None)
@@ -197,35 +231,49 @@ def _load_entry(plugin_root: Path, plugin: dict[str, Any]):
         raise ImportError(f"cannot load plugin entry file: {entry}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
-    sys.path.insert(0, str(folder))
+    sys.path.insert(0, str(source_root))
     try:
         spec.loader.exec_module(module)
     finally:
         try:
-            sys.path.remove(str(folder))
+            sys.path.remove(str(source_root))
         except ValueError:
             pass
         sys.modules.pop(module_name, None)
-    fn = getattr(module, str(plugin.get("entry_function") or "run"), None)
+
+    selected = str(function_name or plugin.get("entry_function") or "").strip()
+    if not selected:
+        candidates = [
+            (name, fn) for name, fn in inspect.getmembers(module, inspect.isfunction)
+            if not name.startswith("_") and fn.__module__ == module.__name__
+        ]
+        if any(name == "run" for name, _ in candidates):
+            selected = "run"
+        elif len(candidates) == 1:
+            selected = candidates[0][0]
+        else:
+            raise RuntimeError("schema-2 plugin has multiple entry functions; pass --function")
+    fn = getattr(module, selected, None)
     if not callable(fn):
-        raise AttributeError(f"entry function {plugin.get('entry_function')!r} is not callable")
+        raise AttributeError(f"entry function {selected!r} is not callable")
     return fn
 
 
-def _run_plugin(registry: dict[str, Any], selector: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _run_plugin(registry: dict[str, Any], selector: str, payload: dict[str, Any], function_name: str = "") -> dict[str, Any]:
     plugin_root = Path(registry["plugin_root"]).resolve()
     plugin = _plugin_lookup(registry, selector)
-    fn = _load_entry(plugin_root, plugin)
+    fn = _load_entry(plugin_root, plugin, function_name=function_name)
     stdout = io.StringIO()
     stderr = io.StringIO()
     folder = (plugin_root / str(plugin["folder"])).resolve()
-    sys.path.insert(0, str(folder))
+    source_root = folder / "src" if str(plugin.get("entry_file") or "").startswith("src/") else folder
+    sys.path.insert(0, str(source_root))
     try:
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             result = fn() if len(inspect.signature(fn).parameters) == 0 else fn(payload)
     finally:
         try:
-            sys.path.remove(str(folder))
+            sys.path.remove(str(source_root))
         except ValueError:
             pass
     return {
@@ -258,18 +306,26 @@ def _scaffold(name: str) -> dict[str, str]:
     folder = (plugin_root / safe).resolve()
     if folder.exists():
         raise FileExistsError(folder)
-    folder.mkdir(parents=True)
-    (folder / "init.py").write_text(
-        f'NAME = {safe!r}\nVERSION = "0.1.0"\nENTRYPOINT = "plugin.py:run"\n'
-        'CAPABILITIES = ["describe what this plugin can do"]\n'
-        'DESCRIPTION = "Short plugin description."\n', encoding="utf-8", newline="\n")
-    (folder / "plugin.py").write_text(
+    src = folder / "src"
+    src.mkdir(parents=True)
+    (src / "main.py").write_text(
         'def run(payload: dict):\n    """Return JSON-serializable output."""\n    return {"ok": True, "payload": payload}\n',
         encoding="utf-8", newline="\n")
     (folder / "README.md").write_text(
         f"# {safe}\n\nDescribe when Norm should use this plugin, accepted input, output, limits, and examples.\n",
         encoding="utf-8", newline="\n")
-    return {"folder": str(folder), "name": safe}
+    meta = {
+        "schema_version": 2,
+        "name": safe,
+        "version": "0.1.0",
+        "date": datetime.now().date().isoformat(),
+        "entrypoint": "src/main.py",
+        "description": "Short plugin description.",
+        "capabilities": ["describe what this plugin can do"],
+        "sha256": source_tree_sha256(folder),
+    }
+    (folder / "plugin.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8", newline="\n")
+    return {"folder": str(folder), "name": safe, "sha256": meta["sha256"]}
 
 
 def main() -> int:
@@ -284,6 +340,7 @@ def main() -> int:
     p_desc.add_argument("selector")
     p_run = sub.add_parser("run")
     p_run.add_argument("selector")
+    p_run.add_argument("--function", default="", help="Public function in src/main.py; required when the entrypoint exposes more than one.")
     p_run.add_argument("--json", dest="payload", default=None)
     p_run.add_argument("--json-file", dest="payload_file", default=None)
     p_scaffold = sub.add_parser("scaffold")
@@ -304,8 +361,8 @@ def main() -> int:
         _print_json(_plugin_lookup(registry, args.selector))
     elif args.command == "run":
         raw_payload = Path(args.payload_file).read_text(encoding="utf-8-sig") if args.payload_file else args.payload
-        _print_json(_run_plugin(registry, args.selector, _json_payload(raw_payload)))
-    return 0
+        _print_json(_run_plugin(registry, args.selector, _json_payload(raw_payload), function_name=args.function))
+    return 1 if registry.get("errors") else 0
 
 
 if __name__ == "__main__":

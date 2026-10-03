@@ -8,7 +8,7 @@ from norm_runtime.secret_redaction import is_secret_file
 
 
 def _root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[3]
 
 
 def _resolve(path: str) -> tuple[Path, object]:

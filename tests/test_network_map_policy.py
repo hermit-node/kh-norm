@@ -9,12 +9,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parents[1]
-SOURCE_ZIP = HERE / "Norm-0.53.9-portable-source.zip"
+SOURCE_ZIP = HERE / "Norm-0.53.11-portable-source.zip"
 
 with tempfile.TemporaryDirectory() as td_name:
     td = Path(td_name)
     with zipfile.ZipFile(SOURCE_ZIP, "r") as zf:
-        member = "Norm-0.53.9/tools/norm_network_map.py"
+        member = "Norm-0.53.11/tools/norm_network_map.py"
         zf.extract(member, td)
     module_path = td / member
     spec = importlib.util.spec_from_file_location("norm_network_map_release_test", module_path)

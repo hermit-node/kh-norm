@@ -34,7 +34,7 @@ from norm_runtime.rich_console import run_console
 from norm_runtime.settings import load_ports, load_project_metadata, load_path_settings
 
 MODEL_NAME = "norm"
-MODEL_STORE = r"<configured model store>"
+MODEL_STORE = r"G:\Ollama\models"
 _WINDOWS_CTRL_HANDLER = None
 
 
@@ -926,6 +926,12 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
                 activity_handler.close()
             except Exception:
                 pass
+
+        if durable is not None:
+            try:
+                durable.pool.close()
+            except Exception:
+                logging.exception("PostgreSQL pool shutdown failed")
 
         if startup_completed or graceful_exit:
             logging.info("Norm coordinator stopped normally")
