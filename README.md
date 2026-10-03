@@ -1,12 +1,12 @@
 # Norm
 
-**A local-first AI agent runtime built for persistent memory, long-running work, and extensible tools.**
+A persistent, self-hosted AI agent that can remember context, use tools, carry work across sessions, and recover interrupted tasks.
 
-Norm runs on your own machine, coordinates multi-step tasks, remembers useful context across sessions, and can recover work instead of treating every conversation as disposable.
+Norm is built to do more than answer a prompt. You give it work in ordinary language; it can plan that work, use local tools and services, inspect and modify files, verify results, and preserve enough task state to continue later.
 
-It combines a Python agent runtime with PostgreSQL-backed memory and task history, Redis-backed live queues, local model support through Ollama, and hot-loadable Python plugins.
+Its memory and task state live outside the model, so changing models or restarting the runtime does not mean throwing away everything the agent has learned or everything it was doing.
 
-> Current public release: **Norm 0.53.9**
+Norm is intended to become more useful as it works with you: retaining relevant project facts and decisions, learning which context matters, and gaining new capabilities through hot-loadable Python plugins.
 
 ## What Norm does
 
