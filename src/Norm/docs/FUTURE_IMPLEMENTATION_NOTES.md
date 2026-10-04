@@ -6,7 +6,7 @@ This is the active backlog/design notebook for behavior that is not fully implem
 
 Implemented: shared advisory validation counts/generations, Redis live versus PostgreSQL snapshot wording, budgeted context, no-op recovery completion, deterministic instrumented-write verification, explicit first-party plugin identity/checksums and docs consolidation. These are no longer design-only items.
 
-Deferred: refresh and validate the Installer 1.6.5 embedded payload, sanitize/synchronize the public source tree and publish only when authorized, rebuild/test the frozen executable, and promote live after acceptance. No live promotion is claimed by this source checkpoint. HTTP prompt-id idempotency and recovery-note relocation/self-healing are not implemented here.
+Deferred: refresh and validate the Installer 1.6.6 embedded payload, sanitize/synchronize the public source tree and publish only when authorized, rebuild/test the frozen executable, and promote live after acceptance. No live promotion is claimed by this source checkpoint. HTTP prompt-id idempotency and recovery-note relocation/self-healing are not implemented here.
 
 Remaining persistence limits: snapshots are observation-triggered, not a background timer; loss of Redis can lose confirmations since the last PostgreSQL snapshot or pending history. A stronger independently durable outbox/background flusher is future work. Plugin checksums are not signatures, and last-known-good hydration is in-process rather than a persisted cold-start rollback copy. Arbitrary shell writes/uninstrumented plugins still need explicit artifact evidence; this is not a general filesystem mutation monitor.
 
@@ -27,7 +27,7 @@ Remaining persistence limits: snapshots are observation-triggered, not a backgro
 
 ## Destructive curated-memory `/condense-memories` operator action
 
-`/memory-condense` and `/memory-condense -full` now exist for safe incremental/full-source background-snapshot rebuilding. Do not implement `/condense-memories` as an alias for either of them. The intended action must run non-recursively through the low-level maintenance/model path, traverse the full curated/current memory set, identify true duplicates/contradictions/resolved or superseded state, preserve reusable lessons before deleting redundant rows, never delete merely because a record is old, checkpoint its own continuation state, and rebuild retrieval/background summaries only after the curated-memory result is valid. Add the command only when those semantics can be tested fail-closed.
+`/memory-condense` and `/memory-condense -full` now invoke replay-validated deep-history consolidation (bounded manual pass versus all-terminal full pass). Do not implement `/condense-memories` as an alias for either of them; curated-memory deduplication/contradiction cleanup remains a separate future action. The intended action must run non-recursively through the low-level maintenance/model path, traverse the full curated/current memory set, identify true duplicates/contradictions/resolved or superseded state, preserve reusable lessons before deleting redundant rows, never delete merely because a record is old, checkpoint its own continuation state, and rebuild retrieval/background summaries only after the curated-memory result is valid. Add the command only when those semantics can be tested fail-closed.
 
 ## Cleanup/workspace follow-up
 

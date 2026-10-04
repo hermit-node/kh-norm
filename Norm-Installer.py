@@ -20,7 +20,7 @@ from typing import Any, Callable, Iterable
 
 import installer_environment as envtools
 
-INSTALLER_VERSION = "1.6.5-unified"
+INSTALLER_VERSION = "1.6.6-unified"
 PIP_VERSION = "26.2.1"
 PIP_MIN_VERSION = PIP_VERSION  # backward-compatible internal print helper
 PIP_SPEC = f"pip=={PIP_VERSION}"
@@ -63,7 +63,6 @@ class InstallOptions:
     dependency_mode: str = "package"
     imprint: dict[str, Any] | None = None
     secret_values: dict[str, str] | None = None
-    package_imprint_baseline: dict[str, Any] | None = None
 
 
 @dataclass
@@ -489,6 +488,24 @@ def _migrate_existing_json(package_path: Path, old_path: Path, log: LogFn) -> di
     except Exception as exc:
         raise InstallerError(f"Could not migrate JSON config {package_path}: {exc}") from exc
     merged, migrated, dropped = _migrate_json_value(new_value, old_value)
+
+    # Promote known retired package defaults without trampling real operator overrides.
+    # 600 seconds was the pre-0.53.12 validation-pool default; 0.53.12 deliberately
+    # expands that reuse window to 24 hours. Only the exact retired default is replaced.
+    if package_path.name.lower() == "runtime.json":
+        try:
+            old_recent = old_value["validation_pool"]["recent_window_seconds"]
+            new_recent = new_value["validation_pool"]["recent_window_seconds"]
+            if int(old_recent) == 600 and int(new_recent) == 86400:
+                merged.setdefault("validation_pool", {})["recent_window_seconds"] = new_recent
+                migrated = [item for item in migrated if item != "validation_pool.recent_window_seconds"]
+                log(
+                    "Promoted validation_pool.recent_window_seconds from retired package default "
+                    "600 to packaged 0.53.12 default 86400."
+                )
+        except (KeyError, TypeError, ValueError):
+            pass
+
     package_path.write_text(
         json.dumps(merged, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
@@ -1100,8 +1117,6 @@ def install_norm(
     if not manifest_path.is_file():
         raise InstallerError("Installed package-manifest.json is missing")
 
-    state_path = _write_install_state(target, str(manifest.get("version") or info.version), options.package_imprint_baseline)
-    log(f"Saved non-secret package-imprint baseline for future migrations: {state_path}")
     saved_imprint = save_local_imprint(options.imprint or {})
     log(f"Saved accepted non-secret Environment values to private local imprint: {saved_imprint}")
     progress(100, "Installation complete")
@@ -1154,7 +1169,6 @@ IMPRINT_SCHEMA_VERSION = 1
 LOCAL_IMPRINT_NAME = "norm-imprint.local.json"
 LOCAL_PRIVATE_DIR = ".norm-local"
 EXAMPLE_IMPRINT_NAME = "norm-imprint.example.json"
-PUBLIC_PACKAGE_IMPRINT_NAME = "norm-imprint.json"
 _SECRET_KEY_RE = re.compile(r"(?:password|passwd|pwd|secret|token|authkey|api[_-]?key|private[_-]?key)", re.I)
 
 DEFAULT_IMPRINT: dict[str, Any] = {
@@ -1291,45 +1305,6 @@ def load_imprint(path: Path | None = None) -> tuple[dict[str, Any], Path | None]
     except Exception as exc:
         raise InstallerError(f"Could not read imprint {candidate}: {exc}") from exc
     return validate_imprint(raw), candidate
-
-
-def read_package_public_imprint(info: PackageInfo | None) -> dict[str, Any]:
-    """Read the raw non-secret public/default imprint from the selected source ZIP."""
-    if info is None:
-        return {}
-    rel = str(info.manifest.get("imprint") or PUBLIC_PACKAGE_IMPRINT_NAME).strip()
-    if not rel:
-        return {}
-    member = str(info.zip_root / PurePosixPath(rel))
-    try:
-        with zipfile.ZipFile(info.source_zip, "r") as zf:
-            raw = json.loads(zf.read(member).decode("utf-8-sig"))
-    except KeyError:
-        return {}
-    except Exception as exc:
-        raise InstallerError(f"Could not read package public imprint {rel}: {exc}") from exc
-    if not isinstance(raw, dict):
-        raise InstallerError(f"Package public imprint must be a JSON object: {rel}")
-    forbidden = _find_forbidden_imprint_key(raw)
-    if forbidden:
-        raise InstallerError(f"Package public imprint contains secret-like key: {forbidden}")
-    return _deep_copy(raw)
-
-
-
-def _write_install_state(target: Path, package_version: str, baseline: dict[str, Any] | None) -> Path:
-    clean = _deep_copy(baseline or {})
-    forbidden = _find_forbidden_imprint_key(clean)
-    if forbidden:
-        raise InstallerError(f"Package imprint baseline contains secret-like key: {forbidden}")
-    path = target / ".norm-install-state.json"
-    payload = {
-        "schema": 1,
-        "package_version": str(package_version),
-        "package_imprint_baseline": clean,
-    }
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
-    return path
 
 
 def _nonsecret_imprint_for_save(data: dict[str, Any]) -> dict[str, Any]:
@@ -2081,11 +2056,8 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
         target_key = str(target.resolve())
         if environment_loaded_for == target_key:
             return
-        package_raw = read_package_public_imprint(selected_info)
-        package_defaults = validate_imprint(package_raw) if package_raw else _deep_copy(DEFAULT_IMPRINT)
-        effective = validate_imprint(_deep_merge(package_raw, raw_imprint))
         resolved, secrets, origins = envtools.resolve_environment_prefill(
-            target, effective, raw_imprint, package_defaults
+            target, imprint, raw_imprint, DEFAULT_IMPRINT
         )
         imprint = resolved
         environment_origins = origins
@@ -2386,7 +2358,6 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
             dependency_mode=dependency_var.get(),
             imprint=current_imprint,
             secret_values=secrets,
-            package_imprint_baseline=read_package_public_imprint(selected_info),
         )
 
     def worker(options: InstallOptions) -> None:
@@ -2536,15 +2507,7 @@ def main() -> int:
 
     source = Path(args.source).expanduser() if args.source else find_latest_source()
     imprint_path = Path(args.imprint).expanduser() if args.imprint else None
-    private_imprint, _loaded_imprint_path = load_imprint(imprint_path)
-    raw_private_imprint: dict[str, Any] = {}
-    if _loaded_imprint_path and _loaded_imprint_path.is_file():
-        raw_value = json.loads(_loaded_imprint_path.read_text(encoding="utf-8-sig"))
-        if isinstance(raw_value, dict):
-            raw_private_imprint = raw_value
-    source_info = inspect_package(source) if source else None
-    raw_package_imprint = read_package_public_imprint(source_info)
-    imprint = validate_imprint(_deep_merge(raw_package_imprint, raw_private_imprint))
+    imprint, _loaded_imprint_path = load_imprint(imprint_path)
 
     if args.validate_only:
         if not source:
@@ -2572,13 +2535,6 @@ def main() -> int:
                 "--install requires a local Norm source package plus target/python values "
                 "(from CLI or the non-secret imprint)"
             )
-        # Headless updates use the exact same migration precedence as the GUI:
-        # existing value != old public package imprint => customized/preserve;
-        # otherwise private local overlay, then new public package imprint.
-        package_defaults = validate_imprint(raw_package_imprint) if raw_package_imprint else _deep_copy(DEFAULT_IMPRINT)
-        imprint, _existing_secrets, _origins = envtools.resolve_environment_prefill(
-            Path(target_arg).expanduser(), imprint, raw_private_imprint, package_defaults
-        )
         secret_values: dict[str, str] = {}
         for file_arg, key in (
             (args.postgres_password_file, "NORM_POSTGRES_PASSWORD"),
@@ -2601,7 +2557,6 @@ def main() -> int:
                 dependency_mode=str(install_cfg.get("dependency_mode") or "newest"),
                 imprint=imprint,
                 secret_values=secret_values,
-                package_imprint_baseline=_deep_copy(raw_package_imprint),
             ),
             log=print,
             progress=lambda value, text: print(f"[{value:3d}%] {text}"),

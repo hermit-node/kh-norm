@@ -4,6 +4,23 @@ from pathlib import Path
 import hashlib as _hashlib
 
 
+def _write_text(path: str, content: str) -> dict:
+    """Private exact replacement primitive used by guarded core write_file/replace_text."""
+    target = Path(path).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    encoded = str(content).encode("utf-8")
+    with target.open("wb") as handle:
+        handle.write(encoded)
+    return {
+        "ok": True,
+        "path": str(target.resolve()),
+        "sha256": _hashlib.sha256(encoded).hexdigest(),
+        "file_mutation": True,
+        "mode": "write",
+        "bytes_after": len(encoded),
+    }
+
+
 def append_text(path: str, content: str) -> dict:
     """Append exact UTF-8 text to a file, creating parent directories and the file when needed."""
     target = Path(path).expanduser()

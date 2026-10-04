@@ -32,8 +32,6 @@ try:
             relative = path.relative_to(SOURCE)
             if "__pycache__" in relative.parts or path.suffix == ".pyc":
                 continue
-            if relative.as_posix() in {"plugins/.registry.json", "plugins/.registry.json.writing"}:
-                continue
             zf.write(path, f"{root_name}/{relative.as_posix()}")
 
     # Scan the actual bytes that would be promoted, not only the source tree.

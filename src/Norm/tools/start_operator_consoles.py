@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -19,19 +18,6 @@ def _launch(title: str, script: Path) -> None:
     for required in (PYTHON, HOST, script):
         if not required.is_file():
             raise RuntimeError(f"Required operator-console file not found: {required}")
-
-    # The runtime stream is read-only, so prefer Windows Terminal's cleaner,
-    # more compact host.  Prompt/Replies keep their classic explicit consoles.
-    if title == "Norm Runtime":
-        wt = shutil.which("wt.exe")
-        if wt:
-            flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            subprocess.Popen(
-                [wt, "-w", "new", "new-tab", "--title", title, str(PYTHON), "-u", str(script)],
-                cwd=str(ROOT),
-                creationflags=flags,
-            )
-            return
 
     flags = 0
     if hasattr(subprocess, "CREATE_NEW_CONSOLE"):
@@ -57,7 +43,7 @@ def main() -> int:
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print("Opened Norm Prompt, Norm Runtime, and Norm Replies consoles.")
+    print("Opened persistent Norm Prompt, Norm Runtime, and Norm Replies consoles.")
     return 0
 
 

@@ -1,36 +1,10 @@
-# Publishing kh-norm
+# Publishing kh-norm 0.53.14
 
-## Public repository push
+The supplied public ZIP is an update bundle for the existing public repository. Extract it over a clean clone, replacing `src/Norm` with the bundled version, review `git status`, then commit and push `main`.
 
-From PowerShell in this directory:
-
-```powershell
-.\Publish-To-GitHub.ps1 -Push
-```
-
-The publisher works in Windows PowerShell 5.1 and intentionally stages each public path separately.
-
-`norm-imprint.local.json` may remain in this same directory. It is listed in `.gitignore`, checked before publishing, and never staged by the publisher.
-
-If Git needs your author identity, configure it once and rerun:
+Tag after the push:
 
 ```powershell
-git config --global user.name "YOUR GITHUB NAME"
-git config --global user.email "YOUR GITHUB EMAIL"
+git tag -a v0.53.14 -m "Norm 0.53.14 / Installer 1.6.6"
+git push origin v0.53.14
 ```
-
-## Tag
-
-After `main` is pushed:
-
-```powershell
-git tag -a v0.53.11 -m "Norm 0.53.11 / Unified Installer 1.6.5"
-git push origin v0.53.11
-```
-
-## GitHub Release
-
-GitHub CLI is optional. In the repository web UI choose **Releases â†’ Draft a new release**, select `v0.53.11`, use `RELEASE.md` as the release notes, and attach:
-
-- `Norm-0.53.11-portable-source.zip`
-- `Norm-0.53.11-portable-source.zip.sha256`

@@ -1,15 +1,19 @@
 {
   "schema_version": 2,
   "name": "Norm File Read",
-  "version": "1.0.0",
-  "date": "2026-10-02",
+  "version": "1.1.0",
+  "date": "2026-10-03",
   "entrypoint": "src/main.py",
-  "description": "Python-backed bounded file reading using Norm's configured file-access policy.",
+  "description": "Bounded file reading plus non-extracting archive inspection through a local 7-Zip CLI with ZIP/TAR fallbacks.",
   "capabilities": [
     "chunked text read",
     "literal byte read",
     "base64 byte read",
-    "range read"
+    "range read",
+    "archive manifest",
+    "archive member read",
+    "archive member sha256",
+    "archive-directory compare"
   ],
-  "sha256": "4e1652ffb7c94fe1fb4bfe584d8fed4ab62a50c7d00d0b05b6f465fb6a1c294c"
+  "sha256": "ac80e17635b0606d2c7115850df29a64d7a9f582976421a8637041916e1b3632"
 }

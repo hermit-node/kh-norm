@@ -32,7 +32,6 @@ def make_pkg(folder: Path, version: str) -> Path:
         "runtime_config": "config/runtime.json",
         "requirements_lock": "tools/requirements-lock.txt",
         "build_script": "tools/build_norm.py",
-        "imprint": "norm-imprint.json",
     }
     root = f"Norm-{version}"
     with zipfile.ZipFile(path, "w") as zf:
@@ -44,7 +43,6 @@ def make_pkg(folder: Path, version: str) -> Path:
             "[environment]\npython_version=3.14\nvenv_path=.venv\n",
         )
         zf.writestr(f"{root}/config/runtime.json", "{}\n")
-        zf.writestr(f"{root}/norm-imprint.json", json.dumps({"schema": 1, "postgres": {"database": "postgres"}}))
         zf.writestr(f"{root}/tools/build_norm.py", "print('build')\n")
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     (folder / (path.name + ".sha256")).write_text(f"{digest}  {path.name}\n", encoding="utf-8")
@@ -60,9 +58,7 @@ with tempfile.TemporaryDirectory() as td_name:
     os.utime(older, (now, now))
     found = m.find_latest_source(td)
     assert found == newest
-    info = m.inspect_package(found)
-    assert info.version == "0.53.11"
-    assert m.read_package_public_imprint(info)["postgres"]["database"] == "postgres"
+    assert m.inspect_package(found).version == "0.53.11"
     m._verify_companion_sha256(found)
     newest.write_bytes(newest.read_bytes() + b"x")
     try:
@@ -107,7 +103,7 @@ runtime_root = .
 documents_root = {td.as_posix()}/docs
 workspace_root = workspace
 temp_root = temp
-verbatim_writer = plugins/verbatim_lines/src/_cli.py
+verbatim_writer = plugins/verbatim_lines/_cli.py
 
 [network]
 current_machine = norm-host
@@ -186,45 +182,6 @@ print("PASS: secret-like imprint keys rejected")
 print("PASS: secret values separated from imprint/log")
 print("PASS: installer version 1.6.5")
 
-# Plugin root is persistent, but each package-managed built-in is mirrored independently.
-package_manifest = json.loads((HERE / "src" / "Norm" / "package-manifest.json").read_text(encoding="utf-8"))
-managed_plugins = set(package_manifest.get("managed_persistent_subtrees") or [])
-assert len(managed_plugins) == 9
-assert "plugins/postgres_pool" in managed_plugins
-assert package_manifest["built_in_plugins"]["postgres_pool"] == "plugins/postgres_pool"
-
-with tempfile.TemporaryDirectory() as td_name:
-    td = Path(td_name)
-    source = td / "source"
-    target = td / "target"
-    new_pool = source / "plugins" / "postgres_pool"
-    (new_pool / "src").mkdir(parents=True)
-    (new_pool / "plugin.json").write_text('{"schema_version":2}\n', encoding="utf-8")
-    (new_pool / "src" / "main.py").write_text("def status(): return {}\n", encoding="utf-8")
-    old_pool = target / "plugins" / "postgres_pool"
-    old_pool.mkdir(parents=True)
-    for old_name in ("init.py", "SHA256SUMS", "postgres_pool.py", "_pool.py"):
-        (old_pool / old_name).write_text("old\n", encoding="utf-8")
-    custom = target / "plugins" / "my_private_plugin"
-    custom.mkdir(parents=True)
-    (custom / "custom.py").write_text("def mine(): return True\n", encoding="utf-8")
-
-    # Main package mirror preserves all plugins.
-    m._sync_tree_contents(source, target, protected={"plugins"}, log=lambda _: None)
-    assert (old_pool / "postgres_pool.py").exists()
-    assert (custom / "custom.py").exists()
-
-    # Managed built-in pass migrates only postgres_pool to the new src/ layout.
-    m._sync_tree_contents(new_pool, old_pool, protected=set(), log=lambda _: None)
-    assert (old_pool / "src" / "main.py").is_file()
-    assert not (old_pool / "init.py").exists()
-    assert not (old_pool / "SHA256SUMS").exists()
-    assert not (old_pool / "postgres_pool.py").exists()
-    assert not (old_pool / "_pool.py").exists()
-    assert (custom / "custom.py").exists()
-
-print("PASS: managed built-in plugin migration preserves unrelated user plugins")
-
 
 with tempfile.TemporaryDirectory() as td_name:
     td = Path(td_name)
@@ -269,29 +226,6 @@ with tempfile.TemporaryDirectory() as td_name:
     assert "custom-sidecar.json" in audit["dropped_files"]
 
 print("PASS: in-place config backup + schema migration")
-
-# Legacy 0.53.x installs kept non-secret PostgreSQL routing in the external .env.
-with tempfile.TemporaryDirectory() as td_name:
-    td = Path(td_name)
-    target = td / "Norm"
-    (target / "config").mkdir(parents=True)
-    secrets_path = td / "legacy.env"
-    (target / "config" / "settings.ini").write_text(
-        f"[environment]\nsecrets_file = {secrets_path.as_posix()}\n", encoding="utf-8"
-    )
-    secrets_path.write_text(
-        "NORM_POSTGRES_USER=legacy-user\nNORM_POSTGRES_DB=postgres\n"
-        "NORM_POSTGRES_SCHEMA=norm_runtime\nNORM_STOCKS_DB=stocks_api\n"
-        "NORM_POSTGRES_PASSWORD=legacy-password\n", encoding="utf-8"
-    )
-    current, secrets = m.envtools.read_installed_environment(target)
-    assert current["postgres.user"] == "legacy-user"
-    assert current["postgres.database"] == "postgres"
-    assert current["postgres.schema"] == "norm_runtime"
-    assert current["postgres.stocks_database"] == "stocks_api"
-    assert secrets["NORM_POSTGRES_PASSWORD"] == "legacy-password"
-print("PASS: legacy external .env PostgreSQL routing + password migration read")
-
 # Environment-page prefill and private persistent-imprint behavior.
 with tempfile.TemporaryDirectory() as td_name:
     td = Path(td_name)
@@ -359,23 +293,13 @@ secrets_file = {secrets_path.as_posix()}
         "postgres": {"user": "imprint-user"},
     }
     merged = m.validate_imprint(raw)
-    previous = {
-        "schema": 1,
-        "network": {"postgres_port": 5432},
-        "postgres": {"user": "norm"},
-    }
     resolved, secrets, origins = m.envtools.resolve_environment_prefill(
-        target, merged, raw, m.DEFAULT_IMPRINT, previous
+        target, merged, raw, m.DEFAULT_IMPRINT
     )
     assert resolved["postgres"]["user"] == "custom-user"
-    assert origins["postgres.user"] == "current-custom"
-    assert resolved["postgres"]["database"] == "current-db"  # old imprint had no database entry: compare to nothing
-    assert origins["postgres.database"] == "current-custom"
+    assert origins["postgres.user"] == "current"
     assert resolved["network"]["postgres_port"] == 55432
-    assert origins["network.postgres_port"] == "private-imprint"
-    state = m._write_install_state(target, "0.53.11", raw)
-    assert state.is_file()
-    assert m.envtools.read_installed_imprint_baseline(target) == raw
+    assert origins["network.postgres_port"] == "imprint"
     assert resolved["network"]["current_machine"] == "current-host"
     assert secrets["NORM_POSTGRES_PASSWORD"] == "current-password"
     assert secrets["NORM_ROTOR5_SECRET"] == "current-rotor"
@@ -399,8 +323,7 @@ with tempfile.TemporaryDirectory() as td_name:
 assert m.envtools.connection_host("loopback", "host", "example") == "127.0.0.1"
 assert m.envtools.connection_host("current", "host", "example") == "host.example"
 
-print("PASS: Environment prefill manual/current-custom/new-imprint precedence")
-print("PASS: package-imprint baseline persistence and absent-old-default comparison")
+print("PASS: Environment prefill current/imprint/default precedence")
 print("PASS: current secrets available for masked prefill")
 print("PASS: persistent local imprint is outside package tree and non-secret")
 print("PASS: connection host resolution")

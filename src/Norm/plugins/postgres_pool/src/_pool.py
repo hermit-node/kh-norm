@@ -35,7 +35,8 @@ class PostgresPool:
             return bool(cls._pools)
 
     @classmethod
-    def configure_from_runtime(cls, runtime_root: str | Path) -> dict:
+    def _runtime_configuration(cls, runtime_root: str | Path) -> tuple[Path, dict[str, str], dict[str, int | float]]:
+        """Resolve approved PostgreSQL targets without opening any connections."""
         from norm_runtime.settings import (
             load_network_settings,
             load_ports,
@@ -57,12 +58,20 @@ class PostgresPool:
 
         host = resolve_network_host(network, "postgres_host")
         user = str(postgres["user"])
-        min_size = max(1, parser.getint("postgres", "pool_min_size", fallback=2))
-        max_size = max(min_size, parser.getint("postgres", "pool_max_size", fallback=8))
-        timeout = max(1.0, parser.getfloat("postgres", "pool_timeout_seconds", fallback=30.0))
-        max_waiting = max(1, parser.getint("postgres", "pool_max_waiting", fallback=64))
-        max_idle = max(30.0, parser.getfloat("postgres", "pool_max_idle_seconds", fallback=600.0))
-        max_lifetime = max(max_idle, parser.getfloat("postgres", "pool_max_lifetime_seconds", fallback=3600.0))
+        settings: dict[str, int | float] = {
+            "min_size": max(1, parser.getint("postgres", "pool_min_size", fallback=2)),
+            "timeout_seconds": max(1.0, parser.getfloat("postgres", "pool_timeout_seconds", fallback=30.0)),
+            "max_waiting": max(1, parser.getint("postgres", "pool_max_waiting", fallback=64)),
+            "max_idle_seconds": max(30.0, parser.getfloat("postgres", "pool_max_idle_seconds", fallback=600.0)),
+        }
+        settings["max_size"] = max(
+            int(settings["min_size"]),
+            parser.getint("postgres", "pool_max_size", fallback=8),
+        )
+        settings["max_lifetime_seconds"] = max(
+            float(settings["max_idle_seconds"]),
+            parser.getfloat("postgres", "pool_max_lifetime_seconds", fallback=3600.0),
+        )
 
         specs = {
             "norm": str(postgres["database"]),
@@ -80,6 +89,29 @@ class PostgresPool:
             )
             for name, database in specs.items()
         }
+        return root, conninfo, settings
+
+    @classmethod
+    def connection_parameters_from_runtime(
+        cls, runtime_root: str | Path, name: str = "norm", *, include_password: bool = False
+    ) -> dict[str, str]:
+        """Resolve one approved target for an external utility without opening a pool."""
+        key = cls._name(name)
+        _root, conninfo, _settings = cls._runtime_configuration(runtime_root)
+        parts = {str(k): str(v) for k, v in conninfo_to_dict(conninfo[key]).items() if v is not None}
+        if not include_password:
+            parts.pop("password", None)
+        return parts
+
+    @classmethod
+    def configure_from_runtime(cls, runtime_root: str | Path) -> dict:
+        root, conninfo, settings = cls._runtime_configuration(runtime_root)
+        min_size = int(settings["min_size"])
+        max_size = int(settings["max_size"])
+        timeout = float(settings["timeout_seconds"])
+        max_waiting = int(settings["max_waiting"])
+        max_idle = float(settings["max_idle_seconds"])
+        max_lifetime = float(settings["max_lifetime_seconds"])
         config_key = (
             root,
             tuple(sorted(conninfo.items())),
@@ -124,14 +156,7 @@ class PostgresPool:
             cls._pools = opened
             cls._conninfo = conninfo
             cls._config_key = config_key
-            cls._settings = {
-                "min_size": min_size,
-                "max_size": max_size,
-                "timeout_seconds": timeout,
-                "max_waiting": max_waiting,
-                "max_idle_seconds": max_idle,
-                "max_lifetime_seconds": max_lifetime,
-            }
+            cls._settings = dict(settings)
             return cls.status()
 
     @classmethod

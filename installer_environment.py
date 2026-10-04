@@ -175,58 +175,29 @@ def read_installed_environment(target: Path) -> tuple[dict[str, Any], dict[str, 
     return current, secrets
 
 
-def read_installed_imprint_baseline(target: Path) -> dict[str, Any] | None:
-    # The installed public imprint is the historical package default. Older
-    # installs may not have one; in that case the old default is intentionally absent.
-    public_path = target / "norm-imprint.json"
-    if public_path.is_file():
-        try:
-            data = json.loads(public_path.read_text(encoding="utf-8-sig"))
-            if isinstance(data, dict):
-                return deep_copy(data)
-        except Exception:
-            pass
-    path = target / ".norm-install-state.json"
-    if not path.is_file():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
-    except Exception:
-        return None
-    baseline = data.get("package_imprint_baseline") if isinstance(data, dict) else None
-    return deep_copy(baseline) if isinstance(baseline, dict) else None
-
-
 def resolve_environment_prefill(
     target: Path,
     imprint: dict[str, Any],
     raw_imprint: dict[str, Any],
     default_imprint: dict[str, Any],
-    previous_imprint: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, str], dict[str, str]]:
     resolved = deep_copy(imprint)
     current, secrets = read_installed_environment(target)
-    old_imprint = read_installed_imprint_baseline(target)
-    if old_imprint is None:
-        old_imprint = deep_copy(previous_imprint or {})
     origins: dict[str, str] = {}
     for dotted in FIELD_PATHS:
-        new_has = nested_has(raw_imprint, dotted)
-        old_has = nested_has(old_imprint, dotted)
+        default = nested_get(default_imprint, dotted)
+        explicit = nested_has(raw_imprint, dotted)
+        imprint_value = nested_get(imprint, dotted, default)
         if dotted in current:
             current_value = current[dotted]
-            old_default = nested_get(old_imprint, dotted) if old_has else None
-            customized = (not old_has) or current_value != old_default
-            if customized:
-                value, origin = current_value, "current-custom"
-            elif new_has:
-                value, origin = nested_get(raw_imprint, dotted), "private-imprint"
+            if explicit and current_value == default:
+                value, origin = imprint_value, "imprint"
             else:
-                value, origin = nested_get(default_imprint, dotted), "package-imprint"
-        elif new_has:
-            value, origin = nested_get(raw_imprint, dotted), "private-imprint"
+                value, origin = current_value, "current"
+        elif explicit:
+            value, origin = imprint_value, "imprint"
         else:
-            value, origin = nested_get(default_imprint, dotted), "package-imprint"
+            value, origin = default, "default"
         nested_set(resolved, dotted, value)
         origins[dotted] = origin
     if "runtime.network_map.targets" in current:

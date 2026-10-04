@@ -13,7 +13,7 @@ from rich.markdown import Markdown
 from rich.rule import Rule
 from rich.text import Text
 
-from norm_gui_common import ROOT, acquire_windows_mutex, load_runtime_config, norm_process_running
+from norm_gui_common import ROOT, acquire_windows_mutex, load_runtime_config
 
 _WINDOWS_CTRL_HANDLER = None
 
@@ -123,13 +123,7 @@ def main() -> int:
         console.print(f"Replies waiting for Redis: {exc}", style="yellow")
 
     warned = False
-    seen_norm = norm_process_running()
-    startup_deadline = time.monotonic() + 60
     while True:
-        running = norm_process_running()
-        seen_norm = seen_norm or running
-        if not running and (seen_norm or time.monotonic() >= startup_deadline):
-            return 0
         try:
             rows = client.xread({reply_stream: last_id}, block=1000, count=20)
             warned = False

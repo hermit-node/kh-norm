@@ -28,13 +28,14 @@ from norm_runtime.context_injections import ContextInjections
 from norm_runtime.http_api import start_chat_api
 from norm_runtime.ollama_client import ModelOutputTruncated, OllamaClient
 from norm_runtime.ollama_lifecycle import shutdown_ollama
+from norm_runtime.n1_gatekeeper import N1Gatekeeper
 from norm_runtime.prompt_worker import PromptWorker
 from norm_runtime.shutdown_snapshot import write_sos
 from norm_runtime.rich_console import run_console
 from norm_runtime.settings import load_ports, load_project_metadata, load_path_settings
 
 MODEL_NAME = "norm"
-MODEL_STORE = r"G:\Ollama\models"
+MODEL_STORE = os.environ.get("OLLAMA_MODELS", "")
 _WINDOWS_CTRL_HANDLER = None
 
 
@@ -761,6 +762,34 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         prompt_queue = build_prompt_queue(root, durable=durable)
         resources["prompt_queue"] = prompt_queue
 
+        resources["startup_phase"] = "n1-gatekeeper-initialization"
+        agents_cfg = config.get("agents", {}) or {}
+        n1_cfg = dict(agents_cfg.get("n1", {}) or {})
+        n1_host = str(n1_cfg.get("host", config.get("ollama", {}).get("host", "127.0.0.1")))
+        n1_port = int(n1_cfg.get("port", ports["ollama"]))
+        n1_model = str(n1_cfg.get("model", config.get("ollama", {}).get("model", MODEL_NAME)))
+        n1_client = OllamaClient(
+            base_url=f"http://{n1_host}:{n1_port}",
+            model=n1_model,
+            timeout_seconds=float(n1_cfg.get("timeout_seconds", 86400)),
+            activity_sink=activity_hub.publish,
+            activity_source="n1-gatekeeper",
+        )
+        n1_gatekeeper = N1Gatekeeper(
+            n1_client,
+            live,
+            durable,
+            enabled=bool(n1_cfg.get("enabled", True)),
+            candidate_limit=int(n1_cfg.get("candidate_limit", 12)),
+            semantic_match_floor=float(n1_cfg.get("semantic_match_floor", 0.45)),
+            loop_repeat_threshold=int(n1_cfg.get("loop_repeat_threshold", 3)),
+            reasoning_loop_threshold=int(n1_cfg.get("reasoning_loop_threshold", 3)),
+            reasoning_similarity_floor=float(n1_cfg.get("reasoning_similarity_floor", 0.78)),
+        )
+        resources["n1_client"] = n1_client
+        resources["n1_gatekeeper"] = n1_gatekeeper
+        logging.info("N1 gatekeeper started model=%s endpoint=http://%s:%s", n1_model, n1_host, n1_port)
+
         resources["startup_phase"] = "conversation-store-initialization"
         service = build_conversation_service(
             root,
@@ -769,6 +798,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             prompt_queue=prompt_queue,
             coordinator=coordinator,
             durable=durable,
+            n1_gatekeeper=n1_gatekeeper,
         )
 
         statuses = {"redis": "ok", "prompt_queue": "ok", "postgres": "ok"}
@@ -791,13 +821,16 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         resources["startup_phase"] = "worker-initialization"
         if bool(worker_cfg.get("enabled", True)):
             ollama_cfg = config.get("ollama", {})
-            ollama_host = str(ollama_cfg.get('host', '127.0.0.1'))
+            n2_cfg = dict((config.get("agents", {}) or {}).get("n2", {}) or {})
+            ollama_host = str(n2_cfg.get("host", ollama_cfg.get('host', '127.0.0.1')))
+            ollama_port = int(n2_cfg.get("port", ports['ollama']))
+            n2_model = str(n2_cfg.get("model", ollama_cfg.get("model", MODEL_NAME)))
             worker_client = OllamaClient(
-                base_url=f"http://{ollama_host}:{ports['ollama']}",
-                model=ollama_cfg.get("model", MODEL_NAME),
+                base_url=f"http://{ollama_host}:{ollama_port}",
+                model=n2_model,
                 timeout_seconds=worker_cfg.get("model_timeout_seconds", 86400),
                 activity_sink=activity_hub.publish,
-                activity_source="worker",
+                activity_source="n2-worker",
                 crash_sink=live.record_model_buffer,
             )
             worker = PromptWorker(
@@ -810,10 +843,12 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
                 poll_ms=int(worker_cfg.get("poll_ms", 5000)),
                 deferred_append_planner=service.materialize_deferred_append,
                 context_injections=resources.get("context_injections"),
+                n1_gatekeeper=n1_gatekeeper,
             )
             worker.start()
             resources["worker"] = worker
-            logging.info("Prompt worker started consumer=%s", worker.consumer)
+            resources["n2_client"] = worker_client
+            logging.info("N2 worker started model=%s endpoint=http://%s:%s consumer=%s", n2_model, ollama_host, ollama_port, worker.consumer)
 
         resources["startup_phase"] = "chat-api-initialization"
         chat_server, chat_thread = start_chat_api(service, host=host, port=port)

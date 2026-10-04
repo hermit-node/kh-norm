@@ -1,90 +1,38 @@
-# Norm 0.53.11 portable source package
+# Norm 0.53.14 portable source package
 
-This tree is the Norm 0.53.11 maintenance source. See `docs/CURRENT_STATUS.md` and `docs/MAINTENANCE_VERIFICATION.md` for implemented work and the unpromoted deployment boundary.
+This ZIP is the exact **Norm 0.53.14** source payload consumed by Installer **1.6.6-unified**. It is source-only: `.venv` and compiled `core\norm.exe` are generated/reused during installation and are not shipped inside the portable source archive.
 
-It intentionally contains **no `.venv` and no compiled `norm.exe`**. Those are generated during installation. The canonical source/executable directory is `core\`; the historical `app\` layout is no longer used.
+For current runtime behavior see:
 
-Machine-specific persistent data and secrets are external to this package. `config\settings.ini` retains the current Norm service topology while runtime-owned paths are relocatable.
+- `docs/README.md` — current operator/runtime overview
+- `docs/CURRENT_STATUS.md` — current 0.53.14 state only
+- `docs/RELEASE_NOTES.md` — version/change history
+- `docs/MAINTENANCE_VERIFICATION.md` — verification evidence
+- `docs/FUTURE_IMPLEMENTATION_NOTES.md` — active backlog/design notes
 
-Use `package-manifest.json` as the installer's package contract.
-## 0.53.9 Ingrained Details and unresolved bits
+## Current 0.53.14 behavior
 
-Norm now interprets a mixed user turn into one actionable primary request plus optional **Ingrained Details** without altering the verbatim conversation message. Confident details are routed directly to existing durable homes (fact, preference, decision, constraint, task/backlog, assumption, or current-task context); only genuinely unplaced details enter PostgreSQL `unresolved_bits`. `unresolved_bit_trials` records later bounded attempts to fit those bits to real tasks. Promotion/application removes the temporary unresolved state; broad repeated irrelevance can garbage-collect a singly-mentioned bit after the configured trial/domain thresholds. Background-memory condensation sees unresolved state and aggregate trial evidence.
-
-DB3 prompt IDs are also carried through the chat API into durable task provenance, allowing `/queue` and `/queue-full` to report the actual matched task/current step rather than treating the first characters of the original mixed message as the runtime activity description.
-
-## 0.53.7 large-source streaming and semantic task storage
-
-Native `read_file` no longer rejects a source merely because the whole file is larger than a small byte cap. Sources may be arbitrarily large within the filesystem; reads stream through a 24 MiB processing buffer and return bounded model-facing chunks with byte/line continuation cursors. A 3 GiB per-pass processing allowance checkpoints and parks the same task for manual resume, while Norm-owned task working storage is capped at 54 GiB. Internal Markdown extraction/summary notes rotate at 5 MiB per physical file, and human-facing replies are capped at 384 KiB without truncating the durable task summary.
-
-Task-local image-analysis derivatives now live under task temp storage and are treated as reproducible cache. On verified terminal cleanup Norm keeps compact source/asset lineage and internal Markdown notes under the durable workspace retention area, but deletes reproducible brightness/contrast/analysis variants rather than preserving duplicate bytes. Source files are referenced by path/size/mtime/hash when practical and are not copied merely for task storage accounting.
-
-## Dynamic plugins
-
-Norm automatically hydrates local plugins from the configured runtime `plugins\` directory. Schema-2 plugins keep `plugin.json` and README metadata at the plugin root and executable code under `src/`; `plugin.json` declares the `src/main.py` injection point and one deterministic SHA-256 over the complete `src/` tree. Startup verifies those hashes, builds `plugins/.registry.json` from the folders actually present, and later schema/dispatch access rescans for hot swaps. The generated registry is disposable runtime state and is not shipped as package authority. Legacy third-party plugins using the older layout remain supported. A failed plugin refresh leaves the last-known-good hydrated version active and records the error in the generated registry.
-
-
-## PostgreSQL integrity recovery
-
-Startup UUID migration now repairs stale task lineage before rebuilding dependency edges. Exact surviving relationships are preferred, archived task history is used to locate the nearest surviving ancestor, and irrecoverable parents are explicitly detached instead of crashing startup. Deep-history pruning repairs surviving child lineage before deletion. Conversation pruning preserves memory-to-thread links before deleting source messages. Any remaining unthreaded memories are first remapped from surviving source-message links and then conservatively grouped into clearly labelled recovered threads; uncertain singletons remain separate.
-
-`tools\repair_norm_state.py --runtime-root C:\Norm` can run the same repair logic against an existing installation whose current EXE cannot start.
-
+- End-of-task durable summaries remain enabled. Structured generation is silent; the complete saved summary is emitted once as an `End-of-task durable summary` runtime block.
+- Durable thread/runtime summaries are current-state projections and may shrink. Superseded-state ledgers, embedded recent-message transcripts, and conversation-log sections are rejected/rebuilt.
+- Normal Ollama answer/thinking fragments publish as they arrive rather than waiting for newline/1 KiB display buffers.
+- Prompt interpretation remains enabled for intent and durable side information, but executable wording only removes exact clearly separable sidecar spans. Embedded task qualifiers remain intact.
+- `memory.consolidation_batch_chars=14000` remains a separate maintenance batching limit.
+- `vision_parse` 0.2.1 handles up to **10 PDF pages per call** with adaptive **1.5x / 2.2x / 2.9x** rendering, dense-layout splitting, completion-length fallback, repeat-loop retry, and bounded in-process page reuse.
+- `write_file` / `replace_text` retain guarded core mutation policy while delegating exact UTF-8 temporary-file writing to the private hash-verified `verbatim_lines` primitive.
+- Package-local 7-Zip remains the preferred archive backend.
+- N1/N2 checkpoint 1 is active: N2 remains the reasoning/worker path; user text and N2 user-facing output pass through N1 unchanged; N1 gates model-requested tools, reuses live verified answers when appropriate, records fresh observations, and can halt a judged repeated reasoning/tool turn before its tools execute. Fresh executor results reach N2 unchanged.
+- DB3 prompt-ID idempotency, the canonical shared PostgreSQL pool adapter, replay-validated deep-history maintenance, and the compact Redis validation pool remain part of the package.
 
 ## Current layout
 
-Maintained docs ship under `docs\`. Local plugins and Norm SSH material live under `plugins\` and `.ssh\` inside the runtime root. `%USERPROFILE%\Documents\Norm\workspace` is durable generated work; `%USERPROFILE%\Documents\Norm\temp` is disposable scratch/recovery state with conservative automated cleanup.
+- Runtime root is relocatable; installed path is written to `config\settings.ini`.
+- Runtime source/executable directory: `core\`.
+- Maintained docs: `docs\`.
+- Dynamic plugins: `plugins\`.
+- External durable workspace: `%USERPROFILE%\Documents\Norm\workspace`.
+- Disposable/recovery area: `%USERPROFILE%\Documents\Norm\temp`.
+- Persistent machine-specific state/secrets are external to the portable source package and are preserved/migrated by the installer according to its update rules.
 
-The first-party `plugins\backup` capability creates a **sensitive** installer-compatible full backup containing runtime/source, docs, plugins, `.ssh`, configured secrets, workspace, selected recovery state, PostgreSQL, and environment rebuild metadata. `.venv` itself remains excluded.
+## Package contract
 
-
-## 0.51.5 compatibility pass and built-in plugins
-
-`config\settings.ini` explicitly carries `paths.runtime_root`; portable media stores `.` and the installer rewrites the installed copy to its actual target (normally `C:\Norm`). Queued workers use the same resolved runtime configuration as the host, and optional image-analysis Python dependencies are validated only when image analysis is called.
-
-Package-managed built-in plugin subtrees are `plugins\backup`, `plugins\verbatim_lines`, `plugins\stegosplit_key`, `plugins\stegosplit_message`, `plugins\rotor5_cipher`, `plugins\vision_parse`, `plugins\file_read`, and `plugins\soft_delete`. Unrelated user plugins remain persistent across normal installer updates. The two StegoSplit plugins bundle their implementation rather than depending on an editable external checkout.
-
-`/backup` creates portable/source installer media; `/backup full` creates the sensitive private-state format; `/backup-zip` is the legacy full-backup alias. `/memory-condense` performs a safe incremental background-memory snapshot refresh and `/memory-condense -full` rebuilds that snapshot from the full surviving source set without creating a user task. `/condense-memories` remains intentionally absent until the complete fail-closed curated-memory housekeeping policy is implemented.
-
-
-## 0.53.1 operator console launcher
-
-`norm.exe --service` is launched headlessly with Windows `CREATE_NO_WINDOW` plus a hidden startup window, so the service process no longer leaves an inert console on the desktop. `Run-Norm.bat` still opens the three operator surfaces, but **Norm Runtime** prefers a separate Windows Terminal (`wt.exe`) window for the more compact/refined terminal host and falls back to the classic console when Windows Terminal is unavailable. Norm Prompt and Norm Replies keep their existing explicit console behavior. The Runtime stream already exits when `norm.exe` exits, so shutting Norm down also closes that terminal naturally.
-
-## 0.52.6 proportional plan verification
-
-The independent verifier now distinguishes blocking execution defects from advisory plan-shape/style concerns. Explicitly bounded cohesive work may remain together, and existing mechanisms plus execution-time tests are treated as evidence rather than invitations for speculative rejection. Repair cycles must materially address the reported blocker.
-
-## 0.52.4 canonical console/SSH ingress
-
-The local Rich console and SSH prompt GUI are producers/consumers of the same Redis DB3 ingress stream, group, and selected-thread key, with dispatch implemented once in `core\norm_runtime\prompt_ingress.py`. `tools\norm_gui_dispatch.py` is only a compatibility import shim. Both frontends use project `default`, and a normal ingress entry is acknowledged only after the chat response contains a durable task ID.
-
-Startup resources are owned transactionally at the process level: activity server, worker, and chat server are initialized inside one cleanup boundary and released on every startup failure before the outer retry. Normal startup no longer performs a PostgreSQL health probe outside the retry loop; generated PostgreSQL conninfo carries `connect_timeout=5`. Dynamic plugin hydration and execution are serialized by a process-global `RLock` because Python import state and stdout/stderr redirection are global.
-
-## 0.52.3 Windows service mode
-
-`Run-Norm.bat` starts the packaged runtime with `--service`. In that mode Ctrl+C/Ctrl-Break console events are ignored and logged; explicit control endpoints own shutdown. This isolates the minimized service process from accidental control events generated while using or closing companion console windows. Manual `norm.exe` invocation without `--service` keeps the prior KeyboardInterrupt behavior.
-
-## 0.52.2 console/startup behavior
-
-The activity/control API is reachable while PostgreSQL/schema initialization is still running, but advertises `initializing` rather than `ok` until chat/worker activation. GUI and Rich consoles support queue-ordered `/new [name]`, `/thread-list`, and `/thread-resume <name|id>` thread navigation. Legacy command aliases remain accepted but are omitted from current help text.
-Suppressed operator cleanup is two-layer: `/flush-suppressed` removes suppressed task rows plus matching parked GUI delivery records, while preserving only any in-flight retry tombstone required to prevent a late socket failure from requeuing the prompt.
-
-
-## 0.53.1 aiohttp transport
-
-Chat and activity/control HTTP are served by pinned aiohttp 3.14.3 on dedicated asyncio loops; on Windows those socket-only server threads explicitly use SelectorEventLoop to avoid Proactor accept-loop listener loss. Existing coordinator lifecycle semantics remain compatible; blocking runtime callbacks are offloaded with asyncio.to_thread. SSE disconnects are benign transport events.
-
-
-## 0.53.6 recovery cleanup and prompt-origin enforcement
-
-- Restores the existing `/inject-context` architecture end-to-end: current active task resolution, PostgreSQL persistence, and next-model-boundary delivery.
-
-Weekly cleanup and manual `/memory-condense` now run a recovery-state cleanup before rebuilding background memory. Verified terminal task trees shed obsolete `task_recovery_notes`; stale nonterminal trees with no live Redis membership are summarized from their task/recovery state into compact `task_history`, replay-validated, and only then pruned. Orphan archive rows are deleted only when a validated compact history record already covers their task ID; uncovered orphans are preserved and reported.
-
-The worker now enforces the existing `request_type`/`prompt_origin` provenance instead of treating every queued instruction as user-authored text. Norm-generated steps/recovery/verifier work are explicitly labelled internal in the model envelope, runtime child tasks inherit the true original user prompt, and generated child instructions no longer overwrite `original_user_prompt`.
-
-## 0.53.5 tuning
-
-This source adds ingress-level `/suppress-task` fallback for prompts that are still dispatching before task creation, reuses PyInstaller analysis state under `state\build-cache\pyinstaller`, and advances the cryptography pin to 50.0.2.
-PDF extraction now includes `vision_parse` (PyMuPDF rendering plus local vision reconciliation) so source text-layer corruption is not blindly propagated into durable notes/data.
+`package-manifest.json` is the installer-facing package contract. Plugin `plugin.json` files and source-tree SHA-256 identities are authoritative for package-managed plugin code. The portable package contains no user secrets.

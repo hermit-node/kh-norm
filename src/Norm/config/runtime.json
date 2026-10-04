@@ -26,6 +26,20 @@
   "ollama": {
     "model": "norm"
   },
+  "agents": {
+    "n1": {
+      "enabled": true,
+      "model": "norm",
+      "candidate_limit": 12,
+      "semantic_match_floor": 0.45,
+      "loop_repeat_threshold": 3,
+      "reasoning_loop_threshold": 3,
+      "reasoning_similarity_floor": 0.78
+    },
+    "n2": {
+      "model": "norm"
+    }
+  },
   "http": {
     "wait_timeout_seconds": 86400
   },
@@ -89,7 +103,8 @@
     "deep_history_retention_days": 30,
     "deep_history_interval_days": 21,
     "deep_history_max_tasks_per_pass": 500,
-    "deep_history_replay_samples": 3,
+    "deep_history_full_batch_source_tasks": 200,
+    "deep_history_full_samples_per_batch": 12,
     "deep_history_backup_dir": "%USERPROFILE%\\Documents\\Norm-backups\\history-maintenance",
     "recovery_stale_hours": 24,
     "recovery_cleanup_max_trees": 20
@@ -117,7 +132,7 @@
   "deletion_queue": {
     "db": 2,
     "stream": "norm:deletion:queue",
-    "trash_root": "{documents_root}\\trashbin",
+    "trash_root": "{runtime_root}\\state\\deletion-trash",
     "items_key": "norm:trash:items",
     "batches_key": "norm:trash:batches",
     "cross_volume_move_max_bytes": 268435456
@@ -161,10 +176,9 @@
   },
   "validation_pool": {
     "enabled": true,
-    "recent_window_seconds": 86400,
-    "observation_retention_seconds": 604800,
-    "durable_snapshot_interval_seconds": 43200,
-    "reuse_after_checks": 3,
+    "redis_min_age_seconds": 86400,
+    "migration_interval_seconds": 43200,
+    "history_retention_seconds": 1209600,
     "context_token_budget": 2500,
     "context_char_budget": 10000,
     "emergency_row_cap": 512

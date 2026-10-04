@@ -51,11 +51,20 @@ def load_path_settings(root: Path) -> dict[str, Path]:
     else:
         workspace = documents
     verbatim_raw = parser.get("paths", "verbatim_writer", fallback="").strip()
+    configured_verbatim = None
     if verbatim_raw:
         verbatim_path = Path(os.path.expandvars(os.path.expanduser(verbatim_raw)))
-        verbatim = verbatim_path.resolve() if verbatim_path.is_absolute() else (root / verbatim_path).resolve()
-    else:
-        verbatim = (root / "plugins" / "verbatim_lines" / "src" / "_cli.py").resolve()
+        configured_verbatim = verbatim_path.resolve() if verbatim_path.is_absolute() else (root / verbatim_path).resolve()
+    verbatim_candidates = [
+        configured_verbatim,
+        (root / "plugins" / "verbatim_lines" / "src" / "_cli.py").resolve(),
+        (root / "plugins" / "verbatim_lines" / "_cli.py").resolve(),
+    ]
+    verbatim = next((candidate for candidate in verbatim_candidates if candidate is not None and candidate.is_file()), None)
+    if verbatim is None:
+        # Preserve the configured path in the error when one was supplied; otherwise
+        # report the canonical schema-2 location.
+        verbatim = configured_verbatim or verbatim_candidates[1]
     temp_raw = parser.get("paths", "temp_root", fallback="temp").strip() or "temp"
     temp_path = Path(os.path.expandvars(os.path.expanduser(temp_raw)))
     temp_root = temp_path.resolve() if temp_path.is_absolute() else (documents / temp_path).resolve()

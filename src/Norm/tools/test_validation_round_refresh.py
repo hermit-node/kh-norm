@@ -1,92 +1,80 @@
 from __future__ import annotations
 
+import copy
+import json
 import sys
 from pathlib import Path
-from threading import Event
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "core"))
 
-from norm_runtime.prompt_queue import PromptJob
-from norm_runtime.prompt_worker import PromptWorker
-
-
-class Queue:
-    def __init__(self):
-        self.rounds = 0
-    def task_rounds(self, _task_id):
-        return self.rounds
-    def add_task_rounds(self, _task_id, amount):
-        self.rounds += amount
-        return self.rounds
+from norm_runtime.n1_gatekeeper import N1Gatekeeper
 
 
 class Live:
     def __init__(self):
         self.count = 45
-    def global_validation(self, subject, **_kwargs):
-        rows = self.recent_global_validations()
-        return rows[0] if subject == "PE version" else None
-    def recent_global_validations(self, **_kwargs):
+        self.value = "0.53.14"
+        self.record_id = "version-record"
+        self.recorded = []
+
+    def validation_candidates(self, **_kwargs):
         return [{
-            "subject": "PE version", "value": "0.53.1",
-            "recent_checks": self.count, "generation_checks": self.count,
-            "source_counts": {"tool": self.count}, "storage": "redis_live",
-            "generation_started_at": "2026-10-01T00:00:00+00:00",
-            "last_checked_at": "2026-10-02T12:00:00+00:00",
+            "record_id": self.record_id,
+            "tool": "read_file",
+            "target": r"C:\Norm\Norm.exe",
+            "description": "deployed Norm version",
+            "value": self.value,
+            "num_checks": self.count,
+            "previous_value": "0.53.13",
+            "changed_at": "2026-10-04T12:00:00+00:00",
+            "description_match": 0.98,
+            "storage": "redis_live",
         }]
 
+    def record_global_validations(self, task_id, step_id, items):
+        self.recorded.append((task_id, step_id, copy.deepcopy(items)))
+        self.count += 1
+        self.value = str(items[0]["value"])
+        return self.validation_candidates()
 
-class Tools:
-    def __init__(self, live):
-        self.live = live
-    def instructions(self):
-        return "TOOLS"
-    def schemas(self):
-        return [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}]
-    def execute(self, name, arguments):
-        assert name == "lookup"
-        self.live.count = 46
-        return {"ok": True, "value": "0.53.1"}
+    def invalidate_validation_target(self, _target):
+        return 0
 
 
 class Client:
     def __init__(self):
-        self.prompts = []
-    def chat_with_tools(self, messages, schemas, **_kwargs):
-        self.prompts.append(messages[0]["content"])
-        if len(self.prompts) == 1:
-            return {"content": "", "thinking": "", "done_reason": "", "eval_count": 1,
-                    "tool_calls": [{"function": {"name": "lookup", "arguments": {}}}]}
-        return {"content": "done", "thinking": "", "done_reason": "stop", "eval_count": 1, "tool_calls": []}
+        self.decision_calls = 0
+
+    def generate(self, prompt, **_kwargs):
+        if "Decide whether the existing LIVE Redis verification record" in prompt:
+            self.decision_calls += 1
+            assert '"num_checks": 45' in prompt
+            return json.dumps({
+                "decision": "reuse",
+                "record_id": "version-record",
+                "reason": "same deployed-version fact already has repeated live verification",
+            })
+        if "fresh information tool just returned" in prompt:
+            return json.dumps({"value": "0.53.14"})
+        if "rabbit hole" in prompt:
+            return json.dumps({"instruction": "Use the existing version evidence and continue."})
+        raise AssertionError(prompt[:200])
 
 
-w = PromptWorker.__new__(PromptWorker)
-w.queue = Queue()
-w.live = Live()
-w.durable = None
-w.client = Client()
-w._drain = Event()
-w._slice_limits = lambda: (4, 8)
-w._validation_pool_config = lambda: {
-    "enabled": True, "recent_window_seconds": 86400, "observation_retention_seconds": 604800,
-    "emergency_row_cap": 512, "context_token_budget": 2500, "context_char_budget": 10000,
-    "reuse_after_checks": 3, "durable_snapshot_interval_seconds": 43200,
-}
-w._consume_context_injections = lambda _job: []
-w._suppression_requested = lambda _task_id: False
-w._verify_pending = lambda *_args, **_kwargs: []
-w._persist_thinking_now = lambda *_args, **_kwargs: 0
-w._persist_evidence_now = lambda *_args, **_kwargs: None
-
-job = PromptJob(
-    message_id="m", task_id="t", step_id="s", prompt="check", project_id="p", context="",
-    attempt=0, created_at=0.0, metadata={}, chain_id="", previous_prompt_id="", next_prompt_id="",
-    chain_index=0, recovery_attempted=False,
+gate = N1Gatekeeper(Client(), Live())
+outcome = gate.before_tool(
+    task_id="t",
+    step_id="s",
+    name="read_file",
+    arguments={
+        "path": r"C:\Norm\Norm.exe",
+        "n1_target": r"C:\Norm\Norm.exe",
+        "n1_need": "what version of Norm is deployed",
+    },
 )
-result = w._run_tool_slice(job, "Find PE version only if another lookup is worth it.", Tools(w.live))
-assert result["answer"] == "done"
-assert "PE version = 0.53.1" in w.client.prompts[0]
-assert "recent_24h=45" in w.client.prompts[0]
-assert "recent_24h=46" in w.client.prompts[1], w.client.prompts[1]
-print("PASS: one global Redis verification pool is refreshed before every tool-decision round")
+assert outcome.execute is False
+assert outcome.result["n1_reused"] is True
+assert outcome.result["value"] == "0.53.14"
+assert outcome.result["num_checks"] == 45
+print("PASS: N1 sees the live Redis count before deciding and returns the existing verified answer without invoking N2's proposed tool")

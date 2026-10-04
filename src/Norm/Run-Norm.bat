@@ -71,7 +71,30 @@ curl.exe -fsS "%CHAT_HEALTH%" >NUL 2>&1
 if errorlevel 1 (echo   Chat API:     NOT HEALTHY  %CHAT_HEALTH%) else (echo   Chat API:     healthy)
 curl.exe -fsS "%ACTIVITY_HEALTH%" >NUL 2>&1
 if errorlevel 1 (echo   Activity API: NOT HEALTHY  %ACTIVITY_HEALTH%) else (echo   Activity API: healthy)
-echo No second instance was launched. Check: %ROOT%logs\norm-runtime.log
+echo.
+echo norm.exe process inventory:
+tasklist /FI "IMAGENAME eq norm.exe" /FO TABLE
+echo.
+echo Recent startup diagnostics:
+for %%L in (norm-bootstrap.stderr.log norm-bootstrap.stdout.log norm-runtime.log server.stderr.log) do (
+  if exist "%ROOT%logs\%%L" (
+    echo ===== %%L =====
+    powershell.exe -NoProfile -Command "Get-Content -LiteralPath '%ROOT%logs\%%L' -Tail 30 -ErrorAction SilentlyContinue"
+  )
+)
+echo.
+echo A stale norm.exe can block a replacement even when both APIs are dead.
+if not defined NORM_RECOVERY_ATTEMPTED (
+  choice /C YN /N /M "Terminate any stale norm.exe and retry once? [Y/N] "
+  if errorlevel 2 goto startup_failed
+  set "NORM_RECOVERY_ATTEMPTED=1"
+  taskkill /IM norm.exe /F >NUL 2>&1
+  ping.exe -n 3 127.0.0.1 >NUL
+  goto start_service
+)
+
+:startup_failed
+echo To test the runtime visibly, open PowerShell and run:  cd C:\Norm; .\core\norm.exe
 pause
 exit /b 1
 
@@ -80,17 +103,14 @@ echo Norm is healthy at %CHAT_HEALTH%
 if /I "%~1"=="--service-only" exit /b 0
 
 pushd "%ROOT%"
-where wt.exe >NUL 2>&1
-if not errorlevel 1 (
-  rem Use the more compact/refined Windows Terminal host for the read-only runtime stream.
-  start "" wt.exe -w new new-tab --title "Norm Runtime" "%PY%" -u "%ROOT%tools\norm_gui_stream.py"
-) else (
-  rem Fall back to the classic console host if Windows Terminal is unavailable.
-  start "Norm Runtime" "%PY%" -u "%ROOT%tools\norm_gui_stream.py"
-)
-start "Norm Replies" "%PY%" -u "%ROOT%tools\norm_gui_reply.py"
-start "Norm Prompt" "%PY%" -u "%ROOT%tools\norm_gui_prompt.py"
+"%PY%" "%ROOT%tools\start_operator_consoles.py"
+set "CONSOLE_RC=%ERRORLEVEL%"
 popd
+if not "%CONSOLE_RC%"=="0" (
+  echo ERROR: One or more Norm operator consoles could not be launched. Exit code %CONSOLE_RC%.
+  pause
+  exit /b %CONSOLE_RC%
+)
 
 endlocal
 exit /b 0

@@ -57,6 +57,13 @@ def build_postgres_pool(root: Path):
     return pool
 
 
+def close_postgres_pool(root: Path) -> None:
+    """Close this process's shared PostgreSQL pools before interpreter finalization."""
+    pool = postgres_pool_class(root)
+    if pool.configured():
+        pool.close()
+
+
 def _expand_runtime_values(value: Any, substitutions: dict[str, str]) -> Any:
     if isinstance(value, dict):
         return {key: _expand_runtime_values(item, substitutions) for key, item in value.items()}
@@ -105,6 +112,13 @@ def load_config(root: Path) -> dict[str, Any]:
         config.setdefault(section, {})["host"] = redis_host
         config[section]["port"] = ports["redis"]
     config.setdefault("ollama", {})["host"] = resolve_network_host(network, "ollama_host")
+    ollama_cfg = config.get("ollama", {})
+    agents = config.setdefault("agents", {})
+    for role in ("n1", "n2"):
+        role_cfg = agents.setdefault(role, {})
+        role_cfg.setdefault("host", ollama_cfg.get("host", "127.0.0.1"))
+        role_cfg.setdefault("port", ports["ollama"])
+        role_cfg.setdefault("model", ollama_cfg.get("model", "norm"))
     config.setdefault("http", {})["host"] = resolve_network_host(network, "norm_host", bind=True)
     config.setdefault("activity", {})["host"] = resolve_network_host(network, "activity_host", bind=True)
     pg = load_postgres_settings(root)
@@ -202,6 +216,7 @@ def build_conversation_service(
     prompt_queue: RedisPromptQueue | None = None,
     coordinator=None,
     durable=None,
+    n1_gatekeeper=None,
 ) -> ConversationService:
     config = load_config(root)
     pg_cfg = config["postgres"]
@@ -215,12 +230,14 @@ def build_conversation_service(
         store.ensure_schema()
     ollama_cfg = config.get("ollama", {})
     ports = load_ports(root)
-    ollama_host = str(ollama_cfg.get("host", "127.0.0.1"))
+    n2_cfg = dict((config.get("agents", {}) or {}).get("n2", {}) or {})
+    ollama_host = str(n2_cfg.get("host", ollama_cfg.get("host", "127.0.0.1")))
+    ollama_port = int(n2_cfg.get("port", ports["ollama"]))
     client = OllamaClient(
-        base_url=f"http://{ollama_host}:{ports['ollama']}",
-        model=ollama_cfg.get("model", "norm"),
+        base_url=f"http://{ollama_host}:{ollama_port}",
+        model=n2_cfg.get("model", ollama_cfg.get("model", "norm")),
         activity_sink=activity_sink,
-        activity_source="chat",
+        activity_source="n2-chat",
     )
     memory_cfg = config.get("memory", {})
     ingrained_cfg = config.get("ingrained_details", {})
@@ -273,7 +290,7 @@ def build_conversation_service(
             connection_config={
                 "redis": config.get("redis", {}),
                 "prompt_queue": config.get("prompt_queue", {}),
-                "ollama_base_url": f"http://{ollama_host}:{ports['ollama']}",
+                "ollama_base_url": f"http://{ollama_host}:{ollama_port}",
                 "authority": config.get("_authority", {}),
             },
         )
@@ -288,6 +305,7 @@ def build_conversation_service(
         prompt_queue=prompt_queue,
         coordinator=coordinator,
         durable=durable,
+        n1_gatekeeper=n1_gatekeeper,
         wait_timeout_seconds=float(config.get("http", {}).get("wait_timeout_seconds", 86400)),
         persistent_instructions=list(config.get("persistent_instructions", [])),
         ingrained_details_enabled=bool(ingrained_cfg.get("enabled", True)),
@@ -295,6 +313,7 @@ def build_conversation_service(
         unresolved_explore_every_tasks=int(ingrained_cfg.get("explore_every_tasks", 4)),
         unresolved_delete_after_trials=int(ingrained_cfg.get("delete_after_trials", 15)),
         unresolved_delete_after_domains=int(ingrained_cfg.get("delete_after_distinct_domains", 3)),
+        runtime_root=root,
     )
 
 

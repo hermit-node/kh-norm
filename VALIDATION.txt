@@ -1,28 +1,33 @@
 Norm: 0.53.11
 Installer: 1.6.5-unified
-Public build date: 2026-10-02
-Portable source SHA-256: 5491898099d9da236bb2ff93b286161e1a0b582e4fd4a4bad5380b7cbf05b3c5
-Installer EXE SHA-256: 0504d170486d89f289bd7502ba9e8180b0732bcd1a424ddad6696c7f5ad7ce1d
+Maintenance build: 2026-10-02
 
-PASS public source-tree guard: 127 files
-PASS public source-ZIP guard: 127 files
-PASS public topology/credential scan
-PASS source ZIP contains public norm-imprint.json and excludes private norm-imprint.local.json and generated plugins/.registry.json
-PASS all nine built-in plugins use schema 2: plugin.json + README + src/, entrypoint src/main.py, deterministic src-tree SHA-256
-PASS all nine built-in plugins hydrate with zero errors and expose 42 native tools
-PASS matching plugin source SHA is treated as the same code build; metadata-only edits do not reload code
-PASS installer manages all nine built-ins independently and preserves unrelated user plugin folders
-PASS installer Environment regressions, including legacy external .env PostgreSQL migration
-PASS read-only live Environment preflight preserves existing customized PostgreSQL routing values
-PASS existing PostgreSQL password detected without printing or packaging it
-PASS maintenance suite: 22 tests, including plugin source identity, UTC-aware timestamps and per-round shared-pool refresh
-PASS real Redis/PostgreSQL validation integration: rolling 24h counts, cross-task reuse, changed-value reset to 1, concurrent increments, 12h durable checkpoint behavior, generation archival, outage retention/retry
-PASS real Redis suppression/resume: suppress removes live queue state, startup does not requeue suppressed work, resume restores exactly once and duplicate resume is idempotent
-PASS no direct runtime psycopg.connect calls outside the restricted PostgreSQL pool
+Portable payload SHA-256:
+61fbcea6d4eb29592c1f5f24679799595db686fb2bd9f4c8b4af0dcf708280f0
+
+Installer EXE SHA-256:
+eccdd7d81dc8b0b81781237cc94eeba2bf375b1b55efd40896b2c21145d33366
+
+PASS live source rollback backup created before beta work
+PASS 84 shipped Python files parsed; JSON/INI parsed; package version remains 0.53.11
+PASS enforce_* = false allows flexible path; true returns HARDLOCKED
+PASS file_read oversized-line continuation resumes without rereading line prefix
+PASS recovery handoff path is external Documents\Norm\temp\recovery\handoff-notes
+PASS Redis-backed reversible trash stage/restore using isolated validation keys
+PASS cross-volume trash path copies, verifies size, commits destination, then removes source
+PASS Windows SelectorEventLoop branch
+PASS live aiohttp start -> /health -> shutdown
+PASS installer version-first package discovery
+PASS companion SHA-256 verification/rejection
+PASS imprint merge/save and secret-like imprint rejection
+PASS existing config backup + new-schema migration
+PASS explicit precedence: old matching value > imprint > new package default
+PASS existing external secrets untouched during migration imprint pass
+PASS ingress PEL reconciliation: deleted pending payloads ACKed/skipped
 PASS network-map allowlist/honeypot policy tests
-PASS ingress PEL reconciliation regression
-PASS frozen Installer 1.6.5 self-test: ok 1.6.5-unified auto-source
-PASS frozen installer auto-source validate exit 0
-PASS frozen installer explicit-source validate exit 0
+PASS Python installer --validate-only selects exact .norm-local 0.53.11 payload
+PASS compiled Norm-Installer.exe --validate-only exit code 0
 
-Public package defaults are topology-neutral. Machine-specific settings belong only in ignored/private local imprint and external secrets files.
+Known deferred work:
+- Global shared validation pool / recent-observation redesign remains unfinished and
+  is intentionally not promoted as a completed feature in this maintenance installer.
