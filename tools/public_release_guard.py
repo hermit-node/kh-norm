@@ -27,6 +27,14 @@ SECRET_ASSIGNMENT_RE = re.compile(
     rb"\s*=\s*([^\r\n]*)"
 )
 
+DEPLOYMENT_CONTENT_PATTERNS = (
+    re.compile(rb"\bprivate-storage(?:-docker)?\b", re.I),
+    re.compile(rb"\bprivate-tailnet\.example\b", re.I),
+    re.compile(rb"\bLocalExample\b", re.I),
+    re.compile(rb"\bconsole\.example\b", re.I),
+    re.compile(rb"\b100\.(?!64\.0\.0\b)(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.(?:\d{1,3})\.(?:\d{1,3})\b"),
+)
+
 
 class PublicReleaseGuardError(RuntimeError):
     pass
@@ -49,6 +57,9 @@ def _blocked_name(relative: PurePosixPath) -> str | None:
 def _blocked_content(data: bytes) -> str | None:
     if any(marker in data for marker in PRIVATE_KEY_MARKERS):
         return "private-key material"
+    for pattern in DEPLOYMENT_CONTENT_PATTERNS:
+        if pattern.search(data):
+            return f"deployment-specific topology matched {pattern.pattern!r}"
     for match in SECRET_ASSIGNMENT_RE.finditer(data):
         value = match.group(1).strip().strip(b"''\"")
         if value and value not in {b"<redacted>", b"<placeholder>", b"CHANGEME", b"changeme"}:
@@ -73,8 +84,6 @@ def scan_tree(root: Path) -> int:
             continue
         relative = PurePosixPath(path.relative_to(root).as_posix())
         if "__pycache__" in relative.parts or path.suffix.lower() == ".pyc":
-            continue
-        if relative.as_posix() in {"plugins/.registry.json", "plugins/.registry.json.writing"}:
             continue
         _check(relative, path.read_bytes())
         checked += 1

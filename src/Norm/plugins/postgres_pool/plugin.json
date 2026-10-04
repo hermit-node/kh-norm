@@ -1,15 +1,17 @@
 {
   "schema_version": 2,
   "name": "PostgreSQL Pool",
-  "version": "1.0.0",
-  "date": "2026-10-02",
+  "version": "1.0.1",
+  "date": "2026-10-03",
   "entrypoint": "src/main.py",
-  "description": "Own the bounded process-global PostgreSQL connection pools and expose one restricted diagnostic tool.",
+  "description": "Expose controlled status, read-only query, and Norm-runtime write tools over the canonical shared PostgreSQL pools.",
   "capabilities": [
     "postgresql",
     "connection pool",
     "database health",
+    "read-only query",
+    "norm runtime writes",
     "bounded connections"
   ],
-  "sha256": "1c00cf18f9129acbce8fa6473cf84a121076e8810ab11d0e76984ba7112e05f9"
+  "sha256": "1a31b8fe6b01962348d0f90c361ac75baf8cacafc4a429f415d504d504185e9d"
 }

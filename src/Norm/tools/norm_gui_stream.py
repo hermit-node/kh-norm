@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.rule import Rule
 from rich.text import Text
 
-from norm_gui_common import acquire_windows_mutex, endpoints, norm_process_running
+from norm_gui_common import acquire_windows_mutex, endpoints
 
 _WINDOWS_CTRL_HANDLER = None
 _NOISE = (
@@ -116,13 +116,7 @@ def main() -> int:
 
     was_connected = False
     warned = False
-    seen_norm = norm_process_running()
-    startup_deadline = time.monotonic() + 60
     while True:
-        running = norm_process_running()
-        seen_norm = seen_norm or running
-        if not running and (seen_norm or time.monotonic() >= startup_deadline):
-            return 0
         try:
             with request.urlopen(ep["events"], timeout=None) as response:
                 if was_connected:

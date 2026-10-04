@@ -164,11 +164,86 @@ class ConversationStore:
             return [{"message_id":r[0],"role":r[1],"content":r[2],"created_at":r[3].isoformat()} for r in rows]
 
     def latest_summary(self, thread_id: str) -> str:
+        state = self.latest_summary_state(thread_id)
+        return str(state.get("summary") or "")
+
+    def latest_summary_state(self, thread_id: str) -> dict:
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(sql.SQL("SELECT summary FROM {}.thread_summaries WHERE thread_id=%s ORDER BY version DESC LIMIT 1").format(
-                sql.Identifier(self.schema)), (thread_id,))
+            cur.execute(sql.SQL(
+                "SELECT summary,covers_through_message_id,version,created_at "
+                "FROM {}.thread_summaries WHERE thread_id=%s ORDER BY version DESC LIMIT 1"
+            ).format(sql.Identifier(self.schema)), (thread_id,))
             row = cur.fetchone()
-            return row[0] if row else ""
+        if not row:
+            return {
+                "summary": "",
+                "covers_through_message_id": None,
+                "version": 0,
+                "created_at": None,
+            }
+        return {
+            "summary": str(row[0] or ""),
+            "covers_through_message_id": str(row[1]) if row[1] else None,
+            "version": int(row[2] or 0),
+            "created_at": row[3].isoformat() if row[3] else None,
+        }
+
+    def messages_since(
+        self,
+        thread_id: str,
+        after_message_id: str | None,
+        *,
+        through_message_id: str | None = None,
+    ) -> list[dict]:
+        """Return exact thread messages after the last successfully covered message.
+
+        This is intentionally cursor-based rather than a fixed "last N" window so a
+        failed summary refresh cannot permanently lose later updates.
+        """
+        with self._connect() as conn, conn.cursor() as cur:
+            s = sql.Identifier(self.schema)
+            lower = None
+            upper = None
+            if after_message_id:
+                cur.execute(sql.SQL(
+                    "SELECT m.created_at,m.message_id FROM {}.messages m "
+                    "JOIN {}.message_threads mt ON mt.message_id=m.message_id "
+                    "WHERE mt.thread_id=%s AND m.message_id=%s LIMIT 1"
+                ).format(s, s), (thread_id, after_message_id))
+                lower = cur.fetchone()
+            if through_message_id:
+                cur.execute(sql.SQL(
+                    "SELECT m.created_at,m.message_id FROM {}.messages m "
+                    "JOIN {}.message_threads mt ON mt.message_id=m.message_id "
+                    "WHERE mt.thread_id=%s AND m.message_id=%s LIMIT 1"
+                ).format(s, s), (thread_id, through_message_id))
+                upper = cur.fetchone()
+
+            clauses = [sql.SQL("mt.thread_id=%s")]
+            params: list = [thread_id]
+            if lower:
+                clauses.append(sql.SQL("(m.created_at,m.message_id) > (%s,%s)"))
+                params.extend([lower[0], lower[1]])
+            if upper:
+                clauses.append(sql.SQL("(m.created_at,m.message_id) <= (%s,%s)"))
+                params.extend([upper[0], upper[1]])
+            statement = sql.SQL(
+                "SELECT m.message_id,m.role,m.content,m.created_at FROM {}.messages m "
+                "JOIN {}.message_threads mt ON mt.message_id=m.message_id WHERE "
+            ).format(s, s) + sql.SQL(" AND ").join(clauses) + sql.SQL(
+                " ORDER BY m.created_at,m.message_id"
+            )
+            cur.execute(statement, tuple(params))
+            rows = cur.fetchall()
+        return [
+            {
+                "message_id": str(r[0]),
+                "role": str(r[1]),
+                "content": str(r[2]),
+                "created_at": r[3].isoformat(),
+            }
+            for r in rows
+        ]
 
     def save_summary(self, thread_id: str, summary: str, covers_through_message_id: str | None = None) -> None:
         with self._connect() as conn, conn.cursor() as cur:

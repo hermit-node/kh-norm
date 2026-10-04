@@ -253,6 +253,9 @@ def _activity_app(
                     if stop_all is None:
                         return web.json_response({"error": "stop-all control unavailable"}, status=503)
                     return web.json_response(await _call(stop_all, path.endswith("-now")))
+            except (KeyError, ValueError) as exc:
+                logging.warning("Activity control conflict path=%s error=%s", path, exc)
+                return web.json_response({"error": str(exc)}, status=409)
             except Exception:
                 logging.exception("Activity control operation failed path=%s", path)
                 return web.json_response({"error": "control operation failed"}, status=503)

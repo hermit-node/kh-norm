@@ -18,15 +18,28 @@ class DurableStub:
     def __init__(self):
         self.suppressed = set()
         self.payloads = {}
+        self.deleted = set()
     def is_task_tree_suppressed(self, task_id): return task_id in self.suppressed
-    def root_task_id(self, task_id): return task_id
-    def task_status(self, task_id): return "suppressed" if task_id in self.suppressed else "queued"
+    def root_task_id(self, task_id): return task_id if task_id not in self.deleted else None
+    def task_status(self, task_id):
+        if task_id in self.deleted:
+            return None
+        return "suppressed" if task_id in self.suppressed else "queued"
     def task_tree(self, task_id):
         return [{"task_id": task_id, "status": self.task_status(task_id), "task_kind": "root", "task_depth": 0}]
     def suppress_task_tree(self, task_id, member_ids, reason, payload):
+        if task_id in self.deleted:
+            raise KeyError(f"Unknown task: {task_id}")
         self.suppressed.update(member_ids)
         self.payloads[task_id] = payload
         return {"task_id": task_id, "title": "test"}
+    def suppressed_task_ids(self, limit=10000):
+        return list(self.suppressed)[:limit]
+    def flush_suppressed(self):
+        ids = list(self.suppressed)
+        self.deleted.update(ids)
+        self.suppressed.clear()
+        return len(ids)
 
 def make_job(task_id: str) -> PromptJob:
     return PromptJob(
@@ -65,13 +78,30 @@ def main():
         worker._suppress_requested = set()
         worker._soft_delete_task_assets = lambda *a, **k: None
         worker.active_task_id = lambda: None
+        active = {"task_id": task_id}
+        worker.active_task_id = lambda: active["task_id"]
+        worker.live = type("LiveStub", (), {"cleanup": lambda self, task_id: None})()
         result = worker.request_suppress_task(task_id, "regression")
         assert result["suppressed"] is True, result
+        assert task_id in worker._suppress_requested, worker._suppress_requested
         assert queue.snapshot_task_jobs(task_id)["jobs"] == []
         payload = durable.payloads[task_id]
         assert len(payload["tasks"][0]["queue"]["jobs"]) == 1
-        print("PASS suppress captures once and removes live Redis queue state")
+        print("PASS suppress captures once and keeps active transition marker until worker acknowledgement")
 
+        flushed = worker.flush_suppressed()
+        assert flushed["deleted"] == 1, flushed
+        assert task_id in worker._suppress_requested, worker._suppress_requested
+        again = worker.request_suppress_task(task_id, "duplicate during unwind")
+        assert again["suppressed"] is False and "already in progress" in again["reason"], again
+        worker._handle_suppressed("unused", job, "cancel acknowledged after flush")
+        assert task_id not in worker._suppress_requested, worker._suppress_requested
+        active["task_id"] = None
+        print("PASS suppress -> flush -> suppress-again race stays idempotent while cancellation unwinds")
+
+        # Restore durable state for the existing startup/resume assertions below.
+        durable.deleted.discard(task_id)
+        durable.suppressed.add(task_id)
         queue.enqueue(job)
         claimed = queue.read_one(block_ms=1)
         assert claimed is not None

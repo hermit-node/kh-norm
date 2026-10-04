@@ -67,36 +67,43 @@ class ContextTests(unittest.TestCase):
         w._runtime_config=lambda: {"validation_pool": cfg or {}}
         return w
 
-    def test_budget_and_emergency_cap(self):
-        w=self.worker({"context_char_budget": 2200, "context_token_budget": 1000, "max_context_items": 1})
-        requested=[]
-        def recent(**kw):
-            requested.append(kw["limit"])
-            return [{"subject": f"fact-{i}", "value": "v", "recent_checks": 9, "generation_checks": 20,
-                     "storage": "redis_live"} for i in range(100)]
-        w.live=SimpleNamespace(global_validation=lambda *a,**k: None,recent_global_validations=recent)
+    def test_context_is_policy_not_full_pool_dump(self):
+        w=self.worker({"context_char_budget": 2200, "context_token_budget": 1000})
+        w.live=SimpleNamespace()
         w.durable=None
         text=w._validation_context(SimpleNamespace(task_id="test"))
-        self.assertEqual(requested,[512])
+        self.assertIn("verification_preflight",text)
+        self.assertIn("PostgreSQL history is optional",text)
+        self.assertNotIn("fact-",text)
         self.assertLessEqual(len(text),2200)
-        self.assertIn("omitted",text)
-        self.assertIn("never a permission gate",text)
-        self.assertIn("fact-1",text)
 
     def test_empty_context_respects_tiny_budget(self):
         w=self.worker({"context_char_budget": 20})
-        w._recent_validations=lambda *args: []
         self.assertLessEqual(len(w._validation_context(None)),20)
 
-    def test_durable_fallback_does_not_invent_live_counts(self):
+    def test_postgres_history_is_explicit_only(self):
         w=self.worker()
-        w.live=SimpleNamespace(global_validation=lambda *a,**k: None)
-        w.durable=SimpleNamespace(global_validations=lambda *a,**k:[{"subject":"x","current_value":"v","generation_check_count":42}])
-        row=w._recent_validations(SimpleNamespace(task_id="t"),["x"])[0]
-        self.assertIsNone(row["recent_checks"])
-        self.assertEqual(row["generation_checks"],42)
-        reply=w._execute_validation_tool(SimpleNamespace(task_id="t"),"review_validations",{"subjects":["x"]})
-        self.assertIn("unknown",reply["reviewed"][0]["reason"])
+        calls={"pg":0}
+        candidate={
+            "record_id":"abc","tool":"read_file","target":r"C:\\Norm\\x.txt",
+            "description":"deployed version","value":"0.53.13","num_checks":4,
+            "previous_value":"0.53.12","changed_at":"2026-10-03T20:00:00+00:00",
+            "description_match":1.0,
+        }
+        w.live=SimpleNamespace(validation_candidates=lambda **_kw:[candidate])
+        def history(**kwargs):
+            calls["pg"]+=1
+            return {"storage":"postgres_history","target":kwargs["target"],"records":[]}
+        w.durable=SimpleNamespace(validation_history=history)
+        state={}
+        reply=w._execute_validation_tool(
+            SimpleNamespace(task_id="t"),"verification_preflight",
+            {"tool":"read_file","target":r"C:\\Norm\\x.txt","description":"what Norm version is deployed"},state,
+        )
+        self.assertTrue(reply["ok"]); self.assertEqual(calls["pg"],0)
+        self.assertEqual(reply["recommended_record_id"],"abc")
+        reply=w._execute_validation_tool(SimpleNamespace(task_id="t"),"verification_history",{},state)
+        self.assertTrue(reply["ok"]); self.assertEqual(calls["pg"],1)
 
     def test_validation_timestamp_normalization_is_utc_aware(self):
         naive=PromptWorker._parse_iso_timestamp("2026-10-02T12:00:00")
@@ -107,38 +114,11 @@ class ContextTests(unittest.TestCase):
         self.assertEqual(eastern.tzinfo,timezone.utc)
         self.assertEqual(naive,eastern)
 
-    def test_shared_pool_refreshes_before_each_tool_decision_round(self):
-        w=self.worker()
-        w._slice_limits=lambda:(4,8)
-        rounds={"n":0}
-        w.queue=SimpleNamespace(task_rounds=lambda _tid:0, add_task_rounds=lambda _tid,n: n + rounds["n"])
-        seen=[]
-        def validation(_job):
-            seen.append(len(seen)+1)
-            return f"shared-pool-count={45+len(seen)}"
-        w._validation_context=validation
-        w._consume_context_injections=lambda _job:[]
-        w._suppression_requested=lambda _tid:False
-        w._drain=SimpleNamespace(is_set=lambda:False)
-        w.durable=None
-        w._persist_thinking_now=lambda *a:0
-        w._persist_evidence_now=lambda *a:None
-        w._verify_pending=lambda *a:[]
-        class Client:
-            def __init__(self): self.prompts=[]
-            def chat_with_tools(self,messages,*args,**kwargs):
-                self.prompts.append(messages[0]["content"])
-                if len(self.prompts)==1:
-                    return {"tool_calls":[{"function":{"name":"lookup","arguments":{}}}],"content":"","thinking":""}
-                return {"tool_calls":[],"content":"done","thinking":"","done_reason":"stop"}
-        w.client=Client()
-        tools=SimpleNamespace(instructions=lambda:"TOOLS", schemas=lambda:[], execute=lambda *_a,**_k:{"ok":True})
-        job=SimpleNamespace(task_id="t",step_id="work",metadata={},request_type="step",prompt="test")
-        result=w._run_tool_slice(job,"test",tools)
-        self.assertEqual(result["answer"],"done")
-        self.assertEqual(seen,[1,2])
-        self.assertIn("shared-pool-count=46",w.client.prompts[0])
-        self.assertIn("shared-pool-count=47",w.client.prompts[1])
+    def test_information_tool_requires_preflight(self):
+        self.assertTrue(PromptWorker._information_tool_requires_verification("read_file"))
+        self.assertTrue(PromptWorker._information_tool_requires_verification("run_command"))
+        self.assertFalse(PromptWorker._information_tool_requires_verification("write_file"))
+        self.assertFalse(PromptWorker._information_tool_requires_verification("verification_checkin"))
 
 
 class PluginTests(unittest.TestCase):
@@ -171,7 +151,7 @@ class PluginTests(unittest.TestCase):
 
     def test_all_first_party_identities(self):
         folders=[p for p in (ROOT/"plugins").iterdir() if p.is_dir() and not p.name.startswith((".","_"))]
-        self.assertEqual(len(folders),9)
+        self.assertEqual(len(folders),10)
         for folder in folders:
             identity=verify_identity(folder)
             self.assertIsNotNone(identity)

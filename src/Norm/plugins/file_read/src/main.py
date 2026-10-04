@@ -5,6 +5,7 @@ from pathlib import Path
 
 from norm_runtime.file_access_policy import authorize_path, load_file_access_policy
 from norm_runtime.secret_redaction import is_secret_file
+from norm_runtime.archive_adapter import archive_manifest as _archive_manifest, compare_archive_to_directory as _compare_archive_to_directory, hash_archive_member as _hash_archive_member, read_archive_member as _read_archive_member
 
 
 def _root() -> Path:
@@ -133,3 +134,33 @@ def read_bytes(path: str, start_byte: int = 0, max_bytes: int = 0) -> dict:
         "returned_bytes": len(raw), "source_size_bytes": size, "truncated": nxt < size,
         "base64": base64.b64encode(raw).decode("ascii"),
     }
+
+
+def archive_manifest(path: str, max_entries: int = 5000) -> dict:
+    """List an archive non-destructively using the local 7-Zip backend (ZIP/TAR stdlib fallback)."""
+    target, _policy = _resolve(path)
+    return _archive_manifest(target, max_entries=max_entries)
+
+
+def archive_member(path: str, member: str, start_byte: int = 0, max_bytes: int = 0, mode: str = "text") -> dict:
+    """Read one bounded member without extracting the archive to disk."""
+    target, policy = _resolve(path)
+    if is_secret_file(Path(member)):
+        raise PermissionError("Secret archive members must not be exposed through file_read")
+    cap = _cap(policy, max_bytes, text=(mode != "bytes_base64"))
+    return _read_archive_member(target, member, start_byte=start_byte, max_bytes=cap, mode=mode)
+
+
+def archive_member_sha256(path: str, member: str) -> dict:
+    """Stream one archive member through SHA-256 without extracting it."""
+    target, _policy = _resolve(path)
+    return _hash_archive_member(target, member)
+
+
+def archive_compare_directory(path: str, directory: str) -> dict:
+    """Compare tree+sizes first, then SHA-256 every member only when the trees are a likely exact match."""
+    target, policy = _resolve(path)
+    folder = authorize_path(directory, policy.read_roots, access="read", hardlock=policy.enforce_read_directories)
+    if not folder.is_dir():
+        raise NotADirectoryError(folder)
+    return _compare_archive_to_directory(target, folder, hash_if_tree_matches=True)

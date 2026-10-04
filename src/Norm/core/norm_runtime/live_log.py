@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
-import uuid
+import ntpath
+import re
 from .secret_redaction import redact
 from datetime import datetime, timezone
 from typing import Any
@@ -12,6 +14,20 @@ import redis
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _canonical_validation_value(value: object) -> str:
+    """Canonicalize model-supplied semantic values without pretending to do semantic matching."""
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return ""
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            return text
+        return json.dumps(parsed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 class RedisTaskLog:
@@ -32,18 +48,19 @@ class RedisTaskLog:
     def _stream_key(self, task_id: str) -> str:
         return f"{self.prefix}:{task_id}:events"
 
-    def _validation_key(self, task_id: str) -> str:
-        return f"{self.prefix}:{task_id}:validations"
-
     def _global_validation_key(self) -> str:
+        # The validation pool is intentionally one Redis hash.  Individual facts are
+        # hash fields, never top-level Redis keys.
+        return f"{self.validation_prefix}:pool"
+
+    def _legacy_validation_facts_key(self) -> str:
         return f"{self.validation_prefix}:facts"
 
-    def _global_validation_recent_index_key(self) -> str:
+    def _legacy_validation_recent_index_key(self) -> str:
         return f"{self.validation_prefix}:recent"
 
-    def _global_validation_observation_key(self, subject: str) -> str:
-        digest = hashlib.sha256(subject.encode("utf-8")).hexdigest()[:32]
-        return f"{self.validation_prefix}:observations:{digest}"
+    def _legacy_validation_pending_change_key(self) -> str:
+        return f"{self.validation_prefix}:pending-changes"
 
     def _model_buffer_key(self, task_id: str, step_id: str) -> str:
         return f"{self.prefix}:{task_id}:model-buffer:{step_id}"
@@ -202,84 +219,60 @@ class RedisTaskLog:
                     ids.add(task_id)
         return ids
 
-    def record_validations(self, task_id: str, step_id: str, items: list[dict]) -> list[dict]:
-        saved=[]
-        key=self._validation_key(task_id)
-        now=_now()
-        for item in items or []:
-            if not isinstance(item,dict): continue
-            subject=str(item.get("subject") or "").strip()[:500]
-            value=str(item.get("value") or "").strip()[:4000]
-            source=str(item.get("source") or "unspecified").strip()[:500] or "unspecified"
-            note=str(item.get("note") or "").strip()[:2000]
-            if not subject or not value: continue
-            raw=self.client.hget(key,subject); old={}
-            if raw:
-                try: old=json.loads(raw)
-                except Exception: old={}
-            checks=int(old.get("check_count") or 0)+1
-            contradictions=int(old.get("contradiction_count") or 0)+(1 if old.get("value") not in (None,value) else 0)
-            sources=dict(old.get("source_counts") or {}); sources[source]=int(sources.get(source) or 0)+1
-            values=dict(old.get("value_counts") or {}); values[value]=int(values.get(value) or 0)+1
-            record={"subject":subject,"value":value,"check_count":checks,"contradiction_count":contradictions,"source_counts":sources,"value_counts":values,"first_checked_at":old.get("first_checked_at") or now,"last_checked_at":now,"last_step_id":step_id,"note":note}
-            self.client.hset(key,subject,json.dumps(record,ensure_ascii=False,sort_keys=True)); saved.append(record)
-        return saved
+    @staticmethod
+    def _normalize_validation_target(target: object) -> str:
+        text = " ".join(str(target or "").strip().split())
+        if not text:
+            return ""
+        # Windows paths are Norm's common case.  Normalize slash/case differences so
+        # D:\A\B and d:/a/b are one target rather than two Redis facts.
+        if re.match(r"^[A-Za-z]:[\\/]", text) or text.startswith("\\\\"):
+            return ntpath.normpath(text).casefold()
+        return text.casefold()
 
-    def recent_validations(self, task_id: str, *, subjects: list[str] | None = None, limit: int = 20) -> list[dict]:
-        raw=self.client.hgetall(self._validation_key(task_id)); wanted={str(x).strip() for x in (subjects or []) if str(x).strip()}
-        rows=[]
-        for subject,payload in raw.items():
-            if wanted and subject not in wanted: continue
-            try: record=json.loads(payload)
-            except Exception: continue
-            if isinstance(record,dict): rows.append(record)
-        rows.sort(key=lambda x:str(x.get("last_checked_at") or ""),reverse=True)
-        return rows[:max(1,int(limit))]
+    @staticmethod
+    def _normalize_validation_description(description: object) -> str:
+        text = " ".join(str(description or "").strip().casefold().split())
+        return " ".join(re.findall(r"[a-z0-9_.:+\\/-]+", text))
 
-    def seed_global_validation(self, record: dict) -> bool:
-        """Seed Redis from a durable PostgreSQL snapshot only when no live fact exists."""
-        subject = str(record.get("subject") or "").strip()
-        value = str(record.get("current_value") or record.get("value") or "").strip()
-        if not subject or not value:
-            return False
-        payload = {
-            "subject": subject,
-            "value": value,
-            "generation_checks": int(record.get("generation_check_count") or record.get("generation_checks") or 1),
-            "generation_started_at": str(record.get("generation_started_at") or record.get("first_checked_at") or _now()),
-            "last_checked_at": str(record.get("last_checked_at") or _now()),
-            "source_counts": dict(record.get("source_counts") or {}),
-            "last_task_id": str(record.get("last_task_id") or ""),
-            "last_step_id": str(record.get("last_step_id") or ""),
-            "note": str(record.get("last_note") or record.get("note") or ""),
+    @classmethod
+    def _validation_description_similarity(cls, left: object, right: object) -> float:
+        a = cls._normalize_validation_description(left)
+        b = cls._normalize_validation_description(right)
+        if not a or not b:
+            return 0.0
+        if a == b:
+            return 1.0
+        seq = difflib.SequenceMatcher(None, a, b).ratio()
+        sa, sb = set(a.split()), set(b.split())
+        jac = len(sa & sb) / max(1, len(sa | sb))
+        return max(seq, jac)
+
+    @classmethod
+    def _validation_record_id(cls, target: object, description: object) -> str:
+        basis = cls._normalize_validation_target(target) + "\n" + cls._normalize_validation_description(description)
+        return hashlib.sha256(basis.encode("utf-8", errors="replace")).hexdigest()[:32]
+
+    @staticmethod
+    def _public_validation_record(record: dict, record_id: str = "") -> dict:
+        row = {
+            "record_id": str(record_id or record.get("record_id") or ""),
+            "tool": str(record.get("tool") or ""),
+            "target": str(record.get("target") or ""),
+            "description": str(record.get("description") or ""),
+            "value": str(record.get("value") or ""),
+            "num_checks": int(record.get("num_checks") or 0),
+            "previous_value": str(record.get("previous_value") or ""),
+            "changed_at": str(record.get("changed_at") or ""),
+            "storage": "redis_live",
         }
-        created = bool(self.client.hsetnx(self._global_validation_key(), subject, json.dumps(payload, ensure_ascii=False, sort_keys=True)))
-        if created:
-            try:
-                score = datetime.fromisoformat(payload["last_checked_at"]).timestamp()
-            except Exception:
-                score = datetime.now(timezone.utc).timestamp()
-            self.client.zadd(self._global_validation_recent_index_key(), {subject: score}, gt=True)
-        return created
+        return row
 
-    def pending_validation_generations(self, limit: int = 64) -> list[dict]:
-        rows = []
-        for key, raw in self.client.hscan_iter(self.validation_prefix + ":pending-generations"):
-            row = json.loads(raw)
-            row["_pending_id"] = key
-            rows.append(row)
-            if len(rows) >= limit:
-                break
-        return rows
-
-    def acknowledge_validation_generation(self, pending_id: str) -> None:
-        self.client.hdel(self.validation_prefix + ":pending-generations", pending_id)
-
-    def global_validation(self, subject: str, *, recent_window_seconds: int = 86400, retention_seconds: int = 604800) -> dict | None:
-        subject = str(subject or "").strip()
-        if not subject:
+    def global_validation(self, record_id: str, **_kwargs) -> dict | None:
+        record_id = str(record_id or "").strip()
+        if not record_id:
             return None
-        raw = self.client.hget(self._global_validation_key(), subject)
+        raw = self.client.hget(self._global_validation_key(), record_id)
         if not raw:
             return None
         try:
@@ -288,109 +281,271 @@ class RedisTaskLog:
             return None
         if not isinstance(record, dict):
             return None
-        now_ts = datetime.now(timezone.utc).timestamp()
-        obs_key = self._global_validation_observation_key(subject)
-        self.client.zremrangebyscore(obs_key, 0, now_ts - max(1, int(retention_seconds)))
-        record["recent_checks"] = int(self.client.zcount(obs_key, now_ts - max(1, int(recent_window_seconds)), "+inf"))
-        record["retained_observations"] = int(self.client.zcard(obs_key))
-        record["storage"] = "redis_live"
-        return record
+        return self._public_validation_record(record, record_id)
 
-    def recent_global_validations(self, *, recent_window_seconds: int = 86400, retention_seconds: int = 604800, limit: int = 64) -> list[dict]:
-        cutoff = datetime.now(timezone.utc).timestamp() - max(1, int(recent_window_seconds))
-        subjects = self.client.zrevrange(self._global_validation_recent_index_key(), 0, max(0, int(limit) * 4 - 1), withscores=True)
+    def validation_candidates(self, *, tool: str = "", target: str, description: str, limit: int = 12) -> list[dict]:
+        """Return likely Redis records for one stable target without creating anything.
+
+        The hash field is not chosen from model prose.  We first narrow by normalized
+        target, then rank existing descriptions.  This is what keeps small wording
+        changes from manufacturing new Redis keys/records.
+        """
+        target_key = self._normalize_validation_target(target)
+        if not target_key:
+            return []
+        tool_key = str(tool or "").strip().casefold()
         rows: list[dict] = []
-        for subject, score in subjects:
-            if float(score) < cutoff:
-                break
-            row = self.global_validation(str(subject), recent_window_seconds=recent_window_seconds, retention_seconds=retention_seconds)
-            if not row or int(row.get("recent_checks") or 0) <= 0:
+        for record_id, raw in self.client.hscan_iter(self._global_validation_key()):
+            try:
+                record = json.loads(raw)
+            except Exception:
                 continue
+            if not isinstance(record, dict):
+                continue
+            if self._normalize_validation_target(record.get("target")) != target_key:
+                continue
+            score = self._validation_description_similarity(description, record.get("description"))
+            if tool_key and str(record.get("tool") or "").strip().casefold() == tool_key:
+                score = min(1.0, score + 0.03)
+            row = self._public_validation_record(record, str(record_id))
+            row["description_match"] = round(score, 4)
             rows.append(row)
-            if len(rows) >= max(1, int(limit)):
-                break
-        return rows
+        rows.sort(key=lambda item: (-float(item.get("description_match") or 0.0), str(item.get("description") or "")))
+        return rows[:max(1, int(limit))]
 
-    def record_global_validations(self, task_id: str, step_id: str, items: list[dict], *, recent_window_seconds: int = 86400, retention_seconds: int = 604800) -> list[dict]:
-        """Record live shared validation generations and rolling observations."""
+    def invalidate_validation_target(self, target: str) -> int:
+        """Drop live Redis verification records for a target after a known mutation.
+
+        Mutation invalidation is deliberately target-based so N1 cannot hand N2 a
+        pre-mutation observation simply because the wording/tool request matches.
+        """
+        target_key = self._normalize_validation_target(target)
+        if not target_key:
+            return 0
+        doomed: list[str] = []
+        for record_id, raw in self.client.hscan_iter(self._global_validation_key()):
+            try:
+                record = json.loads(raw)
+            except Exception:
+                continue
+            if not isinstance(record, dict):
+                continue
+            if self._normalize_validation_target(record.get("target")) == target_key:
+                doomed.append(str(record_id))
+        if not doomed:
+            return 0
+        return int(self.client.hdel(self._global_validation_key(), *doomed) or 0)
+
+    def recent_global_validations(self, *, limit: int = 64, **_kwargs) -> list[dict]:
+        rows: list[tuple[str, dict]] = []
+        for record_id, raw in self.client.hscan_iter(self._global_validation_key()):
+            try:
+                record = json.loads(raw)
+            except Exception:
+                continue
+            if isinstance(record, dict):
+                rows.append((str(record_id), record))
+        # Internal pool-start time is only migration bookkeeping; it is not part of
+        # the model-facing verification record.
+        rows.sort(key=lambda pair: str(pair[1].get("_pool_started_at") or ""), reverse=True)
+        return [self._public_validation_record(record, record_id) for record_id, record in rows[:max(1, int(limit))]]
+
+    def record_global_validations(self, task_id: str, step_id: str, items: list[dict], **_kwargs) -> list[dict]:
+        """Check information-tool results into the one shared Redis validation hash."""
         saved: list[dict] = []
-        facts_key = self._global_validation_key()
-        index_key = self._global_validation_recent_index_key()
-        now_dt = datetime.now(timezone.utc)
-        now_iso = now_dt.isoformat()
-        now_ts = now_dt.timestamp()
+        pool_key = self._global_validation_key()
         for item in items or []:
             if not isinstance(item, dict):
                 continue
-            subject = str(item.get("subject") or "").strip()[:500]
-            value = str(item.get("value") or "").strip()[:4000]
-            source = str(item.get("source") or "unspecified").strip()[:500] or "unspecified"
-            note = str(item.get("note") or "").strip()[:2000]
-            if not subject or not value:
+            tool = str(item.get("tool") or item.get("source") or "unspecified").strip()[:500] or "unspecified"
+            target = " ".join(str(item.get("target") or "").strip().split())[:2000]
+            description = " ".join(str(item.get("description") or "").strip().split())[:2000]
+            value = _canonical_validation_value(item.get("value"))[:12000]
+            requested_id = str(item.get("record_id") or "").strip()
+            if not target or not description or not value:
                 continue
+            record_id = requested_id if requested_id and requested_id != "new" else self._validation_record_id(target, description)
             for attempt in range(32):
                 try:
                     with self.client.pipeline(transaction=True) as pipe:
-                        pipe.watch(facts_key)
-                        now_dt = datetime.now(timezone.utc)
-                        now_iso = now_dt.isoformat()
-                        now_ts = now_dt.timestamp()
-                        raw = pipe.hget(facts_key, subject)
-                        prior = {}
+                        pipe.watch(pool_key)
+                        now_iso = datetime.now(timezone.utc).isoformat()
+                        raw = pipe.hget(pool_key, record_id)
+                        prior: dict = {}
                         if raw:
                             try:
-                                prior = json.loads(raw)
+                                loaded = json.loads(raw)
+                                prior = loaded if isinstance(loaded, dict) else {}
                             except Exception:
                                 prior = {}
-                        same_generation = bool(prior) and str(prior.get("value") or "") == value
-                        value_changed = bool(prior) and not same_generation
-                        generation_checks = int(prior.get("generation_checks") or 0) + 1 if same_generation else 1
-                        generation_started_at = str(prior.get("generation_started_at") or now_iso) if same_generation else now_iso
-                        source_counts = dict(prior.get("source_counts") or {}) if same_generation else {}
-                        source_counts[source] = int(source_counts.get(source) or 0) + 1
+                        same_value = bool(prior) and str(prior.get("value") or "") == value
+                        changed = bool(prior) and not same_value
+                        if same_value:
+                            num_checks = int(prior.get("num_checks") or 0) + 1
+                            previous_value = str(prior.get("previous_value") or "")
+                            changed_at = str(prior.get("changed_at") or "")
+                            pool_started_at = str(prior.get("_pool_started_at") or now_iso)
+                            canonical_description = str(prior.get("description") or description)
+                            canonical_target = str(prior.get("target") or target)
+                        elif changed:
+                            num_checks = 1
+                            previous_value = str(prior.get("value") or "")
+                            changed_at = now_iso
+                            # A verified value change starts a fresh hot Redis epoch.
+                            pool_started_at = now_iso
+                            canonical_description = str(prior.get("description") or description)
+                            canonical_target = str(prior.get("target") or target)
+                        else:
+                            num_checks = 1
+                            previous_hint = str(item.get("previous_value_hint") or "")
+                            if previous_hint and previous_hint != value:
+                                previous_value = previous_hint
+                                changed_at = str(item.get("changed_at_hint") or now_iso)
+                            else:
+                                previous_value = ""
+                                changed_at = ""
+                            pool_started_at = now_iso
+                            canonical_description = description
+                            canonical_target = target
                         record = {
-                            "subject": subject, "value": value, "generation_checks": generation_checks,
-                            "generation_started_at": generation_started_at, "last_checked_at": now_iso,
-                            "source_counts": source_counts, "last_task_id": str(task_id), "last_step_id": str(step_id), "note": note,
+                            "record_id": record_id,
+                            "tool": tool,
+                            "target": canonical_target,
+                            "description": canonical_description,
+                            "value": value,
+                            "num_checks": num_checks,
+                            "previous_value": previous_value,
+                            "changed_at": changed_at,
+                            "_pool_started_at": pool_started_at,
+                            "_last_verified_at": now_iso,
                         }
-                        obs = {"id": uuid.uuid4().hex, "at": now_iso, "value": value, "source": source, "task_id": str(task_id), "step_id": str(step_id)}
-                        obs_key = self._global_validation_observation_key(subject)
                         pipe.multi()
-                        if value_changed:
-                            # Retain a compact completed generation until PostgreSQL accepts it.
-                            pending_id = hashlib.sha256((subject + "|" + str(prior.get("generation_started_at"))).encode()).hexdigest()
-                            pipe.hset(self.validation_prefix + ":pending-generations", pending_id, json.dumps(prior, ensure_ascii=False))
-                            pipe.delete(obs_key)
-                        pipe.hset(facts_key, subject, json.dumps(record, ensure_ascii=False, sort_keys=True))
-                        pipe.zadd(index_key, {subject: now_ts})
-                        pipe.zadd(obs_key, {json.dumps(obs, ensure_ascii=False, sort_keys=True): now_ts})
-                        pipe.zremrangebyscore(obs_key, 0, now_ts - max(1, int(retention_seconds)))
-                        pipe.zcount(obs_key, now_ts - max(1, int(recent_window_seconds)), "+inf")
-                        pipe.zcard(obs_key)
-                        results = pipe.execute()
-                        record["recent_checks"] = int(results[-2])
-                        record["retained_observations"] = int(results[-1])
-                        record["storage"] = "redis_live"
-                        record["value_changed"] = value_changed
-                        if record["value_changed"]:
-                            record["_previous_generation"] = {
-                                "subject": subject, "value": str(prior.get("value") or ""),
-                                "generation_checks": int(prior.get("generation_checks") or 0),
-                                "generation_started_at": str(prior.get("generation_started_at") or ""),
-                                "last_checked_at": str(prior.get("last_checked_at") or now_iso),
-                                "source_counts": dict(prior.get("source_counts") or {}),
-                                "last_task_id": str(prior.get("last_task_id") or ""),
-                                "last_step_id": str(prior.get("last_step_id") or ""), "note": str(prior.get("note") or ""),
-                            }
-                        saved.append(record)
+                        pipe.hset(pool_key, record_id, json.dumps(record, ensure_ascii=False, sort_keys=True))
+                        pipe.execute()
+                        public = self._public_validation_record(record, record_id)
+                        public["value_changed"] = changed
+                        saved.append(public)
                     break
                 except redis.WatchError:
                     if attempt == 31:
                         raise
         return saved
 
+    def stale_validation_records(self, *, older_than_seconds: int = 86400, limit: int = 512) -> list[dict]:
+        """Return complete Redis records whose hot epoch began before the eligibility cutoff."""
+        cutoff = datetime.now(timezone.utc).timestamp() - max(1, int(older_than_seconds))
+        rows: list[dict] = []
+        for record_id, raw in self.client.hscan_iter(self._global_validation_key()):
+            try:
+                record = json.loads(raw)
+            except Exception:
+                continue
+            if not isinstance(record, dict):
+                continue
+            started_raw = str(record.get("_pool_started_at") or "")
+            try:
+                started = datetime.fromisoformat(started_raw)
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+                started_ts = started.timestamp()
+            except Exception:
+                continue
+            if started_ts > cutoff:
+                continue
+            row = dict(record)
+            row["record_id"] = str(record_id)
+            rows.append(row)
+            if len(rows) >= max(1, int(limit)):
+                break
+        return rows
+
+    def acknowledge_validation_records(self, record_ids: list[str]) -> int:
+        cleaned = [str(item).strip() for item in (record_ids or []) if str(item).strip()]
+        if not cleaned:
+            return 0
+        return int(self.client.hdel(self._global_validation_key(), *cleaned) or 0)
+
+    def migrate_legacy_validation_layout(self) -> dict:
+        """Collapse pre-0.53.13 exploded validation keys into norm:validation:pool.
+
+        Legacy observation zsets are deliberately not copied one-by-one: the legacy
+        fact already contains the current generation count.  Copying both would double
+        count the same checks.  Once each legacy fact is represented in the pool, the
+        obsolete facts/recent/observations/pending keys are removed.
+        """
+        legacy_facts = self._legacy_validation_facts_key()
+        raw_facts = self.client.hgetall(legacy_facts)
+        if not raw_facts:
+            obsolete = list(self.client.scan_iter(match=f"{self.validation_prefix}:observations:*"))
+            obsolete += [
+                self._legacy_validation_recent_index_key(),
+                self._legacy_validation_pending_change_key(),
+                f"{self.validation_prefix}:pending-generations",
+            ]
+            obsolete += list(self.client.scan_iter(match=f"{self.prefix}:*:validations"))
+            existing = [key for key in obsolete if self.client.exists(key)]
+            if existing:
+                self.client.delete(*existing)
+            return {"migrated": 0, "removed_legacy_keys": len(existing)}
+
+        pending_by_subject: dict[str, dict] = {}
+        for _pid, raw in self.client.hscan_iter(self._legacy_validation_pending_change_key()):
+            try:
+                change = json.loads(raw)
+            except Exception:
+                continue
+            if isinstance(change, dict) and str(change.get("subject") or ""):
+                pending_by_subject[str(change.get("subject"))] = change
+
+        pool_key = self._global_validation_key()
+        migrated = 0
+        for subject, raw in raw_facts.items():
+            try:
+                old = json.loads(raw)
+            except Exception:
+                continue
+            if not isinstance(old, dict):
+                continue
+            identity = dict(old.get("identity") or {})
+            target = str(identity.get("where") or subject or "").strip()
+            description = str(identity.get("what") or subject or "").strip()
+            tool = str(old.get("last_source") or identity.get("how") or "legacy").strip() or "legacy"
+            value = str(old.get("value") or "").strip()
+            if not target or not description or not value:
+                continue
+            record_id = self._validation_record_id(target, description)
+            if self.client.hexists(pool_key, record_id):
+                continue
+            pending = pending_by_subject.get(str(subject), {})
+            previous_value = str(pending.get("old_value") or "") if str(pending.get("new_value") or "") == value else ""
+            changed_at = str(pending.get("changed_at") or "") if previous_value else ""
+            started_at = str(old.get("generation_started_at") or old.get("last_checked_at") or _now())
+            last_verified_at = str(old.get("last_checked_at") or started_at)
+            record = {
+                "record_id": record_id,
+                "tool": tool,
+                "target": target,
+                "description": description,
+                "value": value,
+                "num_checks": max(1, int(old.get("generation_checks") or 1)),
+                "previous_value": previous_value,
+                "changed_at": changed_at,
+                "_pool_started_at": started_at,
+                "_last_verified_at": last_verified_at,
+            }
+            self.client.hset(pool_key, record_id, json.dumps(record, ensure_ascii=False, sort_keys=True))
+            migrated += 1
+
+        obsolete = [legacy_facts, self._legacy_validation_recent_index_key(), self._legacy_validation_pending_change_key(), f"{self.validation_prefix}:pending-generations"]
+        obsolete.extend(self.client.scan_iter(match=f"{self.validation_prefix}:observations:*"))
+        obsolete.extend(self.client.scan_iter(match=f"{self.prefix}:*:validations"))
+        existing = [key for key in obsolete if self.client.exists(key)]
+        if existing:
+            self.client.delete(*existing)
+        return {"migrated": migrated, "removed_legacy_keys": len(existing)}
+
     def cleanup(self, task_id: str) -> None:
-        keys = [self._state_key(task_id), self._stream_key(task_id), self._validation_key(task_id)]
+        keys = [self._state_key(task_id), self._stream_key(task_id), f"{self.prefix}:{task_id}:validations"]
         keys.extend(self.client.scan_iter(match=f"{self.prefix}:{task_id}:model-buffer:*"))
         if keys:
             self.client.delete(*keys)
