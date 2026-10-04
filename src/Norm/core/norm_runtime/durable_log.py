@@ -1,15 +1,14 @@
 from __future__ import annotations
 
+import difflib
 import json
+import ntpath
 import re
 import subprocess
 import uuid
-from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterator
 
-import psycopg
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
@@ -20,19 +19,45 @@ from .resource_status import merge_resource_status
 _SCHEMA_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
+def _validation_target_key(target: object) -> str:
+    text = " ".join(str(target or "").strip().split())
+    if not text:
+        return ""
+    if re.match(r"^[A-Za-z]:[\\/]", text) or text.startswith("\\\\"):
+        return ntpath.normpath(text).casefold()
+    return text.casefold()
+
+
+def _validation_description_key(description: object) -> str:
+    text = " ".join(str(description or "").strip().casefold().split())
+    return " ".join(re.findall(r"[a-z0-9_.:+\\/-]+", text))
+
+
+def _validation_description_similarity(left: object, right: object) -> float:
+    a = _validation_description_key(left)
+    b = _validation_description_key(right)
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    seq = difflib.SequenceMatcher(None, a, b).ratio()
+    sa, sb = set(a.split()), set(b.split())
+    jac = len(sa & sb) / max(1, len(sa | sb))
+    return max(seq, jac)
+
+
 class PostgresTaskLog:
-    def __init__(self, conninfo: str, schema: str = "norm_runtime") -> None:
-        if not conninfo:
-            raise ValueError("An explicit PostgreSQL connection string is required")
+    def __init__(self, pool, schema: str = "norm_runtime", connection_name: str = "norm") -> None:
+        if pool is None or not hasattr(pool, "connection"):
+            raise ValueError("PostgresTaskLog requires the configured postgres_pool tool")
         if not _SCHEMA_RE.fullmatch(schema):
             raise ValueError("Unsafe PostgreSQL schema name")
-        self.conninfo = conninfo
+        self.pool = pool
+        self.connection_name = str(connection_name or "norm")
         self.schema = schema
 
-    @contextmanager
-    def _connect(self) -> Iterator[psycopg.Connection]:
-        with psycopg.connect(self.conninfo) as conn:
-            yield conn
+    def _connect(self):
+        return self.pool.connection(self.connection_name)
 
     def ensure_schema(self) -> None:
         with self._connect() as conn, conn.cursor() as cur:
@@ -134,6 +159,93 @@ class PostgresTaskLog:
             """).format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
             cur.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {}.task_validations(task_id,last_checked_at DESC)").format(
                 sql.Identifier(f"idx_{self.schema}_task_validations_recent"), sql.Identifier(self.schema)
+            ))
+            cur.execute(sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {}.global_validations (
+                    subject text PRIMARY KEY,
+                    current_value text NOT NULL,
+                    generation_check_count bigint NOT NULL DEFAULT 1,
+                    generation_started_at timestamptz NOT NULL,
+                    last_checked_at timestamptz NOT NULL,
+                    source_counts jsonb NOT NULL DEFAULT '{{}}'::jsonb,
+                    last_task_id text NOT NULL DEFAULT '',
+                    last_step_id text NOT NULL DEFAULT '',
+                    last_note text NOT NULL DEFAULT '',
+                    snapshot_at timestamptz NOT NULL DEFAULT now()
+                )
+            """).format(sql.Identifier(self.schema)))
+            cur.execute(sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {}.global_validation_generations (
+                    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                    subject text NOT NULL,
+                    value text NOT NULL,
+                    generation_check_count bigint NOT NULL,
+                    generation_started_at timestamptz NOT NULL,
+                    generation_ended_at timestamptz NOT NULL,
+                    source_counts jsonb NOT NULL DEFAULT '{{}}'::jsonb,
+                    last_task_id text NOT NULL DEFAULT '',
+                    last_step_id text NOT NULL DEFAULT '',
+                    last_note text NOT NULL DEFAULT '',
+                    archived_at timestamptz NOT NULL DEFAULT now(),
+                    UNIQUE(subject, value, generation_started_at)
+                )
+            """).format(sql.Identifier(self.schema)))
+            cur.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {}.global_validations(last_checked_at DESC)").format(
+                sql.Identifier(f"idx_{self.schema}_global_validations_recent"), sql.Identifier(self.schema)
+            ))
+            cur.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {}.global_validation_generations(subject,generation_ended_at DESC)").format(
+                sql.Identifier(f"idx_{self.schema}_global_validation_history"), sql.Identifier(self.schema)
+            ))
+            cur.execute(sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {}.global_validation_observation_batches (
+                    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                    subject text NOT NULL,
+                    value text NOT NULL,
+                    observation_count bigint NOT NULL,
+                    first_observed_at timestamptz NOT NULL,
+                    last_observed_at timestamptz NOT NULL,
+                    source_counts jsonb NOT NULL DEFAULT '{{}}'::jsonb,
+                    migrated_at timestamptz NOT NULL DEFAULT now()
+                )
+            """).format(sql.Identifier(self.schema)))
+            cur.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {}.global_validation_observation_batches(subject,last_observed_at DESC)").format(
+                sql.Identifier(f"idx_{self.schema}_validation_observation_history"), sql.Identifier(self.schema)
+            ))
+            cur.execute(sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {}.global_validation_changes (
+                    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                    subject text NOT NULL,
+                    old_value text NOT NULL,
+                    new_value text NOT NULL,
+                    old_verification_count bigint NOT NULL DEFAULT 0,
+                    changed_at timestamptz NOT NULL,
+                    source text NOT NULL DEFAULT '',
+                    identity jsonb NOT NULL DEFAULT '{{}}'::jsonb,
+                    old_source_counts jsonb NOT NULL DEFAULT '{{}}'::jsonb,
+                    archived_at timestamptz NOT NULL DEFAULT now()
+                )
+            """).format(sql.Identifier(self.schema)))
+            cur.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {}.global_validation_changes(subject,changed_at DESC)").format(
+                sql.Identifier(f"idx_{self.schema}_validation_changes"), sql.Identifier(self.schema)
+            ))
+            cur.execute(sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {}.validation_pool_history (
+                    record_id text PRIMARY KEY,
+                    target_key text NOT NULL,
+                    tool text NOT NULL,
+                    target text NOT NULL,
+                    description text NOT NULL,
+                    value text NOT NULL,
+                    num_checks bigint NOT NULL,
+                    previous_value text NOT NULL DEFAULT '',
+                    changed_at timestamptz,
+                    last_verified_at timestamptz NOT NULL,
+                    first_migrated_at timestamptz NOT NULL DEFAULT now(),
+                    last_migrated_at timestamptz NOT NULL DEFAULT now()
+                )
+            """).format(sql.Identifier(self.schema)))
+            cur.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {}.validation_pool_history(target_key,last_migrated_at DESC)").format(
+                sql.Identifier(f"idx_{self.schema}_validation_pool_history_target"), sql.Identifier(self.schema)
             ))
             cur.execute(sql.SQL("""
                 CREATE TABLE IF NOT EXISTS {}.task_step_segments (
@@ -998,7 +1110,7 @@ class PostgresTaskLog:
                     row[0],row[1],row[2],row[3],row[4],Jsonb(row[5] if isinstance(row[5],dict) else {}),
                     Jsonb(result),row[7],row[8],
                 ))
-                compact = {k: result.get(k) for k in ("ok","tool","path","size","sha256") if k in result}
+                compact = {k: result.get(k) for k in ("ok","tool","path","size","sha256","file_mutation") if k in result}
                 compact.update({
                     "summary": "Bulky evidence archived; compact metadata retained for live context.",
                     "content_omitted_from_live_context": True,
@@ -1066,6 +1178,348 @@ class PostgresTaskLog:
             cur.execute(query,tuple(params))
             rows=cur.fetchall()
         return [{"task_id":str(r[0]),"subject":str(r[1]),"value":str(r[2]),"check_count":int(r[3]),"contradiction_count":int(r[4]),"source_counts":dict(r[5] or {}),"value_counts":dict(r[6] or {}),"first_checked_at":r[7].isoformat(),"last_checked_at":r[8].isoformat(),"last_step_id":str(r[9] or ""),"note":str(r[10] or ""),"ancestor_depth":int(r[11] or 0)} for r in rows]
+
+    @staticmethod
+    def _global_validation_row(row) -> dict:
+        return {
+            "subject": str(row[0]), "current_value": str(row[1]),
+            "generation_check_count": int(row[2]), "generation_started_at": row[3].isoformat(),
+            "last_checked_at": row[4].isoformat(), "source_counts": dict(row[5] or {}),
+            "last_task_id": str(row[6] or ""), "last_step_id": str(row[7] or ""),
+            "last_note": str(row[8] or ""), "snapshot_at": row[9].isoformat(),
+            "storage": "postgres_snapshot",
+        }
+
+    def global_validation(self, subject: str) -> dict | None:
+        subject = str(subject or "").strip()
+        if not subject:
+            return None
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                SELECT subject,current_value,generation_check_count,generation_started_at,last_checked_at,
+                       source_counts,last_task_id,last_step_id,last_note,snapshot_at
+                FROM {}.global_validations WHERE subject=%s
+            """).format(sql.Identifier(self.schema)), (subject,))
+            row = cur.fetchone()
+        return self._global_validation_row(row) if row else None
+
+    def global_validations(self, subjects: list[str] | None = None, *, limit: int = 200) -> list[dict]:
+        cleaned = [str(x).strip() for x in (subjects or []) if str(x).strip()]
+        with self._connect() as conn, conn.cursor() as cur:
+            if cleaned:
+                cur.execute(sql.SQL("""
+                    SELECT subject,current_value,generation_check_count,generation_started_at,last_checked_at,
+                           source_counts,last_task_id,last_step_id,last_note,snapshot_at
+                    FROM {}.global_validations WHERE subject = ANY(%s)
+                    ORDER BY last_checked_at DESC LIMIT %s
+                """).format(sql.Identifier(self.schema)), (cleaned, max(1, int(limit))))
+            else:
+                cur.execute(sql.SQL("""
+                    SELECT subject,current_value,generation_check_count,generation_started_at,last_checked_at,
+                           source_counts,last_task_id,last_step_id,last_note,snapshot_at
+                    FROM {}.global_validations ORDER BY last_checked_at DESC LIMIT %s
+                """).format(sql.Identifier(self.schema)), (max(1, int(limit)),))
+            rows = cur.fetchall()
+        return [self._global_validation_row(row) for row in rows]
+
+    def upsert_global_validation(self, record: dict) -> dict:
+        subject = str(record.get("subject") or "").strip()
+        value = str(record.get("value") or record.get("current_value") or "").strip()
+        if not subject or not value:
+            raise ValueError("global validation requires subject and value")
+        generation_checks = int(record.get("generation_checks") or record.get("generation_check_count") or 1)
+        generation_started_at = str(record.get("generation_started_at") or record.get("last_checked_at") or "")
+        last_checked_at = str(record.get("last_checked_at") or generation_started_at)
+        source_counts = dict(record.get("source_counts") or {})
+        last_task_id = str(record.get("last_task_id") or "")
+        last_step_id = str(record.get("last_step_id") or "")
+        note = str(record.get("note") or record.get("last_note") or "")
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                INSERT INTO {}.global_validations AS current_snapshot
+                    (subject,current_value,generation_check_count,generation_started_at,last_checked_at,
+                     source_counts,last_task_id,last_step_id,last_note,snapshot_at)
+                VALUES (%s,%s,%s,%s::timestamptz,%s::timestamptz,%s,%s,%s,%s,now())
+                ON CONFLICT(subject) DO UPDATE SET
+                    current_value=EXCLUDED.current_value,
+                    generation_check_count=EXCLUDED.generation_check_count,
+                    generation_started_at=EXCLUDED.generation_started_at,
+                    last_checked_at=EXCLUDED.last_checked_at,
+                    source_counts=EXCLUDED.source_counts,
+                    last_task_id=EXCLUDED.last_task_id,
+                    last_step_id=EXCLUDED.last_step_id,
+                    last_note=EXCLUDED.last_note,
+                    snapshot_at=now()
+                WHERE EXCLUDED.last_checked_at >= current_snapshot.last_checked_at
+                RETURNING subject,current_value,generation_check_count,generation_started_at,last_checked_at,
+                          source_counts,last_task_id,last_step_id,last_note,snapshot_at
+            """).format(sql.Identifier(self.schema)), (
+                subject, value, generation_checks, generation_started_at, last_checked_at,
+                Jsonb(source_counts), last_task_id, last_step_id, note,
+            ))
+            row = cur.fetchone()
+        return self._global_validation_row(row) if row else self.global_validation(subject)
+
+    def archive_global_validation_generation(self, record: dict) -> None:
+        subject = str(record.get("subject") or "").strip()
+        value = str(record.get("value") or record.get("current_value") or "").strip()
+        started = str(record.get("generation_started_at") or "")
+        ended = str(record.get("last_checked_at") or "")
+        if not subject or not value or not started or not ended:
+            return
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                INSERT INTO {}.global_validation_generations
+                    (subject,value,generation_check_count,generation_started_at,generation_ended_at,
+                     source_counts,last_task_id,last_step_id,last_note)
+                VALUES (%s,%s,%s,%s::timestamptz,%s::timestamptz,%s,%s,%s,%s)
+                ON CONFLICT(subject,value,generation_started_at) DO NOTHING
+            """).format(sql.Identifier(self.schema)), (
+                subject, value,
+                int(record.get("generation_checks") or record.get("generation_check_count") or 0),
+                started, ended, Jsonb(dict(record.get("source_counts") or {})),
+                str(record.get("last_task_id") or ""), str(record.get("last_step_id") or ""),
+                str(record.get("note") or record.get("last_note") or ""),
+            ))
+
+    def global_validation_history(self, subject: str, *, limit: int = 20) -> list[dict]:
+        subject = str(subject or "").strip()
+        if not subject:
+            return []
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                SELECT value,generation_check_count,generation_started_at,generation_ended_at,
+                       source_counts,last_task_id,last_step_id,last_note,archived_at
+                FROM {}.global_validation_generations
+                WHERE subject=%s ORDER BY generation_ended_at DESC LIMIT %s
+            """).format(sql.Identifier(self.schema)), (subject, max(1, int(limit))))
+            rows = cur.fetchall()
+        return [{
+            "subject": subject, "value": str(row[0]), "generation_check_count": int(row[1]),
+            "generation_started_at": row[2].isoformat(), "generation_ended_at": row[3].isoformat(),
+            "source_counts": dict(row[4] or {}), "last_task_id": str(row[5] or ""),
+            "last_step_id": str(row[6] or ""), "last_note": str(row[7] or ""),
+            "archived_at": row[8].isoformat(),
+        } for row in rows]
+
+    def archive_validation_observation_batch(self, subject: str, observations: list[dict]) -> dict | None:
+        subject = str(subject or "").strip()
+        rows = [dict(item) for item in (observations or []) if isinstance(item, dict)]
+        if not subject or not rows:
+            return None
+        rows.sort(key=lambda item: str(item.get("at") or ""))
+        value_counts: dict[str, int] = {}
+        source_counts: dict[str, int] = {}
+        for item in rows:
+            value = str(item.get("value") or "")
+            source = str(item.get("source") or "unspecified")
+            value_counts[value] = int(value_counts.get(value) or 0) + 1
+            source_counts[source] = int(source_counts.get(source) or 0) + 1
+        value = max(value_counts.items(), key=lambda pair: pair[1])[0]
+        first_at = str(rows[0].get("at") or "")
+        last_at = str(rows[-1].get("at") or first_at)
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                INSERT INTO {}.global_validation_observation_batches
+                    (subject,value,observation_count,first_observed_at,last_observed_at,source_counts)
+                VALUES (%s,%s,%s,%s::timestamptz,%s::timestamptz,%s)
+                RETURNING id,migrated_at
+            """).format(sql.Identifier(self.schema)), (
+                subject, value, len(rows), first_at, last_at, Jsonb(source_counts),
+            ))
+            saved = cur.fetchone()
+        return {
+            "id": int(saved[0]), "subject": subject, "value": value,
+            "observation_count": len(rows), "first_observed_at": first_at,
+            "last_observed_at": last_at, "source_counts": source_counts,
+            "migrated_at": saved[1].isoformat(), "storage": "postgres_history",
+        }
+
+    def archive_validation_change(self, change: dict) -> dict | None:
+        """Persist one Redis-captured old->new transition exactly as observed."""
+        subject = str(change.get("subject") or "").strip()
+        old_value = str(change.get("old_value") or "")
+        new_value = str(change.get("new_value") or "")
+        changed_at = str(change.get("changed_at") or datetime.now(timezone.utc).isoformat())
+        if not subject or old_value == new_value:
+            return None
+        identity = dict(change.get("identity") or {})
+        source_counts = dict(change.get("old_source_counts") or {})
+        source = str(change.get("source") or "")
+        old_count = int(change.get("old_verification_count") or 0)
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                INSERT INTO {}.global_validation_changes
+                    (subject,old_value,new_value,old_verification_count,changed_at,source,identity,old_source_counts)
+                VALUES (%s,%s,%s,%s,%s::timestamptz,%s,%s,%s)
+                RETURNING id,archived_at
+            """).format(sql.Identifier(self.schema)), (
+                subject, old_value, new_value, old_count, changed_at,
+                source, Jsonb(identity), Jsonb(source_counts),
+            ))
+            saved = cur.fetchone()
+        return {
+            "id": int(saved[0]), "subject": subject, "old_value": old_value, "new_value": new_value,
+            "changed_at": changed_at, "old_verification_count": old_count,
+            "archived_at": saved[1].isoformat(), "storage": "postgres_change_history",
+        }
+
+    def record_global_validation_change(self, previous: dict, current: dict) -> dict | None:
+        """Compatibility wrapper for callers that still hold previous/current records."""
+        change = {
+            "subject": str(current.get("subject") or previous.get("subject") or ""),
+            "old_value": str(previous.get("value") or previous.get("current_value") or ""),
+            "new_value": str(current.get("value") or current.get("current_value") or ""),
+            "old_verification_count": int(previous.get("generation_checks") or previous.get("generation_check_count") or 0),
+            "changed_at": str(current.get("last_checked_at") or datetime.now(timezone.utc).isoformat()),
+            "source": str(current.get("last_source") or current.get("source") or ""),
+            "identity": dict(current.get("identity") or previous.get("identity") or {}),
+            "old_source_counts": dict(previous.get("source_counts") or {}),
+        }
+        return self.archive_validation_change(change)
+
+    def merge_validation_pool_record(self, record: dict) -> dict:
+        """Merge one completed Redis hot record into PostgreSQL's longer-term record.
+
+        Migration cadence does not create new logical history rows.  Same target/fact
+        plus the same value adds num_checks.  A verified different value replaces the
+        current epoch, preserves the prior value, and starts the count at the Redis
+        record's count.
+        """
+        incoming_id = str(record.get("record_id") or "").strip()
+        tool = str(record.get("tool") or "").strip()
+        target = str(record.get("target") or "").strip()
+        description = str(record.get("description") or "").strip()
+        value = str(record.get("value") or "").strip()
+        num_checks = max(1, int(record.get("num_checks") or 1))
+        previous_value = str(record.get("previous_value") or "")
+        changed_at = str(record.get("changed_at") or "").strip()
+        pool_started_at = str(record.get("_pool_started_at") or "").strip()
+        last_verified_at = str(record.get("_last_verified_at") or pool_started_at or datetime.now(timezone.utc).isoformat())
+        target_key = _validation_target_key(target)
+        if not incoming_id or not target_key or not description or not value:
+            raise ValueError("validation pool record requires record_id, target, description, and value")
+
+        with self._connect() as conn, conn.cursor() as cur:
+            # Prefer exact record_id.  If wording created a different Redis id in a
+            # later hot wave, fold it into the best same-target historical fact rather
+            # than proliferating PostgreSQL rows.
+            cur.execute(sql.SQL("""
+                SELECT record_id,tool,target,description,value,num_checks,previous_value,
+                       changed_at,last_verified_at,first_migrated_at,last_migrated_at
+                FROM {}.validation_pool_history
+                WHERE record_id=%s
+            """).format(sql.Identifier(self.schema)), (incoming_id,))
+            existing = cur.fetchone()
+            if existing is None:
+                cur.execute(sql.SQL("""
+                    SELECT record_id,tool,target,description,value,num_checks,previous_value,
+                           changed_at,last_verified_at,first_migrated_at,last_migrated_at
+                    FROM {}.validation_pool_history
+                    WHERE target_key=%s
+                    ORDER BY last_migrated_at DESC LIMIT 32
+                """).format(sql.Identifier(self.schema)), (target_key,))
+                candidates = cur.fetchall()
+                ranked = sorted(
+                    candidates,
+                    key=lambda row: _validation_description_similarity(description, row[3]),
+                    reverse=True,
+                )
+                if ranked and _validation_description_similarity(description, ranked[0][3]) >= 0.58:
+                    existing = ranked[0]
+
+            if existing is None:
+                effective_changed_at = changed_at or None
+                cur.execute(sql.SQL("""
+                    INSERT INTO {}.validation_pool_history
+                        (record_id,target_key,tool,target,description,value,num_checks,previous_value,
+                         changed_at,last_verified_at,first_migrated_at,last_migrated_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::timestamptz,%s::timestamptz,now(),now())
+                    RETURNING record_id,tool,target,description,value,num_checks,previous_value,
+                              changed_at,last_verified_at,first_migrated_at,last_migrated_at
+                """).format(sql.Identifier(self.schema)), (
+                    incoming_id,target_key,tool,target,description,value,num_checks,previous_value,
+                    effective_changed_at,last_verified_at,
+                ))
+                saved = cur.fetchone()
+            else:
+                canonical_id = str(existing[0])
+                old_value = str(existing[4])
+                if old_value == value:
+                    merged_checks = int(existing[5]) + num_checks
+                    merged_previous = str(existing[6] or previous_value or "")
+                    merged_changed = existing[7] if existing[7] is not None else (changed_at or None)
+                else:
+                    merged_checks = num_checks
+                    merged_previous = old_value
+                    merged_changed = changed_at or pool_started_at or last_verified_at
+                cur.execute(sql.SQL("""
+                    UPDATE {}.validation_pool_history
+                    SET tool=%s,target=%s,description=%s,value=%s,num_checks=%s,previous_value=%s,
+                        changed_at=%s::timestamptz,last_verified_at=%s::timestamptz,last_migrated_at=now()
+                    WHERE record_id=%s
+                    RETURNING record_id,tool,target,description,value,num_checks,previous_value,
+                              changed_at,last_verified_at,first_migrated_at,last_migrated_at
+                """).format(sql.Identifier(self.schema)), (
+                    tool or str(existing[1]), target or str(existing[2]), str(existing[3]) or description,
+                    value, merged_checks, merged_previous, merged_changed, last_verified_at, canonical_id,
+                ))
+                saved = cur.fetchone()
+        return {
+            "record_id": str(saved[0]), "tool": str(saved[1]), "target": str(saved[2]),
+            "description": str(saved[3]), "value": str(saved[4]), "num_checks": int(saved[5]),
+            "previous_value": str(saved[6] or ""), "changed_at": saved[7].isoformat() if saved[7] else "",
+            "last_verified_at": saved[8].isoformat(), "first_migrated_at": saved[9].isoformat(),
+            "last_migrated_at": saved[10].isoformat(), "storage": "postgres_history",
+        }
+
+    def validation_history(self, *, target: str, description: str, tool: str = "", limit: int = 12) -> dict:
+        """Return optional longer-term candidates for the intended verification fact."""
+        target = str(target or "").strip()
+        description = str(description or "").strip()
+        target_key = _validation_target_key(target)
+        if not target_key:
+            return {"target": target, "description": description, "records": [], "storage": "postgres_history"}
+        cap = max(1, min(int(limit), 50))
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                SELECT record_id,tool,target,description,value,num_checks,previous_value,
+                       changed_at,last_verified_at,first_migrated_at,last_migrated_at
+                FROM {}.validation_pool_history
+                WHERE target_key=%s
+                ORDER BY last_migrated_at DESC LIMIT %s
+            """).format(sql.Identifier(self.schema)), (target_key, cap * 3))
+            rows = cur.fetchall()
+        records = []
+        for row in rows:
+            records.append({
+                "record_id": str(row[0]), "tool": str(row[1]), "target": str(row[2]),
+                "description": str(row[3]), "value": str(row[4]), "num_checks": int(row[5]),
+                "previous_value": str(row[6] or ""), "changed_at": row[7].isoformat() if row[7] else "",
+                "last_verified_at": row[8].isoformat(), "last_migrated_at": row[10].isoformat(),
+                "description_match": round(_validation_description_similarity(description, row[3]), 4),
+            })
+        records.sort(key=lambda item: (-float(item.get("description_match") or 0.0), str(item.get("last_verified_at") or "")), reverse=False)
+        # Re-sort explicitly: highest semantic match first, then newest verification.
+        records = sorted(records, key=lambda item: (float(item.get("description_match") or 0.0), str(item.get("last_verified_at") or "")), reverse=True)[:cap]
+        return {
+            "target": target, "description": description, "tool": str(tool or ""),
+            "records": records, "storage": "postgres_history",
+            "policy": "optional longer-term context; Redis remains the first short-term record",
+        }
+
+    def purge_validation_history(self, *, retention_seconds: int = 1209600) -> dict:
+        seconds = max(3600, int(retention_seconds))
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("DELETE FROM {}.validation_pool_history WHERE last_verified_at < now() - (%s * interval '1 second')").format(sql.Identifier(self.schema)), (seconds,))
+            pool_records = int(cur.rowcount or 0)
+            cur.execute(sql.SQL("DELETE FROM {}.global_validation_observation_batches WHERE migrated_at < now() - (%s * interval '1 second')").format(sql.Identifier(self.schema)), (seconds,))
+            observations = int(cur.rowcount or 0)
+            cur.execute(sql.SQL("DELETE FROM {}.global_validation_changes WHERE archived_at < now() - (%s * interval '1 second')").format(sql.Identifier(self.schema)), (seconds,))
+            changes = int(cur.rowcount or 0)
+            cur.execute(sql.SQL("DELETE FROM {}.global_validation_generations WHERE archived_at < now() - (%s * interval '1 second')").format(sql.Identifier(self.schema)), (seconds,))
+            generations = int(cur.rowcount or 0)
+        return {"pool_records_deleted": pool_records, "observation_batches_deleted": observations, "change_records_deleted": changes, "legacy_generations_deleted": generations, "retention_seconds": seconds}
 
     def record_evidence(self, task_id: str, step_id: str, evidence: list[dict]) -> None:
         if not evidence:
@@ -1135,6 +1589,36 @@ class PostgresTaskLog:
             cur.execute(sql.SQL("SELECT status FROM {}.task_runs WHERE task_id=%s").format(sql.Identifier(self.schema)), (task_id,))
             row = cur.fetchone()
             return str(row[0]) if row else None
+
+    def task_for_source_prompt_id(self, source_prompt_id: str) -> dict | None:
+        """Return the first root task durably created for one ingress prompt id."""
+        prompt_id = str(source_prompt_id or "").strip()
+        if not prompt_id:
+            return None
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                SELECT task_id,status,plan,task_uuid::text,started_at,updated_at
+                FROM {}.task_runs
+                WHERE plan->>'source_prompt_id'=%s
+                  AND parent_task_id IS NULL
+                  AND COALESCE(task_kind,'root')='root'
+                ORDER BY started_at ASC, task_id ASC
+                LIMIT 1
+            """).format(sql.Identifier(self.schema)), (prompt_id,))
+            row = cur.fetchone()
+        if not row:
+            return None
+        plan = row[2] if isinstance(row[2], dict) else {}
+        return {
+            "task_id": str(row[0]),
+            "status": str(row[1]),
+            "task_uuid": str(row[3]),
+            "source_prompt_id": prompt_id,
+            "original_request": self._original_request_from_plan(plan),
+            "source_user_message_id": str(plan.get("source_user_message_id") or ""),
+            "started_at": row[4],
+            "updated_at": row[5],
+        }
 
     def terminal_summary_verified(self, task_id: str) -> bool:
         with self._connect() as conn, conn.cursor() as cur:
@@ -1446,18 +1930,44 @@ class PostgresTaskLog:
         last = row[0] if row else None
         return last is None or last <= datetime.now(timezone.utc) - timedelta(days=max(1, int(interval_days)))
 
-    def deep_history_candidates(self, retention_days: int = 30, limit: int = 500) -> list[dict]:
+    def deep_history_candidates(
+        self,
+        retention_days: int = 30,
+        limit: int = 500,
+        *,
+        all_history: bool = False,
+        unbounded: bool = False,
+    ) -> list[dict]:
         cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, int(retention_days)))
         with self._connect() as conn, conn.cursor() as cur:
             s = sql.Identifier(self.schema)
-            cur.execute(sql.SQL("""
-                SELECT tr.task_id,tr.title,tr.status,tr.plan,tr.started_at,tr.updated_at,tr.effectiveness_note,
-                       tr.task_kind,tr.parent_task_id,tr.parent_step_id,tr.task_depth,
-                       (SELECT ts.summary FROM {}.task_summaries ts WHERE ts.task_id=tr.task_id ORDER BY ts.created_at DESC LIMIT 1)
-                FROM {}.task_runs tr
-                WHERE tr.status IN ('completed','failed','cancelled') AND tr.started_at < %s
-                ORDER BY tr.started_at ASC LIMIT %s
-            """).format(s, s), (cutoff, max(1, int(limit))))
+            if all_history and unbounded:
+                cur.execute(sql.SQL("""
+                    SELECT tr.task_id,tr.title,tr.status,tr.plan,tr.started_at,tr.updated_at,tr.effectiveness_note,
+                           tr.task_kind,tr.parent_task_id,tr.parent_step_id,tr.task_depth,
+                           (SELECT ts.summary FROM {}.task_summaries ts WHERE ts.task_id=tr.task_id ORDER BY ts.created_at DESC LIMIT 1)
+                    FROM {}.task_runs tr
+                    WHERE tr.status IN ('completed','failed','cancelled')
+                    ORDER BY tr.started_at ASC
+                """).format(s, s))
+            elif all_history:
+                cur.execute(sql.SQL("""
+                    SELECT tr.task_id,tr.title,tr.status,tr.plan,tr.started_at,tr.updated_at,tr.effectiveness_note,
+                           tr.task_kind,tr.parent_task_id,tr.parent_step_id,tr.task_depth,
+                           (SELECT ts.summary FROM {}.task_summaries ts WHERE ts.task_id=tr.task_id ORDER BY ts.created_at DESC LIMIT 1)
+                    FROM {}.task_runs tr
+                    WHERE tr.status IN ('completed','failed','cancelled')
+                    ORDER BY tr.started_at ASC LIMIT %s
+                """).format(s, s), (max(1, int(limit)),))
+            else:
+                cur.execute(sql.SQL("""
+                    SELECT tr.task_id,tr.title,tr.status,tr.plan,tr.started_at,tr.updated_at,tr.effectiveness_note,
+                           tr.task_kind,tr.parent_task_id,tr.parent_step_id,tr.task_depth,
+                           (SELECT ts.summary FROM {}.task_summaries ts WHERE ts.task_id=tr.task_id ORDER BY ts.created_at DESC LIMIT 1)
+                    FROM {}.task_runs tr
+                    WHERE tr.status IN ('completed','failed','cancelled') AND tr.started_at < %s
+                    ORDER BY tr.started_at ASC LIMIT %s
+                """).format(s, s), (cutoff, max(1, int(limit))))
             task_rows = cur.fetchall()
             task_ids = [str(row[0]) for row in task_rows]
             if not task_ids:
@@ -1576,8 +2086,12 @@ class PostgresTaskLog:
             """).format(s, s))
             return int(cur.rowcount)
 
-    def prune_covered_conversation_history(self, retention_days: int = 30) -> dict:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, int(retention_days)))
+    def prune_covered_conversation_history(self, retention_days: int = 30, *, all_history: bool = False) -> dict:
+        cutoff = (
+            datetime.max.replace(tzinfo=timezone.utc)
+            if all_history
+            else datetime.now(timezone.utc) - timedelta(days=max(1, int(retention_days)))
+        )
         with self._connect() as conn, conn.cursor() as cur:
             s = sql.Identifier(self.schema)
             cur.execute(sql.SQL("""
@@ -1654,7 +2168,7 @@ class PostgresTaskLog:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
         out = target_dir / f"norm_runtime-pre-prune-{stamp}.sql"
         cmd = [
-            str(pg_dump), f"--dbname={self.conninfo}", f"--schema={self.schema}",
+            str(pg_dump), f"--dbname={self.pool.dsn(self.connection_name)}", f"--schema={self.schema}",
             "--format=p", "--no-password", "--file=" + str(out),
         ]
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -1669,6 +2183,57 @@ class PostgresTaskLog:
     @staticmethod
     def delete_sql_backup(path: str) -> None:
         Path(path).unlink(missing_ok=True)
+
+    def task_history_archive_candidates(self) -> list[dict]:
+        """Return validated compact-history rows whose raw primary task is already gone."""
+        with self._connect() as conn, conn.cursor() as cur:
+            s = sql.Identifier(self.schema)
+            cur.execute(sql.SQL("""
+                SELECT th.primary_task_id,th.task_date,th.title,th.status,th.original_request,
+                       th.outcome,th.lessons,th.future_note,th.source_task_ids,th.archived_at,
+                       th.task_kind,th.parent_task_id,th.parent_step_id,th.task_depth
+                FROM {}.task_history th
+                WHERE th.validated=true
+                  AND NOT EXISTS (
+                      SELECT 1 FROM {}.task_runs tr WHERE tr.task_id=th.primary_task_id
+                  )
+                ORDER BY th.task_date DESC, th.archived_at DESC
+            """).format(s, s))
+            rows = cur.fetchall()
+        out: list[dict] = []
+        for primary_task_id, task_date, title, status, original_request, outcome, lessons, future_note, source_ids, archived_at, task_kind, parent_task_id, parent_step_id, task_depth in rows:
+            started_at = datetime(task_date.year, task_date.month, task_date.day, tzinfo=timezone.utc)
+            out.append({
+                "task_id": str(primary_task_id),
+                "title": str(title),
+                "status": str(status),
+                "original_request": str(original_request),
+                "started_at": started_at,
+                "updated_at": archived_at,
+                "effectiveness_note": str(future_note or ""),
+                "task_kind": str(task_kind or "root"),
+                "parent_task_id": str(parent_task_id or ""),
+                "parent_step_id": str(parent_step_id or ""),
+                "task_depth": int(task_depth or 0),
+                "terminal_summary": (
+                    f"Outcome: {outcome}\nLessons: {lessons}\nFuture note: {future_note}"
+                ),
+                "steps": [],
+                "evidence": [],
+                "source_task_ids": list(source_ids or []),
+                "archived_compact": True,
+            })
+        return out
+
+    def delete_task_history_rows(self, primary_task_ids: list[str]) -> int:
+        ids = [str(v) for v in dict.fromkeys(primary_task_ids) if str(v or "").strip()]
+        if not ids:
+            return 0
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("DELETE FROM {}.task_history WHERE primary_task_id=ANY(%s)").format(
+                sql.Identifier(self.schema)
+            ), (ids,))
+            return int(cur.rowcount or 0)
 
     def relevant_task_history(self, query: str, limit: int = 6, *, include_unvalidated: bool = False) -> list[dict]:
         query = str(query or "").strip()

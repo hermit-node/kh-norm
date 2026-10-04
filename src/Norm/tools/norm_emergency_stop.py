@@ -14,7 +14,7 @@ APP = ROOT / "core"
 if str(APP) not in sys.path:
     sys.path.insert(0, str(APP))
 
-from runtime_bootstrap import build_prompt_queue, build_runtime
+from runtime_bootstrap import build_prompt_queue, build_runtime, close_postgres_pool
 from norm_runtime.settings import load_ports
 from norm_runtime.shutdown_snapshot import write_sos
 
@@ -131,6 +131,23 @@ def _force_kill_image(image: str) -> tuple[int, str]:
     return proc.returncode, detail[:500]
 
 
+def _norm_process_running() -> bool:
+    proc = subprocess.run(
+        ["tasklist", "/FI", "IMAGENAME eq norm.exe", "/NH"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3, check=False,
+    )
+    return "norm.exe" in (proc.stdout or "").lower()
+
+
+def _wait_for_norm_shutdown(timeout: float = 2.0) -> bool:
+    deadline = time.monotonic() + max(0.0, float(timeout))
+    while time.monotonic() < deadline:
+        if not _norm_process_running():
+            return True
+        time.sleep(0.1)
+    return not _norm_process_running()
+
+
 def main() -> int:
     print("Emergency stop-all-now: cancelling active generation...")
     print(_request_stop_all_now())
@@ -143,11 +160,27 @@ def main() -> int:
         print(f"SOS snapshot FAILED; refusing force-kill: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
 
+    # This helper opened the shared PostgreSQL pool to inspect Redis/durable state.
+    # Close it explicitly before interpreter finalization so psycopg_pool worker
+    # threads are never left to __del__ during Python 3.14 shutdown.
+    try:
+        close_postgres_pool(ROOT)
+        print("PostgreSQL helper pools closed before emergency process teardown.")
+    except Exception as exc:
+        print(f"PostgreSQL helper pool close warning: {type(exc).__name__}: {exc}", file=sys.stderr)
+
     for image in ("llama-server.exe", "ollama.exe", "ollama app.exe"):
         rc, detail = _force_kill_image(image)
         print(f"force-stop {image}: rc={rc} {detail}")
-    rc, detail = _force_kill_image("norm.exe")
-    print(f"force-stop norm.exe: rc={rc} {detail}")
+
+    # The control endpoint gives norm.exe a very small bounded opportunity to run
+    # its own finally block (including its process-global PG pool close). Emergency
+    # semantics remain forceful: after this grace window taskkill is still used.
+    if _wait_for_norm_shutdown(timeout=2.0):
+        print("norm.exe exited through its emergency shutdown path; force-kill not required.")
+    else:
+        rc, detail = _force_kill_image("norm.exe")
+        print(f"force-stop norm.exe: rc={rc} {detail}")
     return 0
 
 

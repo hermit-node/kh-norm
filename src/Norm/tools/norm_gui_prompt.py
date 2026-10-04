@@ -7,10 +7,9 @@ import threading
 import time
 import uuid
 from datetime import datetime
-from urllib import request
+from urllib import error, request
 from urllib.parse import quote
 
-import psycopg
 from psycopg import sql
 
 from prompt_toolkit import PromptSession
@@ -30,6 +29,7 @@ from norm_gui_common import (
     load_runtime_config,
 )
 from norm_runtime.about import format_about
+from runtime_bootstrap import build_postgres_pool
 
 
 PROJECT_ID = "default"
@@ -120,9 +120,15 @@ def load_last_turn_from_postgres() -> tuple[str | None, str | None, str | None]:
         "WHERE t.project_id=%s AND mt.is_primary AND m.role IN ('user','assistant') "
         "ORDER BY m.created_at DESC LIMIT 50"
     ).format(sql.Identifier(schema), sql.Identifier(schema), sql.Identifier(schema))
-    with psycopg.connect(pg["conninfo"]) as conn, conn.cursor() as cur:
-        cur.execute(query, (PROJECT_ID,))
-        rows = cur.fetchall()
+    pool = build_postgres_pool(ROOT)
+    try:
+        with pool.connection("norm") as conn, conn.cursor() as cur:
+            cur.execute(query, (PROJECT_ID,))
+            rows = cur.fetchall()
+    finally:
+        # The prompt helper needs PostgreSQL only for one startup history read. Do
+        # not leave psycopg-pool worker threads alive for the lifetime of the UI.
+        pool.close()
     last_submission = next((row[1] for row in rows if row[0] == "user"), None)
     last_answer = next((row[1] for row in rows if row[0] == "assistant"), None)
     thread_id = rows[0][2] if rows else None
@@ -156,8 +162,22 @@ def load_last_turn() -> tuple[str | None, str | None, str | None, str]:
 def post_json(url: str, payload: dict | None = None, timeout: float | None = None) -> dict:
     body = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
     req = request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
-    with request.urlopen(req, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with request.urlopen(req, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except error.HTTPError as exc:
+        detail = ""
+        try:
+            raw = exc.read().decode("utf-8", errors="replace")
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                detail = str(parsed.get("error") or parsed.get("reason") or parsed.get("status") or "").strip()
+            if not detail:
+                detail = raw.strip()
+        except Exception:
+            detail = ""
+        message = f"HTTP {exc.code}" + (f": {detail}" if detail else "")
+        raise RuntimeError(message) from None
 
 
 def get_json(url: str, timeout: float = 5) -> dict:
@@ -317,14 +337,12 @@ def show_help() -> None:
     print("  /delete-files       Permanently purge reversible trash now")
     print("  /backup             Create a portable installer/source backup")
     print("  /backup full        Create a sensitive full backup with private state and PostgreSQL")
-    print("  /memory-condense    Incrementally refresh consolidated background memory when idle")
-    print("  /memory-condense -full  Rebuild consolidated background memory from the full surviving source set")
+    print("  /memory-condense    Replay-validate and compact a bounded batch of terminal task history")
+    print("  /memory-condense -full  Replay-validate and compact all terminal history, then full-prune covered raw history")
     print("  /stop-all           Finish the current step, then stop Norm/Ollama")
     print("  /stop-all now       Emergency snapshot to temp\\recovery\\SOS.md, then force-stop Norm/Ollama")
     print("  /shutdown           Request Norm's graceful shutdown and close this console")
     print("  /shutdown now       Immediately request Norm shutdown and close this console")
-    print("  /exit               Close only this prompt console; Norm keeps running")
-    print("  Esc / Ctrl+C        Cancel entry and return one level; Norm keeps running")
 
 
 def run_backup(*, full: bool) -> None:
@@ -655,8 +673,15 @@ def main() -> int:
                 continue
             elif lowered == "/suppress-task":
                 retry_guard_ids = dispatcher.active_prompt_ids()
-                result = post_json(ep["suppress_task"], payload={"reason": "Operator requested /suppress-task from Norm GUI."}, timeout=5)
-
+                try:
+                    result = post_json(
+                        ep["suppress_task"],
+                        payload={"reason": "Operator requested /suppress-task from Norm GUI."},
+                        timeout=5,
+                    )
+                except Exception as exc:
+                    print(f"Could not suppress task: {exc}. Prompt console remains available; check /queue-full or /status/busy before retrying.")
+                    continue
                 if result.get("suppressed"):
                     dispatcher.suppress_prompt_retries(retry_guard_ids)
                     print(f"Suppressed: {result.get('title') or result.get('task_id')}.")
@@ -664,7 +689,11 @@ def main() -> int:
                     print(f"Nothing suppressed: {result.get('reason') or result.get('task_status') or 'no eligible task'}.")
                 continue
             elif lowered == "/flush-suppressed":
-                result = post_json(ep["flush_suppressed"], timeout=10)
+                try:
+                    result = post_json(ep["flush_suppressed"], timeout=10)
+                except Exception as exc:
+                    print(f"Could not flush suppressed tasks: {exc}. Prompt console remains available.")
+                    continue
                 print(f"Flushed {int(result.get('deleted') or 0)} suppressed task(s) and {int(result.get('delivery_deleted') or 0)} suppressed delivery record(s).")
                 continue
             elif lowered == "/delete-list":

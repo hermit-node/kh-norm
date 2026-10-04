@@ -2,27 +2,10 @@
 
 ## Never commit
 
-Do not commit:
+Do not commit `.env` files, local imprints, passwords, API/OAuth/Tailscale tokens, SSH private keys, private CA keys, PostgreSQL dumps containing user/runtime state, logs, or full-state backup archives.
 
-- `norm-imprint.local.json` or other local imprint variants;
-- `.env` files;
-- PostgreSQL passwords;
-- Tailscale auth keys or OAuth secrets;
-- SSH private keys;
-- private CA keys;
-- API tokens;
-- backup archives containing runtime state.
+## Public/private boundary
 
-The repository `.gitignore` excludes common local secret/key files.
+The public tree contains topology-neutral source/configuration only. Deployment chronology and machine-specific engineering notes are intentionally excluded.
 
-## Imprint boundary
-
-Imprints are intentionally non-secret. The installer rejects secret-like JSON keys such as password, token, secret, authkey, API key, and private key fields.
-
-Deployment topology may itself be sensitive even when it is not a credential, so local imprint files are ignored by Git by default.
-
-## Norm network-map safety
-
-Passive Tailscale peer inventory may include decoy/honeypot nodes. Presence in the passive inventory never authorizes an active connection.
-
-Active probes use an explicit allowlist and re-check the never-probe policy immediately before network I/O. Hostnames are resolved before probing and every resolved address is checked against `never_probe_cidrs`. HTTP probes are pinned to an approved resolved address and never follow redirects.
+N1's validation cache is an execution-control mechanism, not a secret store. Tool results can contain sensitive data at runtime and therefore must remain in local Redis/PostgreSQL/runtime state rather than release artifacts.

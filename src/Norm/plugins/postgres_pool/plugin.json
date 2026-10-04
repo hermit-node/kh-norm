@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "name": "PostgreSQL Pool",
+  "version": "1.0.1",
+  "date": "2026-10-03",
+  "entrypoint": "src/main.py",
+  "description": "Expose controlled status, read-only query, and Norm-runtime write tools over the canonical shared PostgreSQL pools.",
+  "capabilities": [
+    "postgresql",
+    "connection pool",
+    "database health",
+    "read-only query",
+    "norm runtime writes",
+    "bounded connections"
+  ],
+  "sha256": "1b22da364f29f8249be05fc1ba44fe010632746adb371b55c6711cf29b82e2c0"
+}

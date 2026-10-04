@@ -4,9 +4,9 @@ Self-contained StegoSplit V2 paired-image carrier plugin. Cipher/encoder layers 
 
 ## Norm entry point
 
-`plugin.py:run(payload: dict) -> dict`
+`src/main.py` (public functions are injected as native tools)
 
-The plugin is intentionally self-contained; the `_stegosplit_v2` private engine package is bundled under this plugin folder rather than relying on a separate editable install.
+The plugin is intentionally self-contained; the `_stegosplit_v2` private engine package is bundled under `src/` rather than relying on a separate editable install.
 
 ## V2 format invariants
 
@@ -67,3 +67,7 @@ The plugin requires Python packages `Pillow` and `cryptography` in the Python en
 `stegosplit_message` does not implement Rotor5 or any other pre-encoding scheme. To layer Rotor5 over StegoSplit, encode with the separate `rotor5_cipher` plugin and pass its returned Base64 envelope to `embed_base64`. On recovery, use `extract_base64` and then decode that envelope with `rotor5_cipher`.
 
 Plugin version: `0.3.0`; bundled StegoSplit engine: `2.0.0a4`; public image format: `V2`.
+
+## Package identity
+
+`plugin.json` schema 2 records this plugin's name, version, release date, `src/main.py` injection point, and one SHA-256 for the complete `src/` tree. Norm recalculates that tree hash before loading the plugin. README changes do not change the code SHA; edits or renames anywhere under `src/` do.

@@ -1,3 +1,88 @@
+## 0.53.14 — 2026-10-04 — N1/N2 tool-gate checkpoint 1
+
+- Added a two-role runtime boundary without changing user-facing routing yet: N1 is a gatekeeper/supervisor and N2 remains the existing reasoning/worker path. User input and N2 answers continue through the current conversation flow without N1 rewriting them.
+- `run norm` now initializes both logical agent clients. Both default to the existing `norm` Ollama model/endpoint for checkpoint 1, while `runtime.json:agents.n1/n2` provides separate role configuration for later model/host separation.
+- Removed N2 ownership of `verification_preflight`, `verification_history`, and `verification_checkin` from the native tool loop. N2 now proposes the actual information tool with `n1_need` and `n1_target`; N1 alone checks the live Redis verification pool, decides reuse versus fresh execution, and records fresh evidence.
+- Fresh tool execution results are passed to N2 unchanged. N1 verification/check-in metadata is recorded out-of-band; Redis reuse returns the already-verified fact instead of invoking the tool. Exact repeated requests within the same task/step reuse the prior raw result.
+- Added a first loop/rabbit-hole guard: exact repeated N2 tool requests are suppressed/reused, while consecutive similar N2 reasoning/tool turns are passively observed and escalated to N1 for a loop judgment. A judged rabbit hole is stopped before that turn's proposed tools execute, then N2 receives a reset instruction to continue from established evidence using a materially different next action.
+- Deterministic runtime read-back verification after writes remains a core safety invariant and is not routed through model approval because it is not an N2-requested information call.
+
+## 0.53.13 — 2026-10-03 — runtime summary, prompt fidelity, and compact validation pool
+
+- Retained the end-of-task durable summary instead of suppressing/removing it: structured generation stays silent, then one complete reconciled summary block is published after persistence.
+- Replaced newline/1024-character runtime display buffering with immediate publication of upstream Ollama answer/thinking fragments. This is independent of the 14,000-character maintenance batch limit, which remains unchanged.
+- Extended the Ollama degeneration guard to catch long coherent phrase loops (repeated sentence/paragraph blocks), not only low-entropy token loops; this covers the observed repeated-thought failure where normal-vocabulary prose could repeat indefinitely.
+- Kept the 0.53.12 current-state reconciliation fix: summary refresh uses the coverage cursor, active current memories outrank stale prior text, and double model failure writes a deterministic current-state fallback rather than freezing old state.
+- Hardened current-state reconciliation against the live monotonic-growth failure: summary replacements containing `Superseded information`, embedded `Recent messages`, or conversation-log sections are rejected and retried; a second invalid result advances to the deterministic current-state fallback. The thread summary row may shrink and is not required to preserve prior text.
+- Tightened prompt reduction: model-derived intent/details remain useful, but an ordinary complete task sentence cannot be removed just because it was classified as durable memory. Only exact explicit-aside spans (plus non-task parentheticals) are eligible for removal from executable wording.
+- `vision_parse` 0.2.1 retains the ten-page call limit and adds 1.5x/2.2x/2.9x adaptive render tiers: easy clean pages use 1.5x, moderately dense clean pages use 2.2x, and suspect/dense/split pages use 2.9x.
+- Prompt interpretation remains enabled for intent, command classification, durable memories, corrections, preferences, and constraints. Executable text is now conservative: only exact, structurally separable sidecar spans may be removed; embedded task qualifiers such as `end of task summary` stay verbatim.
+- Added regressions for conservative prompt reduction, immediate stream publication, complete durable-summary events, stale-summary fallback, and the unchanged `consolidation_batch_chars=14000` boundary.
+- Documentation split was corrected: `CURRENT_STATUS.md`, the main README, and `SOURCE_PACKAGE.md` now describe only current behavior; historical implementation facts remain in `RELEASE_NOTES.md`. Vision history is recorded under the versions that actually shipped it: 0.53.8 = 4 pages/2.5x, 0.53.12 = 0.2.0 with 10 pages and 2.2x/2.9x, 0.53.13 = 0.2.1 with 1.5x/2.2x/2.9x.
+- Reworked the live verification pool to the intended compact architecture: Redis now uses one `norm:validation:pool` hash instead of `facts` + `recent` + per-subject observation zsets/pending keys. Preflight reads Redis first and only then lets Norm choose reuse, optional PostgreSQL history, or a fresh information tool; check-in uses target-first candidate matching so minor wording changes cannot proliferate near-duplicate facts. Same-value checks increment one count, changed values reset to 1 with previous value/change time, and twice-daily migration merges eligible >24h hot records into PostgreSQL before deleting the Redis field. PostgreSQL verification retention is now about 14 days.
+- Promoted the installer wrapper to **1.6.6-unified** and simplified release packaging to `Norm Installer 1.6.6.zip`; redundant outer audit/checkpoint/change-note copies were removed because authoritative project documentation already ships inside the portable source.
+
+## 0.53.12 runtime-summary reconciliation hotfix — 2026-10-03
+
+- Replaced the 0.53.9 rolling-summary failure mode that could preserve an old branch summary indefinitely after two output-budget hits. Summary refresh now advances from the last successfully covered message cursor instead of re-reading only the last 20 messages.
+- Runtime summary semantics are current-state projection, not a supersession timeline: newer versions/values/statuses remove older ones unless the historical transition is itself operationally relevant. Completed/resolved work and stale unresolved state are pruned.
+- Summary maintenance now consumes newly extracted active memories before rebuilding runtime state. Internal summary/memory JSON generation is silent and no longer dumps maintenance JSON into the normal runtime activity stream.
+- If both model rebuild attempts fail, Norm advances to a deterministic current-state fallback from active durable memories plus the latest verified assistant results instead of freezing the stale prior summary.
+- Turn interpretation may still classify sidecar durable details, but it may not rewrite the executable user request; the full original user wording remains authoritative.
+- This hotfix does not change `memory.consolidation_batch_chars`; the unrelated maintenance batching value remains 14000.
+
+## 0.53.12 verification/archive maintenance — 2026-10-03
+
+- Replaced the optional/manual validation bookkeeping path with a mandatory live Redis verification protocol around information-gathering tools: preflight Redis check, explicit PostgreSQL-history yes/no decision, one evidence tool, then mandatory Redis check-in before any next evidence tool or final answer.
+- Semantic identity decisions remain model-owned through stable key + who/what/where/how/why; Python only stores/compares the canonical key/value selected by Norm.
+- Same-key/same-value observations increment the current generation; changed values immediately become the live Redis value with count 1. Timestamped old->new transitions remain pending in Redis until optional PostgreSQL history accepts them.
+- Added twice-daily migration of Redis verification observations older than 24 hours to PostgreSQL historical batches. PostgreSQL counts are explicitly historical and are not compared to live Redis counts as contradictions. Weekly maintenance purges verification-history/change rows older than seven days.
+- Added archive-aware `file_read` through a Python intermediary that prefers local 7-Zip and falls back to Python ZIP/TAR readers. Archive inspection is non-extracting and follows tree/sizes -> SHA-256 -> selective member read escalation.
+- Bundled 7-Zip 26.03 x64 under `tools\\7zip` and changed archive resolution to prefer that package-managed copy after an explicit `NORM_7ZIP` override, so a target machine no longer needs a system 7-Zip installation.
+- Made DB3 `prompt_id` a durable idempotency key. Any uncertain/redelivered submission first resolves the original root task by `source_prompt_id`; running work waits on that same task and terminal work replays its durable result without routing, inserting another user turn, or creating another `chat-*` task. Failed/cancelled terminal tasks also return their durable summary to the synchronous owner instead of throwing after finalization.
+- Fixed the first-party `postgres_pool` tool adapter. It now resolves `runtime_bootstrap.build_postgres_pool()` instead of importing a second `_pool` module, so model-facing PostgreSQL tools borrow the exact same process-global pool object already used by the runtime. Added `postgres_query` as a bounded read-only query surface for the approved `norm`/`stocks` logical connections and structured `postgres_execute` for INSERT/UPDATE/DELETE only inside Norm's configured runtime schema through the shared `norm` connection. Full backup helpers resolve approved connection parameters without opening a pointless child-process psycopg pool before `pg_dump`; no host/user/password/arbitrary database parameters or direct `psycopg.connect()` path are exposed to the model.
+- Repointed manual `/memory-condense` to the replay-validated deep-history pipeline. Manual normal mode bypasses the scheduled age/interval gate, compacts a bounded batch of new terminal task history, and replay-validates every compact record from that pass. `-full` refreshes all surviving compact/raw history newest-to-oldest in batches of up to 200 source tasks; older records receive relevant newer compact state so stale/superseded lessons can be corrected or reduced to historical context, and up to 12 stratified records per full batch are replay-checked. Both retain the SQL-backup + fail-closed replay gate before covered raw history can be removed or refreshed compact history committed. Validated compact history remains as individual searchable `norm_runtime.task_history` rows with no aggregate character cap; deep-history completion no longer forces the entire archive through one 12,000-character global merge.
+- Removed the planner's fixed batch-of-eight guidance; repeated work now batches adaptively and file/archive work prefers machine-readable manifest/hash comparison first.
+- Emergency `/stop-all-now` now closes helper PostgreSQL pools before process teardown and allows a brief bounded `norm.exe` shutdown window before the existing force-kill fallback.
+
+## 0.53.12 control-race maintenance — suppress/flush resilience
+
+- Fixed a race where `/suppress-task` could return before the active Ollama generation had fully unwound, then `/flush-suppressed` could delete the durable task and a second `/suppress-task` could hit a deleted task and surface as HTTP 503.
+- The active suppression transition marker now survives until the worker acknowledges cancellation; duplicate suppress requests during that window are idempotent.
+- Prompt control HTTP failures are displayed without terminating the Prompt console.
+- The Prompt console now closes its one-shot PostgreSQL pool after recovering the latest turn, preventing `psycopg_pool` finalizer warnings on helper shutdown.
+
+# Norm release notes
+
+## Coverage note
+
+The retained project history documents the formal release line from **0.51.0 through 0.53.9**, plus the reconstructed 0.53.11 baseline and the current 0.53.14 release. No standalone 0.53.0 or 0.53.10 release artifact/section was found in the retained source history, so this file does not invent changes for those version numbers. Same-version hotfixes remain under the version they actually modified.
+
+## 0.53.12 — 2026-10-02 — voice profile, startup compatibility, and operator-console recovery
+
+- Added first-party schema-2 `voice_profile` 0.3.0. Voice profiles can build from PDF folders through the existing `vision_parse` plugin or from already-extracted text; source quotes remain untrusted corpus data and factual corpus knowledge stays retrieval-based.
+- Updated `vision_parse` to 0.2.0: one call can traverse up to ten pages; ordinary clean pages use 2.2x rendering while dense/suspect/split pages use 2.9x, dense two-column pages split into left/right crops, and very dense single-column pages split top/bottom. The shared Ollama vision client preserves `done_reason`/`eval_count` and accepts `num_predict`; full-page `done_reason=length` automatically falls back to split crops, token-repeat aborts retry only the affected page/crop once, and a bounded process-local 128-page cache avoids repeating identical page/model/mode/focus work.
+- Restored the shared GUI helper API `load_runtime_config()` as a **lazy** compatibility wrapper. Prompt and Replies can load runtime/queue/PostgreSQL configuration again without making the lightweight launcher eagerly import the full runtime bootstrap.
+- Added transition compatibility for the schema-2 `verbatim_lines` move. The maintained CLI remains `plugins\verbatim_lines\src\_cli.py`, while a root-level `plugins\verbatim_lines\_cli.py` shim keeps older frozen executables/configurations working during in-place upgrades. `verbatim_lines` 1.0.1 also adds a private exact replacement primitive, and core `write_file`/`replace_text` now delegate exact temporary-file content creation to that hash-verified plugin source while retaining their existing authorization, SHA guard, backup, retry, and atomic-replace logic; no unguarded public overwrite tool is exposed.
+- `Run-Norm.bat` continues to use the Python launcher/service architecture; it now delegates all three operator windows to `tools\start_operator_consoles.py` instead of spawning each helper independently.
+- Norm Runtime, Norm Replies, and Norm Prompt now use the persistent `operator_console_host.py` wrapper. If a helper exits, its console stays open and displays the exit code/error instead of flashing away.
+- Runtime and Replies no longer close merely because `norm.exe` briefly disappears; they stay open and retry their data source until the operator closes the window.
+- Early detached-service stdout/stderr remain captured in `logs\norm-bootstrap.stdout.log` and `logs\norm-bootstrap.stderr.log`, so import/frozen-startup failures that occur before normal runtime logging are visible.
+- Synchronized `core\requirements.txt` with direct runtime/tool imports: NumPy, OpenCV, Kornia, prompt-toolkit, Rich and tzdata are now represented alongside Redis, psycopg/psycopg-pool, aiohttp, Pillow, cryptography and PyMuPDF. PyTorch remains intentionally installer-managed through `environment.torch_version`/`torch_index_url` so the configured CUDA build is preserved.
+- Added/retained `BEHAVIOR_AUDIT_0.53.12.txt` documenting high-impact existing capabilities without silently changing their policy.
+- Installer remains **1.6.5-unified**. Normal PyInstaller cache reuse remains intentional; this release does **not** switch normal builds to `--clean`.
+
+## 0.53.11 — 2026-10-02 — schema-2 plugins, shared validation pool, PostgreSQL pool, and installer migration
+
+- Standardized first-party plugins on schema 2: root `plugin.json` + README, executable code under `src/`, normally injected from `src/main.py`. `plugin.json.sha256` is the deterministic identity of the complete `src/` tree; generated `plugins/.registry.json` is runtime cache/state rather than package authority.
+- Added the first-party bounded `postgres_pool` capability using `psycopg-pool==3.3.3`; approved named connections (`norm`, `stocks`) share process-global bounded pools instead of opening unrestricted direct connections.
+- Added one shared semantic validation/reuse pool across tasks and tools. Redis owns live rolling-24-hour/current-generation counts; PostgreSQL stores compact durable snapshots/history on the 12-hour checkpoint policy. A changed value starts a new generation at count 1.
+- Refreshed shared validation context before each model/tool-decision round so repeated checks can be recognized across unrelated work without treating counts as permission gates.
+- Hardened suppression/resume reconciliation: durably suppressed pending work is not resurrected at startup, resume restores the captured work exactly once, and duplicate resume remains idempotent.
+- Added UTC-aware validation timestamp normalization and regression coverage.
+- Installer 1.6.5 migration distinguishes the old installed public `norm-imprint.json` baseline from the private local imprint. Effective precedence is manual Environment edit > existing customized value > private local imprint > new public package imprint; an absent old public field means there was no old default.
+- Legacy PostgreSQL routing can be recovered from the external `%APPDATA%\Norm\.env`; passwords remain external and are not written into public/package imprints.
+
 ## 0.53.9 — 2026-10-01 — operator network map and public configuration split
 
 - Added `/network-map` and `/network-map --json` as synchronous operator commands before normal DB3 prompt ingress.
@@ -14,7 +99,7 @@
 
 ## 2026-10-01 - 0.53.8 same-version PDF/stream hotfix
 - Added first-party `plugins\vision_parse` PDF reading: PyMuPDF supplies page text/rendering and the local Ollama vision model reconciles visible page content against the untrusted text layer. This avoids treating mojibake, bad column ordering, or OCR-like corruption as ground truth.
-- `vision_parse` handles at most four pages per call and returns page-numbered readings plus a continuation page so large books remain resumable.
+- `vision_parse` handles at most four pages per call, renders each page at 2.5x for vision, and returns page-numbered readings plus a continuation page so large books remain resumable.
 - Added PyMuPDF 1.28.2 to the managed dependency set.
 - Added an Ollama stream watchdog for severe repetitive-token degeneration and bounded partial-line flushing. A no-newline token loop can no longer make the runtime window appear silent and then dump an enormous buffered string only when `/stop-all -now` closes the model response.
 - Preserved the existing 0.53.8 unresolved-bits SQL typing fix and bounded rolling-summary refresh fixes.
@@ -98,8 +183,6 @@
 - Retained loopback/Tailscale-only bind validation.
 - Added bounded graceful AppRunner cleanup and explicit event-loop/default-executor shutdown.
 
-# Norm release notes
-
 ## 0.53.1 — 2026-09-28 — ingress retry deduplication
 
 - Serialized uncertain-prompt requeue by durable uncertain-record identity so duplicate retry timers cannot create multiple live Redis deliveries for one prompt.
@@ -140,8 +223,6 @@
 - The verifier no longer invents hypothetical implementation/boundary failures when the plan explicitly inspects/reuses an existing mechanism or includes execution tests for that invariant.
 - Repair prompts require the smallest material fix and prohibit mechanically returning the same rejected plan.
 - Runtime build tooling lock moves PyInstaller from 6.22.2 to 6.22.3.
-
-# Norm Release Notes
 
 ## 0.52.4 — 2026-09-27 — canonical prompt ingress and startup reliability
 
@@ -222,7 +303,7 @@ Rules:
 - Replaced the old `[ports]` settings model with `[network]`, including `current_machine`, `current_domain`, per-service host selectors, ports, and `require_tailscale`.
 - Central runtime resolution now derives Redis, prompt/deletion/console queues, PostgreSQL, `stocks_api`, Norm HTTP, activity/control, and Ollama endpoints from the settings resolver instead of duplicating live network values in `runtime.json`.
 - Moved environment-specific PostgreSQL database/user/password values to the configured external `.env` file; runtime JSON no longer carries the connection string.
-- PostgreSQL runtime and `stocks_api` use `norm-host.example.invalid:25434`; Redis authority uses `norm-host.example.invalid:6379`; Norm HTTP/activity bind to NORM-HOST’s Tailscale address; Ollama intentionally remains loopback-only.
+- PostgreSQL runtime and `stocks_api` use `localhost.example.invalid:25434`; Redis authority uses `localhost.example.invalid:6379`; Norm HTTP/activity bind to NORM-HOST’s Tailscale address; Ollama intentionally remains loopback-only.
 - Added Tailscale Serve TCP forwarding for Redis so Memurai remains bound to `127.0.0.1:6379` while Norm reaches it only through the tailnet authority path.
 - Added a pre-tool-call authority gate: each native Norm tool call must successfully reach/PING the configured Tailscale Redis authority endpoint before execution proceeds.
 - Promoted live executable SHA-256: `0EE7EA56B866F0DC6CC3B54C04A4549A97F76DC4C9CCD968CD13D6D7137CC671`; `norm.exe --version` reports `0.51.4`.

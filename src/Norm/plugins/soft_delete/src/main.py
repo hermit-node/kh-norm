@@ -6,7 +6,7 @@ from norm_runtime.file_access_policy import authorize_path, load_file_access_pol
 
 
 def _root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[3]
 
 
 def _queue():

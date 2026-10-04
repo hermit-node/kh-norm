@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import runpy
 import shutil
 import socket
 import subprocess
@@ -14,7 +15,6 @@ from pathlib import Path
 from typing import Any
 from urllib import request as urlrequest
 
-import psycopg
 import redis as redis_lib
 
 from .secret_redaction import redact, is_secret_file
@@ -23,7 +23,9 @@ from .deletion_queue import RedisDeletionQueue
 from .resource_status import full_context_status, impaired_context_status
 from .storage_context import StorageContext
 from .plugin_manager import PluginManager
+from .plugin_identity import verify_identity
 from .task_storage import TaskStorageLimitReached, TaskStorageManager
+from .archive_adapter import archive_manifest, compare_archive_to_directory, hash_archive_member, looks_like_archive, read_archive_member
 
 
 class StagedWriteError(PermissionError):
@@ -77,6 +79,7 @@ class FileToolExecutor:
         deletion_queue: RedisDeletionQueue | None = None,
         storage_config: dict[str, Any] | None = None,
         connection_config: dict[str, Any] | None = None,
+        postgres_pool: Any | None = None,
         shell_enabled: bool = False,
         shell_executable: str = "powershell.exe",
         shell_timeout_seconds: int = 120,
@@ -117,6 +120,7 @@ class FileToolExecutor:
         self.deletion_queue = deletion_queue
         self.storage = StorageContext(storage_config) if storage_config else None
         self.connection_config = dict(connection_config or {})
+        self.postgres_pool = postgres_pool
         self.authority_config = dict(self.connection_config.get("authority") or {})
         self.shell_enabled = bool(shell_enabled)
         self.shell_executable = str(shell_executable or "powershell.exe")
@@ -124,6 +128,11 @@ class FileToolExecutor:
         self.shell_max_output_chars = max(1000, int(shell_max_output_chars))
         self.verbatim_helper = Path(verbatim_helper).resolve() if verbatim_helper else None
         self.plugin_manager = PluginManager(plugin_root, plugin_registry_file) if plugin_root else None
+        if self.plugin_manager is not None:
+            # The plugin tree is authoritative. Build disposable registry state from the
+            # plugins actually present on this installation at startup; later schema/
+            # dispatch calls keep rescanning for hot swaps.
+            self.plugin_manager.refresh()
         self.task_storage = (
             TaskStorageManager(temp_root, workspace_root, task_storage_config)
             if temp_root and workspace_root else None
@@ -176,7 +185,7 @@ class FileToolExecutor:
             "Never dump .env or credential files. Load credentials internally and pass them through process environment variables; never echo literal secrets.\n"
             "Available tools:\n"
             "- list_directory(path): bounded directory listing.\n"
-            "- read_file(path, start_line?, end_line?, start_byte?, max_bytes?): streams UTF-8 text from arbitrarily large source files; results are bounded and return continuation cursors plus sha256.\n"
+            "- read_file(path, ...): streams bounded UTF-8/bytes from normal files. Archive files are recognized and default to a non-extracting manifest. Use archive_action=read_member/hash_member/compare_directory for selective archive work; the archive adapter prefers the local 7-Zip CLI and never extracts implicitly.\n"
             "- append_task_note(content, category?): append durable internal Markdown notes in automatically rotated <=5 MiB chunks for the active task.\n"
             "- make_directory(path): creates a directory inside an allowed root.\n"
             "- write_file(path, content, expected_sha256?, reproducible?, retention?, user_requested?, recipe?): creates a UTF-8 file; mark explicit user outputs user_requested=true/retention=durable; mark easy-to-recreate helpers reproducible=true/retention=ephemeral. Existing files "
@@ -229,6 +238,10 @@ class FileToolExecutor:
                     "max_bytes": {"type": "integer", "minimum": 1},
                     "mode": {"type": "string", "enum": ["text", "bytes_base64"]},
                     "include_sha256": {"type": "boolean", "description": "Force a full-file SHA-256 scan. Large sources omit it by default to preserve streaming behavior."},
+                    "archive_action": {"type": "string", "enum": ["auto", "list", "read_member", "hash_member", "compare_directory"], "description": "Archive-aware action. auto/list returns tree+sizes first; compare_directory hashes members only when tree+sizes are a likely exact match."},
+                    "member": {"type": "string", "description": "Exact archive member path for read_member/hash_member."},
+                    "compare_path": path,
+                    "max_entries": {"type": "integer", "minimum": 1, "maximum": 20000},
                 },
                 ["path"],
             ),
@@ -349,6 +362,9 @@ class FileToolExecutor:
                 result = method(arguments)
             elif self.plugin_manager is not None and self.plugin_manager.has_tool(name):
                 result = self.plugin_manager.execute(name, arguments)
+                payload = result.get("result")
+                if isinstance(payload, dict) and payload.get("file_mutation"):
+                    result.update({key: payload.get(key) for key in ("path", "sha256", "file_mutation")})
             else:
                 raise ValueError(f"unsupported tool: {name}; deletion is not available")
             result.update({"ok": True, "tool": name})
@@ -464,15 +480,10 @@ class FileToolExecutor:
                 return {"target": target, "configured": True, "queried": True, "responsive": False, "error": f"{type(exc).__name__}: {exc}"}
         cfg = self.connection_config
         if target == "postgres":
-            pg = cfg.get("postgres") or {}
-            conninfo = str(pg.get("conninfo") or "")
-            if not conninfo:
+            if self.postgres_pool is None:
                 return {"target": target, "configured": False, "queried": False, "responsive": False}
             try:
-                with psycopg.connect(conninfo, connect_timeout=3) as conn, conn.cursor() as cur:
-                    cur.execute("SELECT 1")
-                    cur.fetchone()
-                return {"target": target, "configured": True, "queried": True, "responsive": True}
+                return {"target": target, "configured": True, "queried": True, **self.postgres_pool.health("norm")}
             except Exception as exc:
                 return {"target": target, "configured": True, "queried": True, "responsive": False, "error": f"{type(exc).__name__}: {exc}"}
         if target in {"redis", "prompt_queue"}:
@@ -539,6 +550,50 @@ class FileToolExecutor:
 
         stat = path.stat()
         size = int(stat.st_size)
+
+        archive_action = str(arguments.get("archive_action") or "auto").strip().lower()
+        if archive_action not in {"auto", "list", "read_member", "hash_member", "compare_directory"}:
+            raise ValueError("archive_action must be auto, list, read_member, hash_member, or compare_directory")
+        archive_candidate = looks_like_archive(path)
+        if archive_action != "auto" and not archive_candidate:
+            # 7-Zip can identify extensionless archives too; explicit archive actions are allowed to try.
+            archive_candidate = True
+        if archive_candidate:
+            if archive_action in {"auto", "list"}:
+                result = archive_manifest(path, max_entries=int(arguments.get("max_entries") or 5000))
+                result.update({
+                    "path": str(path), "mode": "archive_manifest", "size": size,
+                    "source_size_bytes": size, "sha256": self._sha256(path) if (bool(arguments.get("include_sha256")) or size <= self.max_read_bytes) else None,
+                    "archive_strategy": "tree_and_sizes_first; compare/hash only likely matches; selectively read unresolved members",
+                })
+                return result
+            member = str(arguments.get("member") or "").strip()
+            if archive_action == "read_member":
+                if not member:
+                    raise ValueError("member is required for archive_action=read_member")
+                if is_secret_file(Path(member)):
+                    raise PermissionError("Secret archive members must not be exposed through file_read")
+                result = read_archive_member(
+                    path, member, start_byte=int(arguments.get("start_byte") or 0),
+                    max_bytes=int(arguments.get("max_bytes") or self.read_chunk_bytes),
+                    mode=str(arguments.get("mode") or "text"),
+                )
+                result.update({"path": str(path), "mode": "archive_member_" + str(result.get("mode") or "text")})
+                return result
+            if archive_action == "hash_member":
+                if not member:
+                    raise ValueError("member is required for archive_action=hash_member")
+                result = hash_archive_member(path, member)
+                result.update({"path": str(path), "mode": "archive_member_sha256"})
+                return result
+            if archive_action == "compare_directory":
+                compare_raw = arguments.get("compare_path")
+                if not isinstance(compare_raw, str) or not compare_raw.strip():
+                    raise ValueError("compare_path is required for archive_action=compare_directory")
+                compare_path = self._resolve(compare_raw, access="read")
+                result = compare_archive_to_directory(path, compare_path, hash_if_tree_matches=True)
+                result.update({"path": str(path), "mode": "archive_compare_directory"})
+                return result
         force_hash = bool(arguments.get("include_sha256", False))
         sha = self._sha256(path) if (force_hash or size <= self.max_read_bytes) else None
         source_fingerprint = hashlib.sha256(
@@ -773,6 +828,29 @@ class FileToolExecutor:
         answer = self.vision_client.vision(prompt.strip(), resolved, think=True, temperature=0.1)
         return {"paths": resolved, "answer": answer, "image_count": len(resolved)}
 
+    def _write_verbatim_temp(self, path: Path, content: str, expected_bytes: int) -> None:
+        try:
+            if self.plugin_manager is None:
+                raise RuntimeError("verbatim_lines plugin manager is unavailable")
+            folder = (self.plugin_manager.plugin_root / "verbatim_lines").resolve()
+            verify_identity(folder)
+            entry = folder / "src" / "main.py"
+            namespace = runpy.run_path(str(entry))
+            writer = namespace.get("_write_text")
+            if not callable(writer):
+                raise RuntimeError("verbatim_lines private _write_text primitive is unavailable")
+            result = writer(str(path), content)
+            if not isinstance(result, dict) or not bool(result.get("ok")):
+                raise RuntimeError("verbatim_lines private writer did not report success")
+            if int(result.get("bytes_after", -1)) != int(expected_bytes):
+                raise RuntimeError("verbatim_lines private writer byte-count verification failed")
+            expected_sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            if str(result.get("sha256") or "").lower() != expected_sha:
+                raise RuntimeError("verbatim_lines private writer hash verification failed")
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+
     def _write_file(self, arguments: dict[str, Any]) -> dict[str, Any]:
         path = self._resolve(arguments.get("path"), access="write")
         content = arguments.get("content")
@@ -798,7 +876,7 @@ class FileToolExecutor:
                 pass
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(f".{path.name}.normtmp-{uuid.uuid4().hex}")
-        temporary.write_bytes(encoded)
+        self._write_verbatim_temp(temporary, content, len(encoded))
         context = arguments.get("_write_context") if isinstance(arguments.get("_write_context"), dict) else {"operation": "write_file"}
         self._replace_with_retries(temporary, path, expected, context)
         result = {

@@ -1,7 +1,18 @@
+# Direct Python dependencies imported by Norm runtime/tools/plugins.
+# PyTorch is intentionally installed separately by the installer using
+# environment.torch_version + environment.torch_index_url so the configured
+# CUDA build is not replaced by a generic requirements install.
 pytest==9.1.1
 redis==8.1.0
 psycopg[binary]==3.3.5
+psycopg-pool==3.3.3
 aiohttp==3.14.3
 pillow==12.3.0
 cryptography==50.0.2
 PyMuPDF==1.28.2
+numpy==2.5.3
+opencv-python==5.0.0.93
+kornia==0.8.3
+prompt_toolkit==3.0.53
+rich==15.0.0
+tzdata==2026.3
