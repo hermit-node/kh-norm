@@ -1,6 +1,24 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib as _hashlib
+
+
+def _write_text(path: str, content: str) -> dict:
+    """Private exact replacement primitive used by guarded core write_file/replace_text."""
+    target = Path(path).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    encoded = str(content).encode("utf-8")
+    with target.open("wb") as handle:
+        handle.write(encoded)
+    return {
+        "ok": True,
+        "path": str(target.resolve()),
+        "sha256": _hashlib.sha256(encoded).hexdigest(),
+        "file_mutation": True,
+        "mode": "write",
+        "bytes_after": len(encoded),
+    }
 
 
 def append_text(path: str, content: str) -> dict:
@@ -10,7 +28,7 @@ def append_text(path: str, content: str) -> dict:
     before = target.stat().st_size if target.exists() else 0
     with target.open("a", encoding="utf-8", newline="") as handle:
         handle.write(str(content))
-    return {"ok": True, "path": str(target.resolve()), "mode": "append", "bytes_before": before, "bytes_after": target.stat().st_size}
+    return {"ok": True, "path": str(target.resolve()), "sha256": _hashlib.sha256(target.read_bytes()).hexdigest(), "file_mutation": True, "mode": "append", "bytes_before": before, "bytes_after": target.stat().st_size}
 
 
 def insert_text(path: str, content: str, line: int) -> dict:
@@ -29,7 +47,7 @@ def insert_text(path: str, content: str, line: int) -> dict:
     existing[index:index] = incoming
     with target.open("w", encoding="utf-8", newline="") as handle:
         handle.writelines(existing)
-    return {"ok": True, "path": str(target.resolve()), "mode": "insert", "line": index + 1, "inserted_lines": len(incoming), "bytes_after": target.stat().st_size}
+    return {"ok": True, "path": str(target.resolve()), "sha256": _hashlib.sha256(target.read_bytes()).hexdigest(), "file_mutation": True, "mode": "insert", "line": index + 1, "inserted_lines": len(incoming), "bytes_after": target.stat().st_size}
 
 
 def run(payload: dict) -> dict:

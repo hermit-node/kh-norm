@@ -169,6 +169,10 @@ class NormConsole:
             self.console.print(Text(text, style="dim cyan"), end="", soft_wrap=True)
         elif kind == "answer":
             self.console.print(Text(text, style="green"), end="", soft_wrap=True)
+        elif kind == "durable_summary":
+            self.console.print()
+            self.console.print(Rule("End-of-task durable summary"))
+            self.console.print(Text(text, style="dim green"), soft_wrap=True)
         elif kind == "tool_call":
             self.console.print()
             self.console.print(Text(f"Tool call: {text}", style="bold yellow"))
@@ -340,16 +344,15 @@ class NormConsole:
             "  /delete-files      Permanently purge reversible trash now.\n"
             "  /backup            Create a portable installer/source backup.\n"
             "  /backup full       Create a sensitive full backup with private state and PostgreSQL.\n"
-            "  /memory-condense   Incrementally refresh consolidated background memory when idle.\n"
-            "  /memory-condense -full  Rebuild consolidated background memory from the full surviving source set.\n"
+            "  /memory-condense   Replay-validate and compact a bounded batch of terminal task history.\n"
+            "  /memory-condense -full  Replay-validate and compact all terminal history, then full-prune covered raw history.\n"
             "  /status            Show local mute, pause, and pending-input state.\n"
             "  /status/busy       Show authoritative runtime busy state.\n"
             "  /stop-all          Finish the current step, snapshot recovery state, then stop Norm/Ollama.\n"
             "  /stop-all now      Emergency checkpoint/snapshot and stop Norm/Ollama now.\n"
             "  /shutdown norm     Gracefully stop Norm after checkpointing current work.\n"
             "  /shutdown norm now Cancel active work and stop Norm promptly.\n"
-            "  /help              Show these commands.\n"
-            "  /exit              Close this console only; Norm keeps running."
+            "  /help              Show these commands."
         )
 
     def _command(self, text: str) -> bool:

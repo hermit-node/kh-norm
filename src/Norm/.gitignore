@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.test-temp/
+plugins/.registry.json
+
+# Local/private material
+.env
+.env.*
+!.env.example
+.ssh/
+secrets/
+*.pem
+*.key
+*.pfx
+*.p12
+norm-imprint.local.json
+logs/
+state/
+workspace/
+temp/

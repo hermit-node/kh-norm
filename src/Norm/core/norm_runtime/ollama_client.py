@@ -56,29 +56,25 @@ class OllamaClient:
 
     def _emit(self, event_type: str, **values) -> None:
         if event_type in {"thinking", "answer"}:
-            pending = self._display_pending.get(event_type, "") + str(values.get("text") or "")
-            boundary = pending.rfind("\n") + 1
-            # Ollama can occasionally emit a very long token loop with no newline. The
-            # old console buffered that entire run until cancellation, making Norm look
-            # frozen and then dumping thousands of characters at once. Flush bounded
-            # partial lines so activity remains visible and cancellation stays clean.
-            if boundary == 0 and len(pending) >= 1024:
-                boundary = (len(pending) // 1024) * 1024
-            self._display_pending[event_type] = pending[boundary:]
-            if boundary:
-                safe = redact(pending[:boundary])
+            # Publish each upstream Ollama stream fragment immediately.  Runtime display
+            # cadence must not be coupled to newline boundaries, 1 KiB buffers, or any
+            # memory/output batching limit.  The crash buffer remains independently
+            # bounded and is not used as the operator display buffer.
+            safe = redact(str(values.get("text") or ""))
+            if safe:
                 self._publish_safe_event(event_type, text=safe)
                 self._buffer_crash(event_type, safe)
             return
         if event_type in {"model_end", "model_error", "model_start"}:
-            for kind, pending in self._display_pending.items():
-                if pending:
-                    safe = redact(pending)
-                    self._publish_safe_event(kind, text=safe)
-                    self._buffer_crash(kind, safe)
             self._display_pending.clear()
             self._flush_crash()
         self._publish_safe_event(event_type, **redact(values))
+
+    def publish_durable_summary(self, summary: str) -> None:
+        """Publish one completed end-of-task durable summary block to runtime activity."""
+        text = str(summary or "").strip()
+        if text:
+            self._publish_safe_event("durable_summary", text=redact(text))
 
     def _publish_safe_event(self, event_type: str, **values) -> None:
         if self.activity_sink is None:
@@ -120,11 +116,28 @@ class OllamaClient:
         severe_compressed_loop = compression_ratio < 0.035 and (
             longest_run >= 1024 or (len(tokens) >= 512 and unique_tokens <= 6)
         )
-        if severe_compressed_loop or dominant_ratio > 0.72:
+        # A different failure mode repeats an entire coherent sentence/paragraph.
+        # Compression and dominant-token checks can miss it because the repeated
+        # block itself has normal vocabulary.  Detect exact normalized 32-token
+        # phrases recurring four or more times in the recent stream tail.
+        phrase_repeat_count = 0
+        word_tokens = re.findall(r"[A-Za-z0-9_]+", tail.lower())
+        if len(word_tokens) >= 160:
+            phrase_counts: dict[tuple[str, ...], int] = {}
+            width = 32
+            for index in range(0, len(word_tokens) - width + 1):
+                phrase = tuple(word_tokens[index:index + width])
+                count = phrase_counts.get(phrase, 0) + 1
+                phrase_counts[phrase] = count
+                if count > phrase_repeat_count:
+                    phrase_repeat_count = count
+        repeated_phrase_loop = phrase_repeat_count >= 4
+        if severe_compressed_loop or dominant_ratio > 0.72 or repeated_phrase_loop:
             raise ModelDegenerateOutput(
                 "model stream became degenerate/repetitive "
                 f"(compression={compression_ratio:.3f}, dominant_token={dominant_ratio:.3f}, "
-                f"unique_tokens={unique_tokens}, longest_run={longest_run})"
+                f"unique_tokens={unique_tokens}, longest_run={longest_run}, "
+                f"repeated_phrase={phrase_repeat_count})"
             )
         return tail
 
@@ -188,6 +201,7 @@ class OllamaClient:
         num_predict: int | None = None,
         temperature: float = 0.2,
         response_format: str | dict | None = None,
+        emit_stream: bool = True,
     ) -> str:
         options: dict[str, object] = {"temperature": temperature}
         if num_predict is not None:
@@ -216,7 +230,8 @@ class OllamaClient:
         call_id = id(cancel_event)
         with self._active_lock:
             self._active[call_id] = (cancel_event, None)
-        self._emit("model_start", thinking=think)
+        if emit_stream:
+            self._emit("model_start", thinking=think)
         try:
             with request.urlopen(req, timeout=self.timeout_seconds) as response:
                 with self._active_lock:
@@ -239,25 +254,30 @@ class OllamaClient:
                     answer = str(data.get("response", ""))
                     if thinking:
                         guard_tail = self._guard_model_stream(guard_tail, thinking)
-                        self._emit("thinking", text=thinking)
+                        if emit_stream:
+                            self._emit("thinking", text=thinking)
                     if answer:
                         guard_tail = self._guard_model_stream(guard_tail, answer)
                         response_parts.append(answer)
-                        self._emit("answer", text=answer)
+                        if emit_stream:
+                            self._emit("answer", text=answer)
                 if cancel_event.is_set():
                     raise ModelGenerationCancelled("generation cancelled")
         except Exception as exc:
             if cancel_event.is_set():
                 cancelled_exc = exc if isinstance(exc, ModelGenerationCancelled) else ModelGenerationCancelled("generation cancelled")
-                self._emit("model_error", text=str(cancelled_exc), cancelled=True)
+                if emit_stream:
+                    self._emit("model_error", text=str(cancelled_exc), cancelled=True)
                 raise cancelled_exc from None
-            self._emit("model_error", text=str(exc), cancelled=False)
+            if emit_stream:
+                self._emit("model_error", text=str(exc), cancelled=False)
             raise
         finally:
             self._flush_crash()
             with self._active_lock:
                 self._active.pop(call_id, None)
-        self._emit("model_end")
+        if emit_stream:
+            self._emit("model_end")
         text = "".join(response_parts).strip()
         if done_reason == "length":
             raise ModelOutputTruncated(text, eval_count)
@@ -395,27 +415,31 @@ class OllamaClient:
             "eval_count": eval_count,
         }
 
-    def vision(
+    def vision_result(
         self,
         prompt: str,
         image_paths: list[str],
         *,
         think: bool = True,
         temperature: float = 0.1,
-    ) -> str:
+        num_predict: int | None = None,
+    ) -> dict[str, Any]:
         images: list[str] = []
         for raw in image_paths:
             path = Path(raw).resolve()
             if not path.is_file():
                 raise FileNotFoundError(path)
             images.append(base64.b64encode(path.read_bytes()).decode("ascii"))
+        options: dict[str, Any] = {"temperature": temperature}
+        if num_predict is not None:
+            options["num_predict"] = max(1, int(num_predict))
         body = {
             "model": self.model,
             "messages": [{"role": "user", "content": str(prompt), "images": images}],
             "stream": True,
             "think": think,
             "keep_alive": -1,
-            "options": {"temperature": temperature},
+            "options": options,
         }
         req = request.Request(
             f"{self.base_url}/api/chat",
@@ -425,6 +449,8 @@ class OllamaClient:
         )
         parts: list[str] = []
         guard_tail = ""
+        done_reason = ""
+        eval_count = 0
         cancel_event = Event()
         call_id = id(cancel_event)
         with self._active_lock:
@@ -443,6 +469,12 @@ class OllamaClient:
                     data = json.loads(line)
                     if data.get("error"):
                         raise RuntimeError(data["error"])
+                    if data.get("done"):
+                        done_reason = str(data.get("done_reason") or "")
+                        try:
+                            eval_count = int(data.get("eval_count") or 0)
+                        except (TypeError, ValueError):
+                            eval_count = 0
                     message = data.get("message") or {}
                     thinking_text = str(message.get("thinking", ""))
                     content = str(message.get("content", ""))
@@ -467,7 +499,30 @@ class OllamaClient:
             with self._active_lock:
                 self._active.pop(call_id, None)
         self._emit("model_end")
-        return "".join(parts).strip()
+        return {
+            "content": "".join(parts).strip(),
+            "done_reason": done_reason,
+            "eval_count": eval_count,
+        }
+
+    def vision(
+        self,
+        prompt: str,
+        image_paths: list[str],
+        *,
+        think: bool = True,
+        temperature: float = 0.1,
+        num_predict: int | None = None,
+    ) -> str:
+        return str(
+            self.vision_result(
+                prompt,
+                image_paths,
+                think=think,
+                temperature=temperature,
+                num_predict=num_predict,
+            ).get("content") or ""
+        ).strip()
 
     @staticmethod
     def parse_json(text: str) -> dict:

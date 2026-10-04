@@ -116,12 +116,22 @@ class GuiPromptDispatcher:
             maxlen=5000,
             approximate=True,
         )
-        self._ensure_group()
+        # Once XADD succeeds the prompt is durably accepted into DB3.  Group
+        # repair/background-thread revival are best-effort so a transient Redis
+        # admin/read failure cannot make the foreground console report a crash
+        # after the prompt has already been stored.
+        try:
+            self._ensure_group()
+        except Exception:
+            logger.exception("Prompt %s was stored in DB3 but consumer-group repair failed; dispatcher will retry", prompt_id)
         self.activity_wakeup.set()
         # The prompt console can outlive a transient runtime/API failure.  If an
         # unexpected exception killed the background dispatcher, a new prompt
         # submission must revive it instead of silently accumulating in DB3.
-        self.start()
+        try:
+            self.start()
+        except Exception:
+            logger.exception("Prompt %s was stored in DB3 but dispatcher revival failed; console remains usable", prompt_id)
         return str(entry_id), prompt_id
 
     def enqueue_thread_reset(self) -> str:
@@ -155,32 +165,56 @@ class GuiPromptDispatcher:
         self.activity_wakeup.set()
         return str(entry_id)
 
-    def queue_stats(self) -> tuple[int | None, int]:
-        """Return (queued, uncertain).
+    def _reconcile_pending_ghosts(self, limit: int = 10000) -> int:
+        """ACK PEL entries whose stream payload no longer exists.
 
-        queued is an int when the queue depth is known (from group statistics,
-        or from the XLEN fallback), or None when the depth is genuinely unknown
-        (group stats unavailable AND the stream key cannot be read). A known 0
-        means the queue is confirmed empty; None means the count could not be
-        determined and must not be reported as empty.
+        Redis deliberately keeps a consumer-group pending entry after XDEL.  Such
+        entries are useful for recovery in some applications, but for Norm ingress
+        they are poison: XINFO pending counts them as live work while XRANGE cannot
+        show them, and XREADGROUP may return the ID without a payload.  Reconcile
+        them explicitly so queue accounting and dispatcher recovery have one view.
         """
-        queued: int | None = None
-        # Primary: group statistics (pending + lag) for our consumer group.
         try:
             self._ensure_group()
-            for info in self.redis.xinfo_groups(self.stream):
-                if str(info.get("name")) == self.group:
-                    queued = int(info.get("pending") or 0) + int(info.get("lag") or 0)
-                    break
+            pending = self.redis.xpending_range(self.stream, self.group, "-", "+", max(1, int(limit)))
         except Exception:
-            queued = None  # group stats unavailable; fall through to XLEN
-        # Fallback: XLEN on the stream key. Only a confirmed 0 (or absent key)
-        # means "empty"; a read failure means "unknown", never "empty".
-        if queued is None:
+            return 0
+
+        removed = 0
+        for item in pending:
+            entry_id = str(item.get("message_id") or "")
+            if not entry_id:
+                continue
             try:
-                queued = int(self.redis.xlen(self.stream))
+                rows = self.redis.xrange(self.stream, min=entry_id, max=entry_id, count=1)
             except Exception:
-                queued = None  # stream key unreadable -> unknown, NOT empty
+                continue
+            if rows:
+                continue
+            try:
+                removed += int(self.redis.xack(self.stream, self.group, entry_id) or 0)
+                self.redis.hdel(self.dispatching_key, entry_id)
+            except Exception:
+                logger.exception("Could not reconcile orphaned ingress PEL entry %s", entry_id)
+        if removed:
+            logger.warning("Reconciled %s orphaned ingress PEL entr%s", removed, "y" if removed == 1 else "ies")
+        return removed
+
+    def queue_stats(self) -> tuple[int | None, int]:
+        """Return the logical live ingress count and uncertain-record count.
+
+        Do not use raw XINFO ``pending + lag`` as the user-facing depth.  Redis can
+        retain PEL IDs after their stream rows were deleted, so that number can be
+        larger than the executable queue.  The same stream-backed snapshot used by
+        /queue-full is authoritative here.
+        """
+        queued: int | None
+        try:
+            self._reconcile_pending_ghosts()
+            snapshot = self.queue_snapshot(limit=None)
+            queued = sum(1 for item in snapshot if str(item.get("state") or "") != "suppressed")
+        except Exception:
+            queued = None
         try:
             uncertain = int(self.redis.hlen(self.uncertain_key))
         except Exception:
@@ -663,11 +697,25 @@ class GuiPromptDispatcher:
         for item in pending:
             entry_id = str(item.get("message_id") or "")
             owner = str(item.get("consumer") or "")
-            if not entry_id or owner == self.consumer:
+            if not entry_id:
+                continue
+
+            # Deleted stream rows can remain in the PEL.  Clean these before the
+            # owner check: a ghost owned by this very dispatcher is otherwise the
+            # easiest one to miss and can be returned by XREADGROUP without fields.
+            rows = self.redis.xrange(self.stream, min=entry_id, max=entry_id, count=1)
+            if not rows:
+                try:
+                    self.redis.xack(self.stream, self.group, entry_id)
+                    self.redis.hdel(self.dispatching_key, entry_id)
+                except Exception:
+                    logger.exception("Could not clear abandoned ingress PEL ghost %s", entry_id)
+                continue
+
+            if owner == self.consumer:
                 continue
             dispatching = self.redis.hget(self.dispatching_key, entry_id)
-            rows = self.redis.xrange(self.stream, min=entry_id, max=entry_id, count=1)
-            fields = self._normalize_fields(rows[0][1]) if rows else {}
+            fields = self._normalize_fields(rows[0][1])
             if dispatching:
                 if not fields:
                     try:
@@ -686,7 +734,8 @@ class GuiPromptDispatcher:
                 self.redis.xclaim(self.stream, self.group, self.consumer, 0, [entry_id])
 
     def _next_entry(self):
-        for attempt in range(2):
+        repaired_nogroup = False
+        while not self.stop_event.is_set():
             try:
                 rows = self.redis.xreadgroup(self.group, self.consumer, {self.stream: "0"}, count=1)
                 if not rows or not rows[0][1]:
@@ -695,9 +744,22 @@ class GuiPromptDispatcher:
                     )
                 if not rows or not rows[0][1]:
                     return None
-                return rows[0][1][0]
+
+                item = rows[0][1][0]
+                entry_id = item[0].decode("utf-8") if isinstance(item[0], bytes) else str(item[0])
+                raw_fields = item[1]
+                if raw_fields:
+                    return item
+
+                # XREADGROUP can surface a deleted pending ID without its payload.
+                # It is not executable work; ACK it and continue instead of letting
+                # dict(None) / dict({}) terminate the dispatcher thread.
+                logger.warning("Discarding orphaned pending ingress ID %s with no stream payload", entry_id)
+                self.redis.xack(self.stream, self.group, entry_id)
+                self.redis.hdel(self.dispatching_key, entry_id)
             except redis.ResponseError as exc:
-                if attempt == 0 and "NOGROUP" in str(exc):
+                if not repaired_nogroup and "NOGROUP" in str(exc):
+                    repaired_nogroup = True
                     logger.warning("NOGROUP detected on stream %s; re-creating group %s at tail", self.stream, self.group)
                     # Use "$" so only NEW entries are delivered; historical
                     # (already-acknowledged or suppressed) entries are NOT

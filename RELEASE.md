@@ -1,18 +1,14 @@
 # Release
 
-## Norm 0.53.9 / Unified Installer 1.6.0
+## Norm 0.53.14 / Installer 1.6.6
 
-- Added synchronous `/network-map [--json]`.
-- Added passive peer inventory plus explicit allowlist probing.
-- Added fail-closed honeypot/decoy no-probe policy, including resolved-address CIDR checks and no-follow HTTP probes.
-- Added machine-readable `norm-network-map.cmd --json`.
-- Replaced deployment-specific source defaults with topology-neutral public defaults.
-- Added four-stage installer Environment page.
-- Added local non-secret imprint auto-fill/save.
-- Added masked secret entry and secret/imprint separation.
-- Added headless secret-file inputs.
-- Added reusable Windows installer-builder venv.
-
-### Correct merged baseline
-
-This release preserves `vision_parse`, PyMuPDF 1.28.2, the Ollama stream degeneration watchdog, and suppression handoff cleanup from the merged 0.53.8 source before layering the 0.53.9 network-map/public-imprint changes.
+- Added N1/N2 checkpoint 1.
+- Ordinary user input passes through N1 to N2 unchanged; N2 user-facing output passes through N1 unchanged.
+- N2 remains the primary reasoning/worker agent.
+- Model-requested information tools are gated by N1.
+- N1 can satisfy repeated information needs from the live validation pool instead of invoking the tool again.
+- Fresh tool results are forwarded raw to N2 while N1 records validation evidence out of band.
+- N1 can halt a judged repeated reasoning/tool turn before its proposed tools execute and tell N2 to change approach using existing evidence.
+- Successful mutations invalidate matching cached evidence so N1 cannot return obviously stale pre-write observations.
+- N2 no longer owns the verification preflight/check-in protocol.
+- Both roles default to the existing configured `norm` model/endpoint until separately configured.

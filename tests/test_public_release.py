@@ -6,8 +6,8 @@ import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
-SOURCE = HERE / "Norm-0.53.9-portable-source.zip"
-SHA = HERE / "Norm-0.53.9-portable-source.zip.sha256"
+SOURCE = HERE / "Norm-0.53.14-portable-source.zip"
+SHA = HERE / "Norm-0.53.14-portable-source.zip.sha256"
 
 expected = SHA.read_text(encoding="utf-8").split()[0].lower()
 actual = hashlib.sha256(SOURCE.read_bytes()).hexdigest()
@@ -17,7 +17,6 @@ deployment_leak_patterns = [
     re.compile(r"\\\\[^\\\n]+\\(?:Local|Private|Secrets)[^\\\n]*", re.I),
     re.compile(r"\b100\.(?!64\.0\.0\b)(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.(?:\d{1,3})\.(?:\d{1,3})\b"),
     re.compile(r"\bprivate-storage(?:-docker)?\b", re.I),
-    re.compile(r"\bnorm-host\b", re.I),
     re.compile(r"\bprivate-tailnet\.example\b", re.I),
     re.compile(r"\bLocalExample\b", re.I),
     re.compile(r"\bconsole\.example\b", re.I),

@@ -63,7 +63,100 @@ class DeepHistoryMaintainer:
             groups.setdefault(key, []).append(item)
         return list(groups.values())
 
-    def _summarize_group(self, group: list[dict]) -> dict:
+    @staticmethod
+    def _batch_groups_by_source_tasks(groups: list[list[dict]], max_source_tasks: int) -> list[list[list[dict]]]:
+        """Pack chronological retry-groups into bounded source-task batches without splitting a group."""
+        limit = max(1, int(max_source_tasks))
+        batches: list[list[list[dict]]] = []
+        current: list[list[dict]] = []
+        current_size = 0
+        for group in groups:
+            group_size = max(1, len(group))
+            if current and current_size + group_size > limit:
+                batches.append(current)
+                current = []
+                current_size = 0
+            current.append(group)
+            current_size += group_size
+        if current:
+            batches.append(current)
+        return batches
+
+    @staticmethod
+    def _record_tokens(text: str) -> set[str]:
+        return {
+            token
+            for token in re.findall(r"[a-z0-9_]{4,}", str(text or "").lower())
+            if token not in {"this", "that", "with", "from", "have", "will", "into", "then", "than", "when", "where", "what"}
+        }
+
+    def _relevant_newer_records(
+        self,
+        group: list[dict],
+        newer_records: list[dict],
+        *,
+        limit: int = 8,
+    ) -> list[dict]:
+        if not group or not newer_records:
+            return []
+        primary = self._choose_primary(group)
+        query = f"{primary.get('title', '')} {primary.get('original_request', '')}"
+        query_tokens = self._record_tokens(query)
+        if not query_tokens:
+            return []
+        scored: list[tuple[float, dict]] = []
+        for record in newer_records:
+            text = (
+                f"{record.get('title', '')} {record.get('original_request', '')} "
+                f"{record.get('outcome', '')} {record.get('lessons', '')} {record.get('future_note', '')}"
+            )
+            tokens = self._record_tokens(text)
+            overlap = len(query_tokens & tokens)
+            if not overlap:
+                continue
+            score = overlap / max(1, len(query_tokens))
+            scored.append((score, record))
+        scored.sort(
+            key=lambda item: (
+                item[0],
+                str(item[1].get("task_date") or ""),
+            ),
+            reverse=True,
+        )
+        return [record for _, record in scored[:max(1, int(limit))]]
+
+    @staticmethod
+    def _history_view_record(record: dict) -> dict:
+        return {
+            "task_id": str(record.get("primary_task_id") or record.get("task_id") or ""),
+            "date": str(record.get("task_date") or ""),
+            "title": str(record.get("title") or ""),
+            "status": str(record.get("status") or ""),
+            "request": str(record.get("original_request") or record.get("request") or ""),
+            "outcome": str(record.get("outcome") or ""),
+            "lessons": str(record.get("lessons") or ""),
+            "future_note": str(record.get("future_note") or ""),
+            "task_kind": str(record.get("task_kind") or "root"),
+            "parent_task_id": str(record.get("parent_task_id") or ""),
+            "parent_step_id": str(record.get("parent_step_id") or ""),
+            "task_depth": int(record.get("task_depth") or 0),
+        }
+
+    def _replay_context_from_records(self, record: dict, records: list[dict], limit: int = 5) -> list[dict]:
+        target_id = str(record.get("primary_task_id") or "")
+        related = self._relevant_newer_records(
+            [{
+                "title": record.get("title", ""),
+                "original_request": record.get("original_request", ""),
+                "status": record.get("status", ""),
+                "updated_at": datetime.now(timezone.utc),
+            }],
+            [r for r in records if str(r.get("primary_task_id") or "") != target_id],
+            limit=max(0, int(limit) - 1),
+        )
+        return [self._history_view_record(record)] + [self._history_view_record(r) for r in related]
+
+    def _summarize_group(self, group: list[dict], *, newer_context: list[dict] | None = None) -> dict:
         primary = self._choose_primary(group)
         payload = []
         for item in group:
@@ -81,13 +174,17 @@ class DeepHistoryMaintainer:
                 "steps": item.get("steps", [])[:20],
                 "evidence": item.get("evidence", [])[:12],
             })
+        newer = list(newer_context or [])
         prompt = (
             "Compress this terminal Norm task history into one durable reusable record. Repeated attempts of the same request may be present. "
             "Outcome: say what the user wanted, whether the final attempt succeeded/failed/cancelled, and preserve important artifact/data results. "
             "Lessons: preserve only reusable fixes, tweaks, constraints, or new useful data learned from the attempts. "
             "Future_note: state what we should tell ourselves if the same kind of task is asked again, including how to reuse prior work instead of repeating it. "
+            "When RELEVANT NEWER COMPACT HISTORY is supplied, treat newer durable state as authoritative only when it materially addresses the same fact, behavior, constraint, or lesson. Remove or correct older guidance that newer evidence supersedes or proves wrong. Keep an older fact only when it remains useful as clearly historical context. Do not let weakly related newer records overwrite unrelated history. "
             "Do not preserve routine chatter, verifier narration, transient smoke details, credentials, or redundant failures that taught nothing. Consolidation must delete semantic redundancy: if the same state appears multiple times, preserve/reference the initial authoritative instance and represent later repetitions only as that state happening again with a timezone-aware timestamp. Default timestamps to America/New_York when unspecified. "
-            "Return only the structured JSON required by the schema.\n\nTASK ATTEMPTS:\n" + json.dumps(payload, ensure_ascii=False)
+            "Return only the structured JSON required by the schema.\n\nTASK ATTEMPTS:\n"
+            + json.dumps(payload, ensure_ascii=False)
+            + ("\n\nRELEVANT NEWER COMPACT HISTORY:\n" + json.dumps(newer, ensure_ascii=False, default=str) if newer else "")
         )
         last_error = None
         for _ in range(3):
@@ -105,7 +202,11 @@ class DeepHistoryMaintainer:
                     "outcome": str(parsed["outcome"]).strip(),
                     "lessons": str(parsed["lessons"]).strip(),
                     "future_note": str(parsed["future_note"]).strip(),
-                    "source_task_ids": [item["task_id"] for item in group],
+                    "source_task_ids": list(dict.fromkeys(
+                        source_id
+                        for item in group
+                        for source_id in ([str(item["task_id"])] + [str(v) for v in (item.get("source_task_ids") or [])])
+                    )),
                     "task_kind": str(primary.get("task_kind") or "root"),
                     "parent_task_id": str(primary.get("parent_task_id") or ""),
                     "parent_step_id": str(primary.get("parent_step_id") or ""),
@@ -115,8 +216,12 @@ class DeepHistoryMaintainer:
                 last_error = exc
         raise RuntimeError(f"task-history compression failed after 3 attempts: {last_error}")
 
-    def _replay_one(self, record: dict) -> tuple[bool, dict, str]:
-        retrieved = self.durable.relevant_task_history(record["original_request"], limit=5, include_unvalidated=True)
+    def _replay_one(self, record: dict, *, retrieved_override: list[dict] | None = None) -> tuple[bool, dict, str]:
+        retrieved = (
+            list(retrieved_override)
+            if retrieved_override is not None
+            else self.durable.relevant_task_history(record["original_request"], limit=5, include_unvalidated=True)
+        )
         prompt = (
             "You are replaying an old user request using ONLY the compact task-history records below. Do not use raw messages, raw task steps, or tools. "
             "Explain how Norm should handle the request now, explicitly cite the most relevant prior task by task ID and date, reuse its lessons, preserve important constraints, and preserve parent/child lineage when the compact record is a child task. "
@@ -142,13 +247,67 @@ class DeepHistoryMaintainer:
 
     @staticmethod
     def _sample_records(records: list[dict], count: int) -> list[dict]:
-        if len(records) <= count:
-            return records
-        indexes = sorted({0, len(records) // 2, len(records) - 1})
+        """Choose a chronologically distributed validation sample with edge-case coverage."""
+        if not records:
+            return []
+        target = max(1, min(int(count), len(records)))
+        if len(records) <= target:
+            return list(records)
+
+        if target == 1:
+            indexes = [len(records) - 1]
+        else:
+            indexes = sorted({
+                round(i * (len(records) - 1) / (target - 1))
+                for i in range(target)
+            })
+
         selected = [records[i] for i in indexes]
-        if count >= 2 and any(r.get("task_kind") == "child" for r in records) and not any(r.get("task_kind") == "child" for r in selected):
-            selected[-1] = next(r for r in records if r.get("task_kind") == "child")
-        return selected[:count]
+
+        replacement_slots = (
+            list(range(1, len(selected) - 1))
+            if len(selected) > 2
+            else list(range(len(selected)))
+        )
+        replacement_cursor = 0
+
+        def ensure(predicate) -> None:
+            nonlocal replacement_cursor
+            candidate = next((record for record in records if predicate(record)), None)
+            if candidate is None or candidate in selected:
+                return
+            while replacement_cursor < len(replacement_slots):
+                slot = replacement_slots[replacement_cursor]
+                replacement_cursor += 1
+                if selected[slot] is candidate:
+                    return
+                selected[slot] = candidate
+                return
+
+        ensure(lambda r: str(r.get("task_kind") or "root") == "child")
+        ensure(lambda r: str(r.get("status") or "") in {"failed", "cancelled"})
+
+        # De-duplicate replacement collisions, fill to target, then restore chronology.
+        unique: list[dict] = []
+        seen: set[str] = set()
+        for record in selected:
+            key = str(record.get("primary_task_id") or "")
+            if key and key not in seen:
+                seen.add(key)
+                unique.append(record)
+        for record in records:
+            if len(unique) >= target:
+                break
+            key = str(record.get("primary_task_id") or "")
+            if key and key not in seen:
+                seen.add(key)
+                unique.append(record)
+        order = {
+            str(record.get("primary_task_id") or ""): index
+            for index, record in enumerate(records)
+        }
+        unique.sort(key=lambda record: order.get(str(record.get("primary_task_id") or ""), len(records)))
+        return unique[:target]
 
     @staticmethod
     def _checkpoint_read(path: Path, fingerprint: str) -> dict:
@@ -401,12 +560,13 @@ class DeepHistoryMaintainer:
     def _rebuild_background_snapshot(self) -> str:
         return self.rebuild_background_snapshot(incremental=False)
 
-    def run(self) -> dict | None:
+    def run(self, *, force: bool = False, full: bool = False) -> dict | None:
         retention_days = max(1, int(self.config.get("deep_history_retention_days", 30)))
         interval_days = max(1, int(self.config.get("deep_history_interval_days", 7)))
         max_tasks = max(1, int(self.config.get("deep_history_max_tasks_per_pass", 500)))
-        replay_samples = max(1, int(self.config.get("deep_history_replay_samples", 3)))
-        if not self.durable.needs_deep_history_consolidation(retention_days, interval_days):
+        full_batch_source_tasks = max(1, int(self.config.get("deep_history_full_batch_source_tasks", 200)))
+        full_samples_per_batch = max(1, int(self.config.get("deep_history_full_samples_per_batch", 12)))
+        if not force and not self.durable.needs_deep_history_consolidation(retention_days, interval_days):
             return None
         if self.queue is not None:
             stats = self.queue.stats()
@@ -414,41 +574,168 @@ class DeepHistoryMaintainer:
                 return None
         if self.drain_event is not None and self.drain_event.is_set():
             return None
-        candidates = self.durable.deep_history_candidates(retention_days, max_tasks)
+        raw_candidates = self.durable.deep_history_candidates(
+            retention_days,
+            max_tasks,
+            all_history=bool(force or full),
+            unbounded=bool(full),
+        )
+        archived_candidates = (
+            self.durable.task_history_archive_candidates()
+            if full and hasattr(self.durable, "task_history_archive_candidates")
+            else []
+        )
+        candidates = list(raw_candidates)
+        if full:
+            raw_ids = {str(item["task_id"]) for item in raw_candidates}
+            candidates.extend(
+                item for item in archived_candidates
+                if str(item.get("task_id") or "") not in raw_ids
+            )
+            candidates.sort(
+                key=lambda item: (item.get("started_at"), item.get("updated_at")),
+                reverse=True,
+            )
         if not candidates:
             return None
+
         backup_dir = str(self.config.get("deep_history_backup_dir") or (self.runtime_root.parent / "Norm-backups" / "history-maintenance"))
         backup_path = self.durable.create_sql_backup(backup_dir)
         records: list[dict] = []
+        primary_ids: list[str] = []
+        replay_results: list[dict] = []
         try:
-            for group in self._group_candidates(candidates):
-                records.append(self._summarize_group(group))
-            primary_ids = self.durable.upsert_task_history(records, validated=False)
-            replay_results = []
-            for record in self._sample_records(records, replay_samples):
-                passed, verdict, replay = self._replay_one(record)
-                replay_results.append({"task_id": record["primary_task_id"], "passed": passed, "verdict": verdict, "replay": replay[:2000]})
-            if not replay_results or not all(item["passed"] for item in replay_results):
-                self.durable.record_maintenance_note(
-                    "deep_history_consolidation", "Compact-history replay validation failed; raw history was preserved and SQL backup retained.",
-                    details={"status": "replay_failed", "backup": backup_path, "replays": replay_results},
-                )
-                return {"status": "replay_failed", "backup": backup_path, "replays": replay_results}
+            groups = self._group_candidates(candidates)
+            validation_batches = (
+                self._batch_groups_by_source_tasks(groups, full_batch_source_tasks)
+                if full
+                else [groups]
+            )
+            validation_policy = "full_12_per_200_source_tasks" if full else "every_record"
+
+            if full:
+                # Build the refreshed archive newest -> oldest entirely in memory.
+                # Older records can therefore reconcile against already-refreshed newer state,
+                # while trusted PostgreSQL history remains untouched until every batch passes.
+                for batch_index, batch_groups in enumerate(validation_batches, start=1):
+                    batch_records: list[dict] = []
+                    for group in batch_groups:
+                        newer_context = self._relevant_newer_records(group, records, limit=8)
+                        record = self._summarize_group(group, newer_context=newer_context)
+                        batch_records.append(record)
+                        records.append(record)
+
+                    sampled_records = self._sample_records(batch_records, full_samples_per_batch)
+                    batch_replays: list[dict] = []
+                    for record in sampled_records:
+                        passed, verdict, replay = self._replay_one(
+                            record,
+                            retrieved_override=self._replay_context_from_records(record, records, limit=5),
+                        )
+                        result = {
+                            "task_id": record["primary_task_id"],
+                            "passed": passed,
+                            "verdict": verdict,
+                            "replay": replay[:2000],
+                            "batch": batch_index,
+                        }
+                        batch_replays.append(result)
+                        replay_results.append(result)
+
+                    if not batch_replays or not all(item["passed"] for item in batch_replays):
+                        self.durable.record_maintenance_note(
+                            "deep_history_consolidation",
+                            "Full compact-history refresh failed replay validation; existing compact and raw history were preserved and SQL backup retained.",
+                            details={
+                                "status": "replay_failed",
+                                "backup": backup_path,
+                                "validation_policy": validation_policy,
+                                "failed_batch": batch_index,
+                                "validation_batches": len(validation_batches),
+                                "replays": batch_replays,
+                            },
+                        )
+                        return {
+                            "status": "replay_failed",
+                            "backup": backup_path,
+                            "validation_policy": validation_policy,
+                            "failed_batch": batch_index,
+                            "validation_batches": len(validation_batches),
+                            "replays": batch_replays,
+                        }
+
+                primary_ids = self.durable.upsert_task_history(records, validated=False)
+            else:
+                records = [self._summarize_group(group) for group in groups]
+                primary_ids = self.durable.upsert_task_history(records, validated=False)
+                batch_replays: list[dict] = []
+                for record in records:
+                    passed, verdict, replay = self._replay_one(record)
+                    result = {
+                        "task_id": record["primary_task_id"],
+                        "passed": passed,
+                        "verdict": verdict,
+                        "replay": replay[:2000],
+                        "batch": 1,
+                    }
+                    batch_replays.append(result)
+                    replay_results.append(result)
+                if not batch_replays or not all(item["passed"] for item in batch_replays):
+                    self.durable.record_maintenance_note(
+                        "deep_history_consolidation",
+                        "Compact-history replay validation failed; raw history was preserved and SQL backup retained.",
+                        details={
+                            "status": "replay_failed",
+                            "backup": backup_path,
+                            "validation_policy": validation_policy,
+                            "failed_batch": 1,
+                            "validation_batches": 1,
+                            "replays": batch_replays,
+                        },
+                    )
+                    return {
+                        "status": "replay_failed",
+                        "backup": backup_path,
+                        "validation_policy": validation_policy,
+                        "failed_batch": 1,
+                        "validation_batches": 1,
+                        "replays": batch_replays,
+                    }
+
             self.durable.mark_task_history_validated(primary_ids)
+            raw_task_ids = [str(item["task_id"]) for item in raw_candidates]
             source_task_ids = [task_id for record in records for task_id in record["source_task_ids"]]
-            deleted_tasks = self.durable.delete_validated_archived_tasks(source_task_ids)
-            conversation = self.durable.prune_covered_conversation_history(retention_days)
+            deleted_tasks = self.durable.delete_validated_archived_tasks(raw_task_ids) if raw_task_ids else 0
+            compact_rows_replaced = 0
+            if full and hasattr(self.durable, "delete_task_history_rows"):
+                refreshed_primary_ids = {str(v) for v in primary_ids}
+                obsolete_compact_ids = [
+                    str(item["task_id"]) for item in archived_candidates
+                    if str(item.get("task_id") or "") not in refreshed_primary_ids
+                ]
+                compact_rows_replaced = self.durable.delete_task_history_rows(obsolete_compact_ids)
+            conversation = self.durable.prune_covered_conversation_history(
+                retention_days, all_history=bool(full)
+            )
             superseded_deleted = self.durable.delete_superseded_memories()
-            snapshot = self._rebuild_background_snapshot()
+            # Validated task_history rows are the durable long-term compact archive.
+            # Do not collapse the growing archive into one bounded background snapshot:
+            # prompt-size limits belong at retrieval/injection time, not durable storage time.
             self.durable.delete_sql_backup(backup_path)
             details = {
                 "status": "success", "archived_records": len(records), "deleted_tasks": deleted_tasks,
-                "source_task_ids": len(source_task_ids), "replay_samples": len(replay_results),
+                "source_task_ids": len(source_task_ids),
+                "validation_policy": validation_policy,
+                "validation_batches": len(validation_batches),
+                "replay_samples_passed": len(replay_results),
+                "compact_records_in_pass": len(records),
+                "compact_rows_replaced": compact_rows_replaced,
                 "messages_deleted": conversation["messages_deleted"],
                 "thread_summaries_deleted": conversation["thread_summaries_deleted"],
                 "memory_links_preserved": conversation.get("memory_links_preserved", 0),
                 "superseded_memories_deleted": superseded_deleted,
-                "background_chars": len(snapshot), "backup_deleted": True,
+                "durable_archive": "task_history", "aggregate_archive_char_cap": None,
+                "backup_deleted": True,
             }
             self.durable.record_maintenance_note(
                 "deep_history_consolidation", "Old Norm history was compacted, replay-validated, hard-pruned, and the temporary SQL backup was deleted.",

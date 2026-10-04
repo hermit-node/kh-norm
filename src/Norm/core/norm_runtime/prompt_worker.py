@@ -52,6 +52,7 @@ class PromptWorker:
         consumer: str | None = None,
         deferred_append_planner=None,
         context_injections=None,
+        n1_gatekeeper=None,
     ) -> None:
         self.queue = queue
         self.client = client
@@ -70,6 +71,7 @@ class PromptWorker:
         self._blank_claims = 0
         self._last_memory_maintenance_check = 0.0
         self._last_redis_maintenance_check = 0.0
+        self._last_validation_pool_migration_check = 0.0
         self._last_weekly_cleanup_check = 0.0
         self._weekly_cleanup_redis = None
         self._stop_after_step = Event()
@@ -80,6 +82,7 @@ class PromptWorker:
         self._manual_memory_condense_mode = ""
         self.deferred_append_planner = deferred_append_planner
         self.context_injections = context_injections
+        self.n1_gatekeeper = n1_gatekeeper
 
     def start(self) -> Thread:
         if self._thread and self._thread.is_alive():
@@ -183,6 +186,11 @@ class PromptWorker:
         seed = str(task_id or "").strip() or self.active_task_id() or str(self.queue.oldest_task_id() or "")
         if not seed:
             return {"status": "ok", "suppressed": False, "reason": "no active or queued task"}
+        if self._suppression_requested(seed):
+            return {
+                "status": "ok", "suppressed": False, "task_id": seed,
+                "reason": "suppression already in progress; active worker is still unwinding",
+            }
 
         target = seed
         tree = []
@@ -223,6 +231,10 @@ class PromptWorker:
             })
 
         with self._state_lock:
+            # Keep this transition marker until the active worker frame actually
+            # acknowledges cancellation.  PostgreSQL remains the durable source of
+            # truth, but this marker closes the race where /flush-suppressed can
+            # delete durable rows while an Ollama cancellation is still unwinding.
             self._suppress_requested.update(member_ids)
         try:
             if self.durable and hasattr(self.durable, "suppress_task_tree"):
@@ -253,11 +265,14 @@ class PromptWorker:
                 "queue_cleanup": queue_cleanup,
             }
         finally:
-            # PostgreSQL status is the durable suppression gate. This in-memory set
-            # is only a transition/cancellation hint and must not poison later resume.
+            # Do not clear an active task's transition marker here. The model call can
+            # still be unwinding after OllamaClient.cancel_active() returns. The worker
+            # clears it in _handle_suppressed() once cancellation is acknowledged.
+            active = self.active_task_id()
             with self._state_lock:
                 for member_id in member_ids:
-                    self._suppress_requested.discard(member_id)
+                    if member_id != active:
+                        self._suppress_requested.discard(member_id)
 
     def flush_suppressed(self) -> dict:
         """Permanently flush every durably suppressed task without one stale Redis error blocking the batch."""
@@ -282,7 +297,11 @@ class PromptWorker:
             except Exception as exc:
                 cleanup_errors.append(f"live:{task_id}:{type(exc).__name__}:{exc}")
                 logging.warning("Suppressed live-state cleanup failed task=%s: %s", task_id, exc)
-            self._clear_suppression_request(task_id)
+            # Keep the transition hint for the active task until its worker frame
+            # acknowledges ModelGenerationCancelled. Clearing it here recreates a race
+            # where a just-flushed task can be treated as an ordinary cancellation.
+            if task_id != self.active_task_id():
+                self._clear_suppression_request(task_id)
         # PostgreSQL is authoritative.  Even if a stale Redis artifact could not be
         # removed, do not leave the suppressed task itself immortal. Startup/queue
         # reconciliation can later remove any orphaned live entry because its task no
@@ -303,13 +322,13 @@ class PromptWorker:
         return self._idle.is_set()
 
     def request_memory_condense(self, full: bool = False) -> dict:
-        """Schedule background-memory condensation without creating a user task."""
+        """Schedule replay-validated deep-history condensation without creating a user task."""
         if not self.durable:
             return {"status": "unavailable", "scheduled": False, "reason": "durable store unavailable"}
-        requested = "full" if bool(full) else "incremental"
+        requested = "deep-full" if bool(full) else "deep"
         with self._state_lock:
             current = self._manual_memory_condense_mode
-            if current != "full":
+            if current != "deep-full":
                 self._manual_memory_condense_mode = requested
             scheduled = self._manual_memory_condense_mode
         return {
@@ -328,24 +347,36 @@ class PromptWorker:
             self._manual_memory_condense_mode = ""
         self._idle.clear()
         memory_cfg = self._runtime_config().get("memory", {})
-        full = mode == "full"
+        full = mode == "deep-full"
         try:
             maintainer = DeepHistoryMaintainer(
                 self.durable, self.client, runtime_root=self._runtime_root(), config=memory_cfg,
                 queue=self.queue, drain_event=self._drain,
             )
             recovery_cleanup = maintainer.cleanup_recovery_state()
-            summary = maintainer.rebuild_background_snapshot(incremental=not full)
+            result = maintainer.run(force=True, full=full)
+            if result is None:
+                result = {"status": "success", "work": "no_eligible_history"}
             details = {
-                "status": "success", "mode": mode, "background_chars": len(summary or ""),
+                "status": str(result.get("status") or "success"),
+                "mode": mode,
+                "deep_history": result,
                 "recovery_cleanup": recovery_cleanup,
             }
+            result_status = str(result.get("status") or "success")
+            if result_status in {"success", "already_completed_before_resume"}:
+                note = "[manual_background_condensation] Manual replay-validated deep-history condensation completed."
+            else:
+                note = (
+                    "[manual_background_condensation] Manual deep-history condensation did not prune history; "
+                    "validation/recovery safeguards preserved the raw source state."
+                )
             self.durable.record_maintenance_note(
                 "manual_background_condensation",
-                "[manual_background_condensation] Manual background-memory condensation completed.",
+                note,
                 details=details,
             )
-            logging.info("Manual memory condensation completed mode=%s chars=%s", mode, len(summary or ""))
+            logging.info("Manual deep-history condensation finished mode=%s result=%s", mode, result_status)
         except Exception as exc:
             try:
                 self.durable.record_maintenance_note(
@@ -370,6 +401,7 @@ class PromptWorker:
             if self._drain.is_set() or self._stop_after_step.is_set():
                 break
             try:
+                self._maybe_migrate_validation_pool()
                 self._maybe_reconcile_redis(reason='periodic')
                 self.queue.reclaim_stale()
                 try:
@@ -795,14 +827,24 @@ class PromptWorker:
                 continue
             path = str(result.get("path") or "")
             sha = str(result.get("sha256") or "")
-            if tool in {"write_file", "replace_text"} and path and sha:
+            if (tool in {"write_file", "replace_text"} or result.get("file_mutation")) and path:
                 writes[path] = sha
-            if tool == "read_file" and path and sha:
+                verified = {entry for entry in verified if entry[0] != path}
+            if tool == "read_file" and path and sha and writes.get(path) == sha:
                 verified.add((path, sha))
         return [
             {"path": path, "sha256": sha, "verified": (path, sha) in verified}
             for path, sha in sorted(writes.items())
         ]
+
+    @staticmethod
+    def _final_artifact_state(candidate: dict) -> bool:
+        expected_type = str(candidate.get("command", {}).get("expected_output", {}).get("type") or "answer")
+        requires_artifact = expected_type in {"artifact", "artifact_and_response"}
+        artifacts = candidate.get("artifacts") or []
+        if artifacts:
+            return all(bool(item.get("verified")) for item in artifacts)
+        return not requires_artifact
 
     @staticmethod
     def _resource_status_from_evidence(evidence: list[dict]) -> dict:
@@ -951,10 +993,7 @@ class PromptWorker:
             candidate = validate_final_candidate(json.loads(job.prompt))
         except (json.JSONDecodeError, ValueError) as exc:
             raise VerifierProtocolError(f"queued final candidate failed deterministic schema validation: {exc}") from exc
-        expected_type = str(candidate.get("command", {}).get("expected_output", {}).get("type") or "answer")
-        requires_artifact = expected_type in {"artifact", "artifact_and_response"}
-        artifacts = candidate.get("artifacts") or []
-        artifact_state = (not requires_artifact) or (bool(artifacts) and all(bool(item.get("verified")) for item in artifacts))
+        artifact_state = self._final_artifact_state(candidate)
         verification = self._structured_verifier_result(
             self._final_verification_prompt(job, candidate, artifact_state)
         )
@@ -1212,6 +1251,48 @@ class PromptWorker:
         self.durable.record_maintenance_note(reason, "Redis reconciliation completed.", details={"inspected": len(task_ids), "cleaned_terminal": cleaned, "recoverable_left_for_processing": recovered, "finalized_unrecoverable": finalized, "cleared_unknown": unknown, "held": held})
         logging.info("Redis maintenance reason=%s inspected=%s cleaned=%s recoverable=%s finalized=%s unknown=%s held=%s", reason, len(task_ids), cleaned, recovered, finalized, unknown, held)
 
+    def _maybe_migrate_validation_pool(self, *, force: bool = False) -> None:
+        """Collapse legacy Redis layout, then migrate eligible hot records twice daily."""
+        cfg = self._validation_pool_config()
+        if not bool(cfg.get("enabled", True)):
+            return
+        # Layout cleanup is Redis-local and should happen even if PostgreSQL is down.
+        if hasattr(self.live, "migrate_legacy_validation_layout"):
+            try:
+                legacy = self.live.migrate_legacy_validation_layout()
+                if int(legacy.get("migrated") or 0) or int(legacy.get("removed_legacy_keys") or 0):
+                    logging.info("Collapsed legacy verification Redis layout into norm:validation:pool: %s", legacy)
+            except Exception:
+                logging.exception("Could not collapse legacy verification Redis layout; preserving legacy keys")
+
+        if not self.durable or not hasattr(self.live, "stale_validation_records") or not hasattr(self.durable, "merge_validation_pool_record"):
+            return
+        now_clock = monotonic()
+        interval = max(300, int(cfg.get("migration_interval_seconds", 43200)))
+        if not force and now_clock - self._last_validation_pool_migration_check < interval:
+            return
+        self._last_validation_pool_migration_check = now_clock
+        min_age = max(3600, int(cfg.get("redis_min_age_seconds", 86400)))
+        migrated = 0
+        try:
+            records = self.live.stale_validation_records(older_than_seconds=min_age, limit=512)
+            for record in records:
+                record_id = str(record.get("record_id") or "")
+                if not record_id:
+                    continue
+                # PostgreSQL combines same-value hot waves into one long-term count.
+                # Delete from Redis only after the durable merge commits.
+                self.durable.merge_validation_pool_record(record)
+                removed = self.live.acknowledge_validation_records([record_id])
+                migrated += int(removed)
+            if migrated:
+                logging.info(
+                    "Verification-pool migration Redis->PostgreSQL records=%s min_age_seconds=%s",
+                    migrated, min_age,
+                )
+        except Exception:
+            logging.exception("Verification-pool migration deferred; eligible Redis records retained")
+
     def _maybe_reconcile_redis(self, *, force: bool = False, reason: str = "periodic") -> None:
         if not self.durable:
             return
@@ -1443,7 +1524,8 @@ class PromptWorker:
             observed_start, observed_end = int(range_match.group(1)), int(range_match.group(2))
             if observed_end >= observed_start and observed_end - observed_start + 1 == count:
                 base_start, base_end = observed_start, observed_end
-        batch_count = min(8, max(2, (count + 7) // 8))
+        target_items = max(4, min(64, int(self._runtime_config().get("worker", {}).get("child_batch_target_items", 16))))
+        batch_count = max(2, min(24, (count + target_items - 1) // target_items))
         batch_size = (count + batch_count - 1) // batch_count
         steps = [
             TaskStep("plan-breakdown", "Plan child decomposition", "Runtime-generated bounded child plan.", "Child plan is explicit and bounded."),
@@ -1592,6 +1674,18 @@ class PromptWorker:
                 "input_has_media": False,
                 "output_requires_media": False,
                 "expected_output": {"type": "answer", "format": "json"},
+            }, instruction)
+        elif prompt_origin == "runtime_oversize_recovery_unit":
+            # A recovery unit returns a bounded internal result to its parent.
+            # It may edit an artifact when its instruction requires it, but a
+            # legitimate evidence-backed no-op must not inherit the parent's
+            # root-level requirement to manufacture an artifact.
+            command = normalize_command({
+                **command,
+                "intent": instruction[:500],
+                "input_has_media": False,
+                "output_requires_media": False,
+                "expected_output": {"type": "answer", "format": "text"},
             }, instruction)
         work_step = next(step for step in steps if step.id == "work")
         final_verify_step = next(step for step in steps if step.id == "final-verify")
@@ -2355,96 +2449,215 @@ class PromptWorker:
     def _validation_pool_config(self) -> dict:
         return dict(self._runtime_config().get("validation_pool") or {})
 
+    @staticmethod
+    def _parse_iso_timestamp(value: object) -> datetime | None:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
     def _recent_validations(self, job: PromptJob, subjects: list[str] | None = None) -> list[dict]:
+        """Read only the one live Redis verification hash. PostgreSQL is never implicit."""
         cfg = self._validation_pool_config()
         if not bool(cfg.get("enabled", True)):
             return []
-        limit = int(cfg.get("max_context_items", 16))
-        window = int(cfg.get("recent_window_seconds", 600))
-        if self.durable and hasattr(self.durable, "recent_validations"):
-            try:
-                rows = self.durable.recent_validations(job.task_id, subjects=subjects, window_seconds=window, limit=limit)
-                if rows:
-                    return rows
-            except Exception:
-                logging.exception("Durable validation-pool read failed task=%s", job.task_id)
-        if hasattr(self.live, "recent_validations"):
-            try:
-                return self.live.recent_validations(job.task_id, subjects=subjects, limit=limit)
-            except Exception:
-                logging.exception("Redis validation-pool read failed task=%s", job.task_id)
+        limit = max(1, min(4096, int(cfg.get("emergency_row_cap", 512))))
+        if not hasattr(self.live, "global_validation"):
+            return []
+        try:
+            cleaned = [str(x).strip() for x in (subjects or []) if str(x).strip()]
+            if cleaned:
+                return [row for key in cleaned[:limit] if (row := self.live.global_validation(key))]
+            if hasattr(self.live, "recent_global_validations"):
+                return list(self.live.recent_global_validations(limit=limit) or [])[:limit]
+        except Exception:
+            logging.exception("Redis verification-pool read failed task=%s", getattr(job, "task_id", ""))
         return []
 
     def _validation_context(self, job: PromptJob) -> str:
-        rows = self._recent_validations(job)
-        if not rows:
-            return "RECENT VALIDATIONS: none recorded for this task yet."
-        threshold = int(self._validation_pool_config().get("reuse_after_checks", 3))
-        lines = ["RECENT VALIDATIONS (reuse recent consistent evidence; do not start from zero):"]
-        for item in rows:
-            checks = int(item.get("check_count") or 0)
-            contradictions = int(item.get("contradiction_count") or 0)
-            sources = dict(item.get("source_counts") or {})
-            reuse = checks >= threshold and contradictions == 0
-            lines.append(
-                f"- {item.get('subject')} = {item.get('value')} | checks={checks} | "
-                f"sources={len(sources)} ({', '.join(sorted(sources)[:6]) or 'unspecified'}) | "
-                f"contradictions={contradictions} | last={item.get('last_checked_at')} | "
-                f"recommendation={'REUSE unless concrete contrary evidence exists' if reuse else 'revalidate if material'}"
-            )
-        return "\n".join(lines)
+        # Do not spray the whole pool into every model round.  The model asks Redis
+        # for the intended target via verification_preflight and decides only after
+        # seeing that result whether reuse/history/a fresh tool call is warranted.
+        cfg = self._validation_pool_config()
+        token_budget = max(1, int(cfg.get("context_token_budget", 2500)))
+        char_budget = max(1, min(int(cfg.get("context_char_budget", 10000)), token_budget * 4))
+        return (
+            "LIVE REDIS VERIFICATION POOL: query it with verification_preflight before each information tool. "
+            "Redis is the short-term record. PostgreSQL history is optional and is never consulted implicitly."
+        )[:char_budget]
 
     @staticmethod
     def _validation_tool_schemas() -> list[dict]:
         return [
-            {"type":"function","function":{"name":"review_validations","description":"Batch-review semantic facts you are considering re-checking. Use this before reacquiring recently verified facts.","parameters":{"type":"object","properties":{"subjects":{"type":"array","items":{"type":"string"},"minItems":1}},"required":["subjects"],"additionalProperties":False}}},
-            {"type":"function","function":{"name":"record_validations","description":"Batch-record semantic facts just established from observed evidence so later rounds/steps/retries can reuse them.","parameters":{"type":"object","properties":{"items":{"type":"array","minItems":1,"items":{"type":"object","properties":{"subject":{"type":"string"},"value":{"type":"string"},"source":{"type":"string"},"note":{"type":"string"}},"required":["subject","value","source"],"additionalProperties":False}}},"required":["items"],"additionalProperties":False}}},
+            {"type":"function","function":{
+                "name":"verification_preflight",
+                "description":"MANDATORY Redis lookup before an information-gathering tool. State the intended tool, stable target, and factual description. Redis returns same-target candidates first; decide what to do only after reading that result.",
+                "parameters":{"type":"object","properties":{
+                    "tool":{"type":"string","description":"The information tool you intend to use if a fresh check is needed."},
+                    "target":{"type":"string","description":"Stable object/location being checked, e.g. an exact file/folder path, endpoint, table, or resource. Do not put procedural prose here."},
+                    "description":{"type":"string","description":"What fact about the target is being verified. Wording may vary; existing same-target records are ranked semantically."}
+                },"required":["tool","target","description"],"additionalProperties":False}
+            }},
+            {"type":"function","function":{
+                "name":"verification_history",
+                "description":"OPTIONAL PostgreSQL lookup for the current preflight target/fact. Call only if older evidence would materially affect the decision to reuse or recheck.",
+                "parameters":{"type":"object","properties":{},"additionalProperties":False}
+            }},
+            {"type":"function","function":{
+                "name":"verification_checkin",
+                "description":"MANDATORY Redis check-in after a fresh information-tool result. Choose an existing record_id returned by preflight when it is the same fact; use 'new' only when none of those records describes the fact. Same value increments num_checks; changed value resets num_checks to 1.",
+                "parameters":{"type":"object","properties":{
+                    "record_id":{"type":"string","description":"Existing record_id returned by Redis preflight or optional PostgreSQL history, or literal 'new'."},
+                    "value":{"type":"string","description":"Compact canonical factual value. Prefer stable JSON text for structured facts."}
+                },"required":["record_id","value"],"additionalProperties":False}
+            }},
         ]
 
-    def _execute_validation_tool(self, job: PromptJob, name: str, arguments: dict) -> dict:
+    def _record_global_validations(self, job: PromptJob, items: list[dict]) -> list[dict]:
+        """Redis check-in is mandatory; PostgreSQL receives only twice-daily migrations."""
+        if not hasattr(self.live, "record_global_validations"):
+            raise RuntimeError("mandatory Redis verification pool is unavailable")
+        return self.live.record_global_validations(job.task_id, job.step_id, items)
+
+    @staticmethod
+    def _information_tool_requires_verification(name: str) -> bool:
+        name = str(name or "")
+        if name in {"verification_preflight", "verification_history", "verification_checkin"}:
+            return False
+        # Core file mutations are not evidence acquisition. Everything else, including
+        # shell/tests and plugin calls, must explicitly pass through Redis verification.
+        if name in {"make_directory", "write_file", "replace_text", "delete_file", "append_task_note"}:
+            return False
+        return True
+
+    def _execute_validation_tool(self, job: PromptJob, name: str, arguments: dict, state: dict | None = None) -> dict:
+        state = state if state is not None else {}
         cfg = self._validation_pool_config()
         if not bool(cfg.get("enabled", True)):
-            return {"ok": False, "tool": name, "error": "validation pool is disabled"}
-        threshold = int(cfg.get("reuse_after_checks", 3))
-        if name == "review_validations":
-            subjects = [str(x).strip() for x in (arguments.get("subjects") or []) if str(x).strip()]
-            rows = self._recent_validations(job, subjects)
-            by_subject = {str(row.get("subject")): row for row in rows}
-            reviewed=[]
-            for subject in subjects:
-                row=by_subject.get(subject)
-                if not row:
-                    reviewed.append({"subject":subject,"recommendation":"validate","reason":"no recent validation"}); continue
-                checks=int(row.get("check_count") or 0); contradictions=int(row.get("contradiction_count") or 0)
-                recommendation="reuse" if checks >= threshold and contradictions == 0 else "validate"
-                reviewed.append({**row,"recommendation":recommendation,"reason":("recent consistent checks make another casual read low-value" if recommendation=="reuse" else "insufficient or contradictory recent validation")})
-            return {"ok": True, "tool": name, "reviewed": reviewed}
-        if name == "record_validations":
-            items=[dict(x) for x in (arguments.get("items") or []) if isinstance(x,dict)]
-            if not items:
-                return {"ok": False, "tool": name, "error": "items must not be empty"}
-            durable_saved=[]; live_saved=[]
-            if self.durable and hasattr(self.durable,"record_validations"):
-                durable_saved=self.durable.record_validations(job.task_id,job.step_id,items)
-            if hasattr(self.live,"record_validations"):
-                live_saved=self.live.record_validations(job.task_id,job.step_id,items)
-            return {"ok": True, "tool": name, "recorded": durable_saved or live_saved, "count": len(durable_saved or live_saved)}
-        return {"ok": False, "tool": name, "error": "unknown validation-pool tool"}
+            return {"ok": False, "tool": name, "error": "verification pool is disabled"}
+
+        if name == "verification_preflight":
+            if state.get("pending_checkin"):
+                return {"ok": False, "tool": name, "error": "verification_checkin is required for the previous evidence result first"}
+            intended_tool = str(arguments.get("tool") or "").strip()
+            target = str(arguments.get("target") or "").strip()
+            description = str(arguments.get("description") or "").strip()
+            if not intended_tool or not target or not description:
+                return {"ok": False, "tool": name, "error": "tool, target, and description are required"}
+            if not hasattr(self.live, "validation_candidates"):
+                return {"ok": False, "tool": name, "error": "Redis validation pool does not support target lookup"}
+            candidates = list(self.live.validation_candidates(
+                tool=intended_tool, target=target, description=description, limit=12
+            ) or [])
+            recommended = ""
+            if candidates:
+                top_score = float(candidates[0].get("description_match") or 0.0)
+                if top_score >= 0.72 or (len(candidates) == 1 and top_score >= 0.45):
+                    recommended = str(candidates[0].get("record_id") or "")
+            state["preflight"] = {
+                "tool": intended_tool, "target": target, "description": description,
+                "candidates": candidates, "recommended_record_id": recommended,
+                "history_reviewed": False,
+            }
+            return {
+                "ok": True, "tool": name, "storage_checked": "norm:validation:pool",
+                "postgres_checked": False, "candidates": candidates,
+                "recommended_record_id": recommended,
+                "next": (
+                    "Decide now: reuse a Redis candidate, optionally call verification_history, or run the intended information tool. "
+                    "Do not invent a new record merely because your wording changed."
+                ),
+            }
+
+        if name == "verification_history":
+            preflight = state.get("preflight") or {}
+            if not preflight:
+                return {"ok": False, "tool": name, "error": "verification_preflight is required first"}
+            if self.durable is None or not hasattr(self.durable, "validation_history"):
+                history = {"storage": "postgres_history", "unavailable": True, "records": []}
+            else:
+                try:
+                    history = self.durable.validation_history(
+                        target=str(preflight.get("target") or ""),
+                        description=str(preflight.get("description") or ""),
+                        tool=str(preflight.get("tool") or ""),
+                        limit=12,
+                    )
+                except Exception as exc:
+                    logging.exception("Optional PostgreSQL verification history lookup failed target=%s", preflight.get("target"))
+                    history = {"storage": "postgres_history", "unavailable": True, "records": [], "error": f"{type(exc).__name__}: {exc}"}
+            preflight["history_reviewed"] = True
+            preflight["history"] = history
+            return {
+                "ok": True, "tool": name, "history": history,
+                "policy": "historical context only; decide for yourself whether its age/count changes the need for a fresh check",
+            }
+
+        if name == "verification_checkin":
+            pending = state.get("pending_checkin") or {}
+            preflight = state.get("preflight") or {}
+            if not pending or not preflight:
+                return {"ok": False, "tool": name, "error": "no pending information-tool result requires check-in"}
+            if str(pending.get("tool") or "") != str(preflight.get("tool") or ""):
+                return {"ok": False, "tool": name, "error": "information tool does not match the current verification preflight"}
+            record_id = str(arguments.get("record_id") or "").strip()
+            value = str(arguments.get("value") or "").strip()
+            if not record_id or not value:
+                return {"ok": False, "tool": name, "error": "record_id and value are required"}
+            candidate_ids = {str(row.get("record_id") or "") for row in (preflight.get("candidates") or [])}
+            history_rows = list(((preflight.get("history") or {}).get("records") or []))
+            history_ids = {str(row.get("record_id") or "") for row in history_rows}
+            allowed_ids = candidate_ids | history_ids
+            if record_id != "new" and record_id not in allowed_ids:
+                return {"ok": False, "tool": name, "error": "record_id must come from Redis preflight/PostgreSQL history, or be literal 'new'"}
+            # If the model says 'new' despite a very strong Redis same-target semantic match,
+            # refuse to manufacture wording-duplicate Redis records.
+            if record_id == "new" and preflight.get("recommended_record_id"):
+                return {
+                    "ok": False, "tool": name,
+                    "error": "preflight found a strong same-target match; reuse recommended_record_id unless this is genuinely a different fact",
+                    "recommended_record_id": preflight.get("recommended_record_id"),
+                }
+            history_match = next((row for row in history_rows if str(row.get("record_id") or "") == record_id), None)
+            item = {
+                "record_id": record_id,
+                "tool": str(pending.get("tool") or ""),
+                "target": str(preflight.get("target") or ""),
+                "description": str(preflight.get("description") or ""),
+                "value": value,
+            }
+            if history_match and str(history_match.get("value") or "") != value:
+                item["previous_value_hint"] = str(history_match.get("value") or "")
+            recorded = self._record_global_validations(job, [item])
+            state["pending_checkin"] = None
+            state["preflight"] = None
+            return {
+                "ok": True, "tool": name, "storage": "norm:validation:pool", "recorded": recorded,
+                "policy": "same value increments num_checks; changed value records previous_value, changed_at, and resets num_checks to 1",
+            }
+
+        return {"ok": False, "tool": name, "error": "unknown verification-pool tool"}
 
     def _run_tool_slice(self, job: PromptJob, prompt: str, tools) -> dict:
         import json
 
         step_limit, task_limit = self._slice_limits()
         task_rounds = self.queue.task_rounds(job.task_id)
-        validation_context = self._validation_context(job)
-        validation_instructions = (
-            "VALIDATION POOL RULES:\n"
-            "- Skepticism is good, but repeated checks add little information. Before re-checking facts that may already be established, batch them through review_validations.\n"
-            "- A recommendation to reuse is advisory, not an absolute block: override it only when you have a concrete reason or contrary evidence.\n"
-            "- After establishing material semantic facts, batch-record them with record_validations immediately.\n"
-            "- Re-check things that were actually mutated or are genuinely volatile; do not repeatedly reacquire an unchanged local fact merely for reassurance.\n"
+        gate_instructions = (
+            self.n1_gatekeeper.instructions()
+            if self.n1_gatekeeper is not None
+            else (
+                "Tool requests execute directly because no N1 gatekeeper is configured. "
+                "Do not call legacy verification_preflight/checkin tools."
+            )
         )
-        tool_prompt = tools.instructions() + "\n\n" + validation_instructions + "\n" + validation_context + "\n\n" + prompt
+        tool_prompt = tools.instructions() + "\n\n" + gate_instructions + "\n\n" + prompt
         messages: list[dict] = [{"role": "user", "content": tool_prompt}]
         pending_verification: dict[str, str] = {}
         evidence: list[dict] = []
@@ -2480,9 +2693,14 @@ class PromptWorker:
                     "task_rounds": task_rounds,
                     "evidence": evidence,
                 }
+            # N1 is transparent to user/N2 prose. Only the tool boundary is instrumented.
+            messages[0]["content"] = tools.instructions() + "\n\n" + gate_instructions + "\n\n" + prompt
+            native_schemas = tools.schemas()
+            if self.n1_gatekeeper is not None:
+                native_schemas = self.n1_gatekeeper.instrument_schemas(native_schemas)
             response = self.client.chat_with_tools(
                 messages,
-                tools.schemas() + self._validation_tool_schemas(),
+                native_schemas,
                 think=True,
                 temperature=float(metadata.get("temperature", 0.2)),
                 num_predict=output_budget,
@@ -2494,6 +2712,15 @@ class PromptWorker:
             thinking = str(response.get("thinking", ""))
             done_reason = str(response.get("done_reason") or "")
             thinking_index = self._persist_thinking_now(job, thinking, int(response.get("eval_count") or 0))
+            turn_reset = ""
+            if self.n1_gatekeeper is not None:
+                turn_reset = self.n1_gatekeeper.observe_n2_turn(
+                    task_id=job.task_id,
+                    step_id=job.step_id,
+                    content=content,
+                    thinking=thinking,
+                    calls=calls,
+                )
             if content:
                 last_content = content
             if not calls:
@@ -2588,8 +2815,10 @@ class PromptWorker:
             messages.append(
                 redact({"role": "assistant", "content": content, "tool_calls": calls})
             )
+            n1_interventions: list[str] = [turn_reset] if turn_reset else []
             for call in calls:
                 function = call.get("function") if isinstance(call, dict) else None
+                gate_meta: dict = {}
                 if not isinstance(function, dict):
                     name = "invalid_tool_call"
                     arguments = {}
@@ -2604,12 +2833,60 @@ class PromptWorker:
                             arguments = {}
                     if not isinstance(name, str) or not isinstance(arguments, dict):
                         result = {"ok": False, "error": "invalid tool name or arguments"}
-                    elif name in {"review_validations", "record_validations"}:
-                        result = self._execute_validation_tool(job, name, arguments)
+                    elif turn_reset and self.n1_gatekeeper is not None:
+                        # N1 judged the entire N2 turn to be a reasoning rabbit hole.
+                        # Satisfy the native tool-call protocol with a blocked result,
+                        # invoke nothing, then inject the reset before the next N2 turn.
+                        result = {
+                            "ok": False,
+                            "tool": name,
+                            "n1_loop_blocked": True,
+                            "error": "N1 stopped this repeated reasoning/tool turn before execution; continue from existing evidence and change approach.",
+                        }
+                        gate_meta = {"executed": False, "reasoning_loop_blocked": True}
+                    elif name in {"verification_preflight", "verification_history", "verification_checkin"}:
+                        # Legacy N2-managed verification is intentionally unavailable in
+                        # checkpoint 1. N1 owns this boundary now.
+                        result = {
+                            "ok": False,
+                            "tool": name,
+                            "error": "legacy verification tools are N1-owned; request the actual information tool instead",
+                        }
+                    elif self.n1_gatekeeper is not None:
+                        outcome = self.n1_gatekeeper.before_tool(
+                            task_id=job.task_id,
+                            step_id=job.step_id,
+                            name=name,
+                            arguments=arguments,
+                        )
+                        arguments = outcome.arguments
+                        if outcome.execute:
+                            # IMPORTANT: this object is passed to N2 unchanged. N1 records
+                            # verification metadata out-of-band after execution.
+                            result = tools.execute(name, arguments)
+                            gate_meta = self.n1_gatekeeper.after_tool(
+                                task_id=job.task_id,
+                                step_id=job.step_id,
+                                name=name,
+                                outcome=outcome,
+                                result=result,
+                            )
+                        else:
+                            result = dict(outcome.result or {
+                                "ok": False, "tool": name, "error": "N1 did not execute or supply a result"
+                            })
+                            gate_meta = {
+                                "executed": False,
+                                "target": outcome.target,
+                                "need": outcome.need,
+                                "note": outcome.note,
+                            }
+                        if outcome.reset_instruction:
+                            n1_interventions.append(outcome.reset_instruction)
                     else:
                         result = tools.execute(name, arguments)
 
-                evidence_item = redact({"tool": str(name), "arguments": arguments, "result": result})
+                evidence_item = redact({"tool": str(name), "arguments": arguments, "result": result, "n1_gatekeeper": gate_meta})
                 evidence.append(evidence_item)
                 self._persist_evidence_now(job, [evidence_item])
                 if self._suppression_requested(job.task_id) or (self.durable and self.durable.task_status(job.task_id) == "suppressed"):
@@ -2629,7 +2906,7 @@ class PromptWorker:
                 if result.get("ok"):
                     observed_path = str(result.get("path") or "")
                     observed_hash = str(result.get("sha256") or "")
-                    if name in {"write_file", "replace_text"} and observed_path and observed_hash:
+                    if (name in {"write_file", "replace_text"} or result.get("file_mutation")) and observed_path and observed_hash:
                         pending_verification[observed_path] = observed_hash
                     elif name == "read_file" and observed_path and observed_hash:
                         if pending_verification.get(observed_path) == observed_hash:
@@ -2654,6 +2931,11 @@ class PromptWorker:
                         "task_rounds": task_rounds,
                         "evidence": evidence,
                     }
+            if n1_interventions:
+                messages.append({
+                    "role": "user",
+                    "content": "[N1 LOOP RESET]\n" + "\n".join(dict.fromkeys(n1_interventions)),
+                })
 
         evidence.extend(self._verify_pending(job, pending_verification, tools))
         if task_rounds >= task_limit:
@@ -2716,7 +2998,7 @@ class PromptWorker:
             compact_result = {}
             if isinstance(result, dict):
                 for key in (
-                    "ok", "path", "paths", "sha256", "created", "error", "staged", "staged_path", "note_path",
+                    "ok", "path", "paths", "sha256", "file_mutation", "created", "error", "staged", "staged_path", "note_path",
                     "attempts", "answer", "content", "text", "summary", "analysis", "observations", "data", "items",
                     "image_count", "output_dir", "analysis_json", "geometry_overlay", "horizontal_consensus", "profile",
                     "device", "width", "height", "reconstruction_similarity", "artifact_fraction", "resource_status", "storage_context",
@@ -3170,6 +3452,14 @@ class PromptWorker:
             marker["phase"] = "recovery_state_cleanup"
             client.set(active_key, json.dumps(marker, sort_keys=True))
             recovery_cleanup = maintainer.cleanup_recovery_state()
+            marker["phase"] = "verification_history_cleanup"
+            client.set(active_key, json.dumps(marker, sort_keys=True))
+            verification_history_cleanup = (
+                self.durable.purge_validation_history(
+                    retention_seconds=max(3600, int(self._validation_pool_config().get("history_retention_seconds", 1209600)))
+                )
+                if hasattr(self.durable, "purge_validation_history") else {"skipped": "unsupported"}
+            )
             marker["phase"] = "deep_history" if mode == "deep" else "background_memory"
             client.set(active_key, json.dumps(marker, sort_keys=True))
             if mode == "deep":
@@ -3189,7 +3479,7 @@ class PromptWorker:
                 "weekly_cleanup", f"{mode.capitalize()} cleanup completed successfully.",
                 details={"status": "success", "mode": mode, "run_id": run_id,
                          "resumed": resumed, "temp_cleanup": temp_cleanup, "trash_purge": trash_purge, "image_analysis_purge": purge,
-                         "recovery_cleanup": recovery_cleanup, "maintenance_result": result},
+                         "recovery_cleanup": recovery_cleanup, "verification_history_cleanup": verification_history_cleanup, "maintenance_result": result},
             )
             client.delete(active_key)
             logging.info("Weekly maintenance completed run_id=%s mode=%s temp=%s trash=%s purge=%s result=%s", run_id, mode, temp_cleanup, trash_purge, purge, result)

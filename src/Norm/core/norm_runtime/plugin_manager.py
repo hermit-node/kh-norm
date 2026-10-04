@@ -18,6 +18,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 
+from .plugin_identity import identity_files, verify_identity
+
 PLUGIN_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://github.com/hermit-node/norm/plugins/v2")
 _MANIFEST_KEYS = {"NAME", "VERSION", "ENTRYPOINT", "CAPABILITIES", "DESCRIPTION"}
 _RESERVED_FILES = {"init.py", "__init__.py"}
@@ -185,16 +187,18 @@ class _LoadedPlugin:
     functions: dict[str, Any]
     tool_meta: dict[str, dict[str, Any]]
     scripts: list[dict[str, Any]]
+    identity: dict[str, Any] | None = None
 
 
 class PluginManager:
     """Hydrate local Python plugin folders into native Norm tool schemas.
 
-    A plugin folder may optionally contain init.py/__init__.py manifest literals and README.md.
-    Every public function defined in non-underscore .py files is exposed as a namespaced native
-    tool. The folder is rescanned on schema/dispatch access, so edits are hot-loaded without a
-    Norm rebuild. If a changed plugin fails to import, its last-known-good hydrated version stays
-    active and the registry records the refresh error.
+    Schema-2 plugins keep metadata in plugin.json and executable code under src/. The declared
+    entrypoint (normally src/main.py) is the only module scanned for public native-tool functions;
+    helper modules remain implementation details. plugin.json.sha256 is the deterministic identity
+    of the complete src/ tree, so a matching SHA is treated as the same loaded code build.
+    Legacy plugin layouts remain supported. The runtime registry is generated state and changed
+    plugins are hot-loaded without rebuilding Norm; a failed candidate keeps last-known-good code.
     """
 
     def __init__(self, plugin_root: str | Path, registry_file: str | Path | None = None) -> None:
@@ -215,10 +219,26 @@ class PluginManager:
         return None
 
     @staticmethod
-    def _all_python_files(folder: Path) -> list[Path]:
+    def _schema2_meta(folder: Path) -> dict[str, Any] | None:
+        manifest = folder / "plugin.json"
+        if not manifest.is_file():
+            return None
+        try:
+            value = json.loads(manifest.read_text(encoding="utf-8-sig"))
+        except Exception:
+            return None
+        return value if isinstance(value, dict) and value.get("schema_version") == 2 else None
+
+    @classmethod
+    def _source_root(cls, folder: Path) -> Path:
+        return folder / "src" if cls._schema2_meta(folder) is not None else folder
+
+    @classmethod
+    def _all_python_files(cls, folder: Path) -> list[Path]:
+        root = cls._source_root(folder)
         files: list[Path] = []
-        for path in sorted(folder.rglob("*.py")):
-            rel = path.relative_to(folder)
+        for path in sorted(root.rglob("*.py")):
+            rel = path.relative_to(root)
             if path.name in _RESERVED_FILES or any(part == "__pycache__" or part.startswith(".") for part in rel.parts):
                 continue
             files.append(path)
@@ -226,6 +246,10 @@ class PluginManager:
 
     @classmethod
     def _python_files(cls, folder: Path) -> list[Path]:
+        meta = cls._schema2_meta(folder)
+        if meta is not None:
+            entry = (folder / str(meta.get("entrypoint") or "")).resolve()
+            return [entry] if entry.is_file() else []
         return [
             path for path in cls._all_python_files(folder)
             if not any(part.startswith("_") for part in path.relative_to(folder).parts)
@@ -233,18 +257,29 @@ class PluginManager:
 
     def _folder_fingerprint(self, folder: Path) -> tuple[str, list[dict[str, Any]]]:
         material: list[dict[str, Any]] = []
-        candidates = []
         manifest = self._manifest_path(folder)
-        if manifest:
-            candidates.append(manifest)
-        readme = folder / "README.md"
-        if readme.is_file():
-            candidates.append(readme)
-        candidates.extend(self._all_python_files(folder))
-        for path in sorted(set(candidates)):
-            rel = path.relative_to(folder).as_posix()
-            digest = _sha256(path)
-            material.append({"path": rel, "sha256": digest, "bytes": path.stat().st_size})
+        legacy = _literal_manifest(manifest) if manifest else {}
+        identity = verify_identity(folder, legacy)
+        if identity and identity.get("schema_version") == 2:
+            for path in identity_files(folder):
+                rel = path.relative_to(folder).as_posix()
+                material.append({"path": rel, "sha256": _sha256(path), "bytes": path.stat().st_size})
+            return str(identity["sha256"]), material
+        else:
+            candidates: list[Path] = []
+            if manifest:
+                candidates.append(manifest)
+            readme = folder / "README.md"
+            if readme.is_file():
+                candidates.append(readme)
+            candidates.extend(self._all_python_files(folder))
+            if (folder / "plugin.json").exists() or (folder / "SHA256SUMS").exists():
+                candidates.extend(identity_files(folder))
+                if (folder / "SHA256SUMS").is_file():
+                    candidates.append(folder / "SHA256SUMS")
+            for path in sorted(set(candidates)):
+                rel = path.relative_to(folder).as_posix()
+                material.append({"path": rel, "sha256": _sha256(path), "bytes": path.stat().st_size})
         digest = hashlib.sha256(json.dumps(material, sort_keys=True).encode("utf-8")).hexdigest()
         return digest, material
 
@@ -274,8 +309,8 @@ class PluginManager:
 
     def _prepare_legacy_imports(self, folder: Path) -> None:
         """Make bare sibling imports resolve to this plugin without cross-plugin leakage."""
-        root = folder.resolve()
-        for path in folder.glob("*.py"):
+        root = self._source_root(folder).resolve()
+        for path in root.glob("*.py"):
             if path.name in _RESERVED_FILES:
                 continue
             alias = path.stem
@@ -290,7 +325,8 @@ class PluginManager:
                 sys.modules.pop(alias, None)
 
     def _load_module(self, folder: Path, path: Path, package_name: str):
-        rel = path.relative_to(folder).with_suffix("")
+        source_root = self._source_root(folder)
+        rel = path.relative_to(source_root).with_suffix("")
         module_suffix = ".".join(rel.parts)
         module_name = f"{package_name}.{module_suffix}"
         # Create synthetic parent packages so relative imports work in nested plugin modules.
@@ -304,7 +340,7 @@ class PluginManager:
                 pkg.__path__ = []
             else:
                 depth = i - 2
-                pkg_path = folder.joinpath(*rel.parts[:depth]) if depth else folder
+                pkg_path = source_root.joinpath(*rel.parts[:depth]) if depth else source_root
                 pkg.__path__ = [str(pkg_path)]
             pkg.__package__ = pkg_name
             sys.modules[pkg_name] = pkg
@@ -314,14 +350,14 @@ class PluginManager:
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
         # Backward compatibility: old plugins often used `from helper import ...` rather than
-        # package-relative imports. Put the plugin root on sys.path while hydrating.
+        # package-relative imports. Put the active source root on sys.path while hydrating.
         self._prepare_legacy_imports(folder)
-        sys.path.insert(0, str(folder))
+        sys.path.insert(0, str(source_root))
         try:
             spec.loader.exec_module(module)
         finally:
             try:
-                sys.path.remove(str(folder))
+                sys.path.remove(str(source_root))
             except ValueError:
                 pass
         return module
@@ -329,6 +365,10 @@ class PluginManager:
     def _hydrate_folder(self, folder: Path, fingerprint: str, scripts: list[dict[str, Any]]) -> _LoadedPlugin:
         manifest_path = self._manifest_path(folder)
         meta = _literal_manifest(manifest_path) if manifest_path else {}
+        identity = verify_identity(folder, meta)
+        if identity:
+            meta = {**meta, "NAME": identity["name"], "VERSION": identity["version"],
+                    "DESCRIPTION": identity.get("description", ""), "CAPABILITIES": identity.get("capabilities", [])}
         plugin_name = str(meta.get("NAME") or folder.name).strip() or folder.name
         version = str(meta.get("VERSION") or "unversioned").strip() or "unversioned"
         description = str(meta.get("DESCRIPTION") or "").strip()
@@ -358,7 +398,7 @@ class PluginManager:
         seen: set[str] = set()
         for path in files:
             module = self._load_module(folder, path, package_name)
-            module_rel = path.relative_to(folder).with_suffix("").as_posix()
+            module_rel = path.relative_to(self._source_root(folder)).with_suffix("").as_posix()
             module_label = module_rel.replace("/", "_")
             for fn_name, fn in inspect.getmembers(module, inspect.isfunction):
                 if fn_name.startswith("_") or fn.__module__ != module.__name__:
@@ -394,6 +434,7 @@ class PluginManager:
             functions=functions,
             tool_meta=tool_meta,
             scripts=scripts,
+            identity=identity,
         )
 
     @_synchronized
@@ -414,9 +455,37 @@ class PluginManager:
                 fingerprint, scripts = self._folder_fingerprint(folder)
                 prior = self._loaded.get(folder_name)
                 if prior is not None and prior.fingerprint == fingerprint:
+                    current_meta = self._schema2_meta(folder)
+                    if current_meta is not None:
+                        metadata_changed = prior.identity != current_meta
+                        prior.name = str(current_meta.get("name") or folder_name)
+                        prior.version = str(current_meta.get("version") or prior.version)
+                        prior.description = str(current_meta.get("description") or "")
+                        caps = current_meta.get("capabilities") or []
+                        prior.capabilities = [str(item).strip() for item in caps if str(item).strip()] if isinstance(caps, (list, tuple)) else []
+                        prior.identity = current_meta
+                        for item in prior.tool_meta.values():
+                            item["plugin"] = prior.name
+                            item["version"] = prior.version
+                        if metadata_changed:
+                            changed = True
                     self._errors.pop(folder_name, None)
                     continue
-                loaded = self._hydrate_folder(folder, fingerprint, scripts)
+                if prior is not None and prior.identity and not (folder / "plugin.json").is_file():
+                    raise ValueError("identified plugin cannot silently downgrade to legacy metadata")
+                # Failed imports must restore the old module graph as well as function handles.
+                modules_before = dict(sys.modules)
+                try:
+                    loaded = self._hydrate_folder(folder, fingerprint, scripts)
+                except Exception:
+                    self._clear_previous_dynamic_modules(folder)
+                    for module_name, module in modules_before.items():
+                        module_file = getattr(module, "__file__", None)
+                        if module_file and Path(module_file).resolve().is_relative_to(folder.resolve()):
+                            sys.modules[module_name] = module
+                        elif module_name.startswith("norm_dynamic_plugins."):
+                            sys.modules[module_name] = module
+                    raise
                 self._loaded[folder_name] = loaded
                 self._errors.pop(folder_name, None)
                 changed = True
@@ -437,6 +506,8 @@ class PluginManager:
                 "folder": folder,
                 "version": loaded.version,
                 "fingerprint": loaded.fingerprint,
+                "identity": loaded.identity,
+                "identity_verified": loaded.identity is not None,
                 "description": loaded.description,
                 "capabilities": loaded.capabilities,
                 "tools": sorted(loaded.functions),
@@ -490,8 +561,9 @@ class PluginManager:
             stdout = io.StringIO()
             stderr = io.StringIO()
             folder_path = (self.plugin_root / loaded.folder).resolve()
+            source_root = self._source_root(folder_path)
             self._prepare_legacy_imports(folder_path)
-            sys.path.insert(0, str(folder_path))
+            sys.path.insert(0, str(source_root))
             try:
                 with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                     result = fn(**arguments)
@@ -500,7 +572,7 @@ class PluginManager:
                         result = asyncio.run(result)
             finally:
                 try:
-                    sys.path.remove(str(folder_path))
+                    sys.path.remove(str(source_root))
                 except ValueError:
                     pass
             return {

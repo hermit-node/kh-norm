@@ -25,7 +25,7 @@ Put either of these in Norm's configured `%APPDATA%\Norm\.env`:
 
 `NORM_ROTOR5_PREVIOUS_SECRETS=<older secret 1>;<older secret 2>`
 
-Norm 0.53.3 exports only these Rotor5 secret values from its already-loaded/redacted secrets dictionary into the process environment for the plugin. New envelopes use the current secret when present. Previous values permit decoding after rotation. The live secret itself is never placed in the Rotor5 envelope; only an 8-byte selector fingerprint is stored.
+Norm exports only these Rotor5 secret values from its already-loaded/redacted secrets dictionary into the process environment for the plugin. New envelopes use the current secret when present. Previous values permit decoding after rotation. The live secret itself is never placed in the Rotor5 envelope; only an 8-byte selector fingerprint is stored.
 
 If no live secret is configured, Rotor5 remains password-only. Adding a live secret later does not break older password-only envelopes.
 
@@ -41,3 +41,7 @@ If no live secret is configured, Rotor5 remains password-only. Adding a live sec
 - `run(payload)` legacy action wrapper
 
 Envelope: `R5E2`, plugin version `0.1.0`.
+
+## Package identity
+
+`plugin.json` schema 2 records this plugin's name, version, release date, `src/main.py` injection point, and one SHA-256 for the complete `src/` tree. Norm recalculates that tree hash before loading the plugin. README changes do not change the code SHA; edits or renames anywhere under `src/` do.

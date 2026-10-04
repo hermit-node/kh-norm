@@ -82,7 +82,7 @@ runtime_root = /sandbox/runtime
 documents_root = /workspace
 workspace_root = .
 temp_root = temp
-verbatim_writer = plugins/verbatim_lines/_cli.py
+verbatim_writer = plugins/verbatim_lines/src/_cli.py
 
 [network]
 current_machine = norm-e2e

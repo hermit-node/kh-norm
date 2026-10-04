@@ -20,7 +20,7 @@ from typing import Any, Callable, Iterable
 
 import installer_environment as envtools
 
-INSTALLER_VERSION = "1.6.5-unified"
+INSTALLER_VERSION = "1.6.6-unified"
 PIP_VERSION = "26.2.1"
 PIP_MIN_VERSION = PIP_VERSION  # backward-compatible internal print helper
 PIP_SPEC = f"pip=={PIP_VERSION}"
@@ -488,6 +488,24 @@ def _migrate_existing_json(package_path: Path, old_path: Path, log: LogFn) -> di
     except Exception as exc:
         raise InstallerError(f"Could not migrate JSON config {package_path}: {exc}") from exc
     merged, migrated, dropped = _migrate_json_value(new_value, old_value)
+
+    # Promote known retired package defaults without trampling real operator overrides.
+    # 600 seconds was the pre-0.53.12 validation-pool default; 0.53.12 deliberately
+    # expands that reuse window to 24 hours. Only the exact retired default is replaced.
+    if package_path.name.lower() == "runtime.json":
+        try:
+            old_recent = old_value["validation_pool"]["recent_window_seconds"]
+            new_recent = new_value["validation_pool"]["recent_window_seconds"]
+            if int(old_recent) == 600 and int(new_recent) == 86400:
+                merged.setdefault("validation_pool", {})["recent_window_seconds"] = new_recent
+                migrated = [item for item in migrated if item != "validation_pool.recent_window_seconds"]
+                log(
+                    "Promoted validation_pool.recent_window_seconds from retired package default "
+                    "600 to packaged 0.53.12 default 86400."
+                )
+        except (KeyError, TypeError, ValueError):
+            pass
+
     package_path.write_text(
         json.dumps(merged, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",

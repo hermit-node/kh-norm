@@ -13,11 +13,21 @@ APP_DIR = ROOT / "core"
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 from norm_runtime.settings import load_ports
-from runtime_bootstrap import load_config as load_runtime_config
 STATE_DIR = ROOT / "state"
 FALLBACK_LOG = STATE_DIR / "norm_gui_history_fallback.jsonl"
 SETTINGS_FILE = ROOT / "config" / "settings.ini"
 _MUTEX_HANDLES = []
+
+
+def load_runtime_config(root: Path = ROOT) -> dict:
+    """Load full runtime config lazily for GUI helpers that actually need it.
+
+    Keeping this import lazy lets lightweight launcher helpers import norm_gui_common
+    without pulling the entire runtime bootstrap/dependency graph before norm.exe starts.
+    """
+    from runtime_bootstrap import load_config
+
+    return load_config(Path(root))
 
 def acquire_windows_mutex(name: str) -> bool:
     if os.name != "nt":
@@ -115,12 +125,27 @@ def start_norm_detached() -> subprocess.Popen:
         startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
         startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
 
-    return subprocess.Popen(
-        [str(exe), "--service"],
-        cwd=str(ROOT),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        creationflags=flags,
-        startupinfo=startupinfo,
-    )
+    # Never throw away early service failures. Import-time/frozen-startup errors happen
+    # before norm_main.setup_logging() exists, so DEVNULL makes a broken service look
+    # exactly like "Run-Norm did nothing". Keep a dedicated bootstrap trace instead.
+    log_dir = ROOT / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = log_dir / "norm-bootstrap.stdout.log"
+    stderr_path = log_dir / "norm-bootstrap.stderr.log"
+    stdout = stdout_path.open("a", encoding="utf-8", buffering=1)
+    stderr = stderr_path.open("a", encoding="utf-8", buffering=1)
+    try:
+        process = subprocess.Popen(
+            [str(exe), "--service"],
+            cwd=str(ROOT),
+            stdin=subprocess.DEVNULL,
+            stdout=stdout,
+            stderr=stderr,
+            creationflags=flags,
+            startupinfo=startupinfo,
+        )
+    finally:
+        # Popen duplicates/inherits the handles it needs; close the helper copies.
+        stdout.close()
+        stderr.close()
+    return process

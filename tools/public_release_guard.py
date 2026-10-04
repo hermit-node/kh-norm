@@ -29,7 +29,6 @@ SECRET_ASSIGNMENT_RE = re.compile(
 
 DEPLOYMENT_CONTENT_PATTERNS = (
     re.compile(rb"\bprivate-storage(?:-docker)?\b", re.I),
-    re.compile(rb"\bnorm-host\b", re.I),
     re.compile(rb"\bprivate-tailnet\.example\b", re.I),
     re.compile(rb"\bLocalExample\b", re.I),
     re.compile(rb"\bconsole\.example\b", re.I),

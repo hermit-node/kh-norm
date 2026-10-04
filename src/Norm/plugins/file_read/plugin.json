@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "name": "Norm File Read",
+  "version": "1.1.0",
+  "date": "2026-10-03",
+  "entrypoint": "src/main.py",
+  "description": "Bounded file reading plus non-extracting archive inspection through a local 7-Zip CLI with ZIP/TAR fallbacks.",
+  "capabilities": [
+    "chunked text read",
+    "literal byte read",
+    "base64 byte read",
+    "range read",
+    "archive manifest",
+    "archive member read",
+    "archive member sha256",
+    "archive-directory compare"
+  ],
+  "sha256": "ac80e17635b0606d2c7115850df29a64d7a9f582976421a8637041916e1b3632"
+}
