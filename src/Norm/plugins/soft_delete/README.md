@@ -14,3 +14,5 @@ Public tools:
 ## Package identity
 
 `plugin.json` schema 2 records this plugin's name, version, release date, `src/main.py` injection point, and one SHA-256 for the complete `src/` tree. Norm recalculates that tree hash before loading the plugin. README changes do not change the code SHA; edits or renames anywhere under `src/` do.
+
+Per-capability write additions can be configured centrally with `[file_access_overrides] soft_delete.write_add`.

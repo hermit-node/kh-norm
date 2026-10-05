@@ -1,68 +1,38 @@
 from __future__ import annotations
 
-import hashlib
+import json
 import re
-import zipfile
+import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parents[1]
-SOURCE = HERE / "Norm-0.53.14-portable-source.zip"
-SHA = HERE / "Norm-0.53.14-portable-source.zip.sha256"
+HERE=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(HERE/"tools"))
+from public_release_guard import scan_tree
 
-expected = SHA.read_text(encoding="utf-8").split()[0].lower()
-actual = hashlib.sha256(SOURCE.read_bytes()).hexdigest()
-assert expected == actual, (expected, actual)
+count=scan_tree(HERE)
+assert count>100,count
+manifest=json.loads((HERE/"src"/"Norm"/"package-manifest.json").read_text(encoding="utf-8"))
+assert manifest["version"]=="0.53.16"
+assert not (HERE/"src"/"Norm"/"tools"/"weasyprint"/"runtime").exists()
+assert "src/Norm/tools/weasyprint/runtime/" in (HERE/".gitignore").read_text(encoding="utf-8")
 
-deployment_leak_patterns = [
-    re.compile(r"\\\\[^\\\n]+\\(?:Local|Private|Secrets)[^\\\n]*", re.I),
-    re.compile(r"\b100\.(?!64\.0\.0\b)(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.(?:\d{1,3})\.(?:\d{1,3})\b"),
-    re.compile(r"\bprivate-storage(?:-docker)?\b", re.I),
-    re.compile(r"\bprivate-tailnet\.example\b", re.I),
-    re.compile(r"\bLocalExample\b", re.I),
-    re.compile(r"\bconsole\.example\b", re.I),
+docs=[
+ HERE/"src"/"Norm"/"docs"/"README.md",
+ HERE/"src"/"Norm"/"docs"/"CURRENT_STATUS.md",
+ HERE/"src"/"Norm"/"docs"/"DEVELOPMENT_NOTES.md",
+ HERE/"src"/"Norm"/"docs"/"FUTURE_IMPLEMENTATION_NOTES.md",
+ HERE/"src"/"Norm"/"docs"/"MAINTENANCE_VERIFICATION.md",
 ]
-credential_patterns = [
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
-    re.compile(r"\btskey-[A-Za-z0-9_-]{10,}"),
-    re.compile(r"\bghp_[A-Za-z0-9]{20,}"),
-    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"),
-    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"\bsk-[A-Za-z0-9]{24,}\b"),
-]
+old=re.compile(r"0\.53\.(?:[0-9]|1[0-5])|0\.52\.|0\.51\.")
+for p in docs:
+    assert not old.search(p.read_text(encoding="utf-8")),f"historical artifact in current-state doc: {p}"
 
-def scan_text(label: str, text: str) -> None:
-    for pattern in deployment_leak_patterns:
-        assert not pattern.search(text), f"deployment-specific topology material matched {pattern.pattern!r} in {label}"
-    for pattern in credential_patterns:
-        assert not pattern.search(text), f"credential-like material matched {pattern.pattern!r} in {label}"
-
-SCAN_EXCLUSIONS = {
-    HERE / "Publish-To-GitHub.ps1",
-    HERE / "tools" / "public_release_guard.py",
-    HERE / "tests" / "test_public_release.py",
-}
-
-for path in HERE.rglob("*"):
-    if not path.is_file() or path == SOURCE or path in SCAN_EXCLUSIONS:
-        continue
-    if path.name == "norm-imprint.local.json":
-        raise AssertionError("local imprint must not be part of public release")
-    if path.suffix.lower() in {".py", ".md", ".txt", ".json", ".ini", ".bat", ".ps1", ".gitignore", ".sha256"} or path.name == ".gitignore":
-        scan_text(str(path.relative_to(HERE)), path.read_text(encoding="utf-8", errors="ignore"))
-
-with zipfile.ZipFile(SOURCE, "r") as zf:
-    for name in zf.namelist():
-        if name.endswith("/"):
-            continue
-        if Path(name).suffix.lower() in {".py", ".md", ".txt", ".json", ".ini", ".bat", ".cmd", ".ps1"}:
-            scan_text(name, zf.read(name).decode("utf-8", errors="ignore"))
-
-example = (HERE / "norm-imprint.example.json").read_text(encoding="utf-8")
-assert "password" not in example.lower()
-assert "token" not in example.lower()
-assert "secret" not in example.lower()
-
-print("PASS: source SHA-256")
-print("PASS: no deployment-specific topology signatures")
-print("PASS: no private-key/token signatures")
-print("PASS: public imprint example contains no secret-like keys")
+release=(HERE/"src"/"Norm"/"docs"/"RELEASE_NOTES.md").read_text(encoding="utf-8")
+assert "## 0.53.16" in release
+assert not (HERE/"Publish-To-GitHub.ps1").exists()
+assert not any(HERE.glob("Norm-*.zip"))
+assert not (HERE/"Norm-Installer.exe").exists()
+example=json.loads((HERE/"norm-imprint.example.json").read_text(encoding="utf-8"))
+serialized=json.dumps(example).lower()
+assert '"password"' not in serialized and '"token"' not in serialized and '"secret"' not in serialized
+print("PASS public tree files",count)

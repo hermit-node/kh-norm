@@ -44,6 +44,10 @@ def load_path_settings(root: Path) -> dict[str, Path]:
             raise ValueError(f"settings.ini requires paths.{key}")
         result[key] = _setting_path(raw)
     documents = result["documents_root"]
+    state_raw = parser.get("paths", "state_root", fallback="state").strip() or "state"
+    state_path = Path(os.path.expandvars(os.path.expanduser(state_raw)))
+    state_root = state_path.resolve() if state_path.is_absolute() else (root / state_path).resolve()
+    result["state_root"] = state_root
     workspace_raw = parser.get("paths", "workspace_root", fallback="").strip()
     if workspace_raw:
         workspace_path = Path(os.path.expandvars(os.path.expanduser(workspace_raw)))

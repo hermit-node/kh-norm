@@ -100,6 +100,7 @@ def load_config(root: Path) -> dict[str, Any]:
         "{documents_root}": str(path_cfg["documents_root"]),
         "{workspace_root}": str(path_cfg["workspace_root"]),
         "{temp_root}": str(path_cfg["temp_root"]),
+        "{state_root}": str(path_cfg["state_root"]),
     }
     config = _expand_runtime_values(config, substitutions)
     config["_paths"] = {name: str(path) for name, path in path_cfg.items()}
@@ -138,7 +139,7 @@ def build_deletion_queue(root: Path) -> RedisDeletionQueue:
         port=int(dq.get("port", redis_cfg.get("port", 6379))),
         db=int(dq.get("db", 2)),
         stream=str(dq.get("stream", "norm:deletion:queue")),
-        trash_root=str(dq.get("trash_root", root / "state" / "deletion-trash")),
+        trash_root=str(dq.get("trash_root", load_path_settings(root)["state_root"] / "deletion-trash")),
         items_key=str(dq.get("items_key", "norm:trash:items")),
         batches_key=str(dq.get("batches_key", "norm:trash:batches")),
         cross_volume_move_max_bytes=int(dq.get("cross_volume_move_max_bytes", 268_435_456)),
@@ -246,14 +247,14 @@ def build_conversation_service(
     plugin_cfg = load_plugin_settings(root)
     workspace_root = path_cfg["workspace_root"]
     temp_root = path_cfg["temp_root"]
-    file_policy = load_file_access_policy(root)
+    file_policy = load_file_access_policy(root, capability="core")
     allowed_roots = sorted({str(p) for p in (*file_policy.read_roots, *file_policy.write_roots)})
     file_tools = None
     if bool(tools_cfg.get("enabled", False)):
         deletion_queue = build_deletion_queue(root)
         file_tools = FileToolExecutor(
             allowed_roots,
-            backup_root=str(tools_cfg.get("backup_root", root / "state" / "file-backups")),
+            backup_root=str(tools_cfg.get("backup_root", path_cfg["state_root"] / "file-backups")),
             audit_log=str(tools_cfg.get("audit_log", root / "logs" / "tool-audit.jsonl")),
             max_read_bytes=file_policy.read_processing_buffer_bytes,
             max_tool_return_bytes=file_policy.read_chunk_bytes,

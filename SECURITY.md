@@ -1,11 +1,11 @@
 # Security
 
-## Never commit
+Never commit local imprints, .env files, passwords, API/OAuth/Tailscale tokens, SSH private keys, private certificates, PostgreSQL dumps containing runtime/user state, logs, workspace content or full-state backups.
 
-Do not commit `.env` files, local imprints, passwords, API/OAuth/Tailscale tokens, SSH private keys, private CA keys, PostgreSQL dumps containing user/runtime state, logs, or full-state backup archives.
+The public tree contains topology-neutral source/configuration only. Runtime Redis/PostgreSQL data can contain sensitive tool results and user context and must remain local.
 
-## Public/private boundary
+The frozen WeasyPrint runtime is reproducible third-party binary material and is intentionally ignored by Git.
 
-The public tree contains topology-neutral source/configuration only. Deployment chronology and machine-specific engineering notes are intentionally excluded.
+Run this before publication:
 
-N1's validation cache is an execution-control mechanism, not a secret store. Tool results can contain sensitive data at runtime and therefore must remain in local Redis/PostgreSQL/runtime state rather than release artifacts.
+    python tools/public_release_guard.py --tree .

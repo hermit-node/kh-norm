@@ -337,8 +337,9 @@ def show_help() -> None:
     print("  /delete-files       Permanently purge reversible trash now")
     print("  /backup             Create a portable installer/source backup")
     print("  /backup full        Create a sensitive full backup with private state and PostgreSQL")
-    print("  /memory-condense    Replay-validate and compact a bounded batch of terminal task history")
-    print("  /memory-condense -full  Replay-validate and compact all terminal history, then full-prune covered raw history")
+    print("  /memory-condense    Compact/replay-validate only the recent memory window (default 14 days)")
+    print("  /memory-condense -deep  Run one bounded older-history compaction/validation pass without hierarchical merging")
+    print("  /memory-condense -full  Sweep full history: sample 12 per 200 dated rows, then merge neighboring rows conservatively")
     print("  /stop-all           Finish the current step, then stop Norm/Ollama")
     print("  /stop-all now       Emergency snapshot to temp\\recovery\\SOS.md, then force-stop Norm/Ollama")
     print("  /shutdown           Request Norm's graceful shutdown and close this console")
@@ -712,10 +713,15 @@ def main() -> int:
                 result = post_json(ep["restore_delete"], payload={"deletion_id": parts[1].strip()}, timeout=10)
                 print(f"Restored {len(result.get('restored') or [])}; conflicts {len(result.get('conflicts') or [])}; missing {len(result.get('missing') or [])}.")
                 continue
-            elif lowered in {"/memory-condense", "/memory-condense -full", "/memory-condense --full", "/memory-condense full"}:
-                full = lowered != "/memory-condense"
+            elif lowered in {
+                "/memory-condense",
+                "/memory-condense -deep", "/memory-condense --deep", "/memory-condense deep",
+                "/memory-condense -full", "/memory-condense --full", "/memory-condense full",
+            }:
+                deep = "deep" in lowered
+                full = "full" in lowered
                 try:
-                    result = post_json(ep["memory_condense"], payload={"full": full}, timeout=10)
+                    result = post_json(ep["memory_condense"], payload={"full": full, "deep": deep}, timeout=10)
                     if result.get("scheduled"):
                         print(f"Memory condensation scheduled in {result.get('mode')} mode; it will run inside the existing worker when idle (no new user task).")
                     else:

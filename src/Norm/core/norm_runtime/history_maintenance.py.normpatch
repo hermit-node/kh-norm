@@ -32,44 +32,11 @@ class DeepHistoryMaintainer:
         return {
             "type": "object",
             "properties": {
-                "outcome": {"type": "string", "maxLength": 3000},
-                "lessons": {"type": "string", "maxLength": 2600},
-                "future_note": {"type": "string", "maxLength": 1800},
+                "outcome": {"type": "string", "maxLength": 1800},
+                "lessons": {"type": "string", "maxLength": 1800},
+                "future_note": {"type": "string", "maxLength": 1200},
             },
             "required": ["outcome", "lessons", "future_note"],
-            "additionalProperties": False,
-        }
-
-    @staticmethod
-    def _full_merge_schema() -> dict:
-        item = {
-            "type": "object",
-            "properties": {
-                "title": {"type": "string", "maxLength": 600},
-                "original_request": {"type": "string", "maxLength": 1800},
-                "outcome": {"type": "string", "maxLength": 4200},
-                "lessons": {"type": "string", "maxLength": 3600},
-                "future_note": {"type": "string", "maxLength": 2200},
-                "source_primary_ids": {
-                    "type": "array", "minItems": 1, "maxItems": 6,
-                    "items": {"type": "string", "maxLength": 120},
-                },
-            },
-            "required": [
-                "title", "original_request", "outcome", "lessons",
-                "future_note", "source_primary_ids",
-            ],
-            "additionalProperties": False,
-        }
-        return {
-            "type": "object",
-            "properties": {
-                "records": {
-                    "type": "array", "minItems": 1, "maxItems": 6,
-                    "items": item,
-                }
-            },
-            "required": ["records"],
             "additionalProperties": False,
         }
 
@@ -100,24 +67,26 @@ class DeepHistoryMaintainer:
             request = self._normalized_request(item.get("original_request")) or f"task:{item['task_id']}"
             key = (day, request, str(item.get("task_kind") or "root"), str(item.get("parent_task_id") or ""), str(item.get("parent_step_id") or ""))
             groups.setdefault(key, []).append(item)
-        ordered = list(groups.values())
-        ordered.sort(
-            key=lambda group: max(
-                (
-                    item.get("started_at") or datetime.min.replace(tzinfo=timezone.utc)
-                    for item in group
-                ),
-                default=datetime.min.replace(tzinfo=timezone.utc),
-            ),
-            reverse=True,
-        )
-        return ordered
+        return list(groups.values())
 
     @staticmethod
-    def _batch_groups_by_rows(groups: list[list[dict]], max_rows: int) -> list[list[list[dict]]]:
-        """Split date-ordered compact-memory rows into fixed QA batches."""
-        limit = max(1, int(max_rows))
-        return [groups[index:index + limit] for index in range(0, len(groups), limit)]
+    def _batch_groups_by_source_tasks(groups: list[list[dict]], max_source_tasks: int) -> list[list[list[dict]]]:
+        """Pack chronological retry-groups into bounded source-task batches without splitting a group."""
+        limit = max(1, int(max_source_tasks))
+        batches: list[list[list[dict]]] = []
+        current: list[list[dict]] = []
+        current_size = 0
+        for group in groups:
+            group_size = max(1, len(group))
+            if current and current_size + group_size > limit:
+                batches.append(current)
+                current = []
+                current_size = 0
+            current.append(group)
+            current_size += group_size
+        if current:
+            batches.append(current)
+        return batches
 
     @staticmethod
     def _record_tokens(text: str) -> set[str]:
@@ -173,200 +142,25 @@ class DeepHistoryMaintainer:
             "outcome": str(record.get("outcome") or ""),
             "lessons": str(record.get("lessons") or ""),
             "future_note": str(record.get("future_note") or ""),
-            "source_task_ids": [str(v) for v in (record.get("source_task_ids") or [])],
             "task_kind": str(record.get("task_kind") or "root"),
             "parent_task_id": str(record.get("parent_task_id") or ""),
             "parent_step_id": str(record.get("parent_step_id") or ""),
             "task_depth": int(record.get("task_depth") or 0),
         }
 
-    @classmethod
-    def _full_merge_clusters(cls, records: list[dict], max_size: int = 6) -> list[list[dict]]:
-        """Return chronological neighboring windows for conservative hierarchical merge."""
-        cap = max(2, min(6, int(max_size)))
-        ordered = sorted(
-            records,
-            key=lambda record: (
-                str(record.get("task_date") or ""),
-                str(record.get("primary_task_id") or ""),
-            ),
-            reverse=True,
+    def _replay_context_from_records(self, record: dict, records: list[dict], limit: int = 5) -> list[dict]:
+        target_id = str(record.get("primary_task_id") or "")
+        related = self._relevant_newer_records(
+            [{
+                "title": record.get("title", ""),
+                "original_request": record.get("original_request", ""),
+                "status": record.get("status", ""),
+                "updated_at": datetime.now(timezone.utc),
+            }],
+            [r for r in records if str(r.get("primary_task_id") or "") != target_id],
+            limit=max(0, int(limit) - 1),
         )
-        return [ordered[index:index + cap] for index in range(0, len(ordered), cap)]
-
-    def _merge_compact_cluster(self, cluster: list[dict]) -> list[dict]:
-        if len(cluster) < 2:
-            return list(cluster)
-        source_by_id = {str(r["primary_task_id"]): r for r in cluster}
-        payload = []
-        for record in cluster:
-            item = self._history_view_record(record)
-            item["source_task_ids"] = list(record.get("source_task_ids") or [])
-            payload.append(item)
-        prompt = (
-            "You are performing FULL Norm memory condensation on up to six chronologically neighboring compact memories. "
-            "Do not assume the neighbors belong together. Return between 1 and the original number of compact records, merging only genuinely related/redundant subsets. Do NOT force a merge: if meaning would be lost, leave records separate. "
-            "Every input task_id must appear exactly once across source_primary_ids in the outputs. "
-            "Merge only genuine semantic redundancy or successive stages of the same work. "
-            "Each surviving record must remain succinct but preserve enough meaning to reconstruct: the task/request; meaningful steps or full itinerary; tools actually used; final results/state and artifact pointers; efficiency/what worked or failed; reusable lessons; and notes for improvement next time. "
-            "Prefer the newest non-superseded state when facts changed, while retaining older chronology only when it explains evolution or prevents repeating a mistake. "
-            "Never invent facts. Return only the structured JSON.\n\nCOMPACT MEMORIES:\n"
-            + json.dumps(payload, ensure_ascii=False, default=str)
-        )
-        raw = self.client.generate(
-            prompt,
-            think=False,
-            temperature=0.0,
-            num_predict=6500,
-            response_format=self._full_merge_schema(),
-        )
-        parsed = self.client.parse_json(raw)
-        proposals = list(parsed.get("records") or [])
-        if not proposals or len(proposals) > len(cluster):
-            raise ValueError("full merge returned invalid record count")
-        seen: list[str] = []
-        for proposal in proposals:
-            ids = [str(v) for v in (proposal.get("source_primary_ids") or [])]
-            if not ids or len(ids) != len(set(ids)):
-                raise ValueError("full merge returned blank/duplicate source_primary_ids")
-            if any(source_id not in source_by_id for source_id in ids):
-                raise ValueError("full merge referenced unknown source memory")
-            seen.extend(ids)
-        expected = set(source_by_id)
-        if len(seen) != len(set(seen)) or set(seen) != expected:
-            raise ValueError("full merge did not partition source memories exactly once")
-
-        # If the model found no safe reduction, preserve the originals exactly.
-        if len(proposals) == len(cluster) and all(len(p["source_primary_ids"]) == 1 for p in proposals):
-            return list(cluster)
-
-        merged: list[dict] = []
-        for proposal in proposals:
-            ids = [str(v) for v in proposal["source_primary_ids"]]
-            subset = [source_by_id[source_id] for source_id in ids]
-            if len(subset) == 1:
-                merged.append(subset[0])
-                continue
-            representative = max(subset, key=lambda r: str(r.get("task_date") or ""))
-            all_source_ids: list[str] = []
-            for item in subset:
-                all_source_ids.append(str(item["primary_task_id"]))
-                all_source_ids.extend(str(v) for v in (item.get("source_task_ids") or []))
-            same_parent = {str(item.get("parent_task_id") or "") for item in subset}
-            same_kind = {str(item.get("task_kind") or "root") for item in subset}
-            merged.append({
-                "primary_task_id": str(representative["primary_task_id"]),
-                "task_date": representative["task_date"],
-                "title": str(proposal["title"]).strip(),
-                "status": str(representative.get("status") or "completed"),
-                "original_request": str(proposal["original_request"]).strip(),
-                "outcome": str(proposal["outcome"]).strip(),
-                "lessons": str(proposal["lessons"]).strip(),
-                "future_note": str(proposal["future_note"]).strip(),
-                "source_task_ids": list(dict.fromkeys(all_source_ids)),
-                "task_kind": next(iter(same_kind)) if len(same_kind) == 1 else "root",
-                "parent_task_id": next(iter(same_parent)) if len(same_parent) == 1 else "",
-                "parent_step_id": str(representative.get("parent_step_id") or "") if len(same_parent) == 1 else "",
-                "task_depth": int(representative.get("task_depth") or 0) if len(same_parent) == 1 else 0,
-                "_merged_source_primary_ids": ids,
-            })
-        return merged
-
-    def _replay_merged_constituent(self, merged: dict, target: dict) -> tuple[bool, dict]:
-        selector = {
-            "task_id": str(target["primary_task_id"]),
-            "date": str(target.get("task_date") or ""),
-        }
-        prompt = (
-            "Reconstruct the selected historical task using ONLY the merged compact memory below. "
-            "The target selector identifies which constituent to reconstruct; it is not additional task context. "
-            "Do not use neighboring memories, raw messages, raw task steps, prior replay output, or tools. "
-            "Recover the request, meaningful steps/itinerary, tools used, results/state, efficiency lessons, and improvement notes. "
-            "Return the reconstruction only.\n\nTARGET SELECTOR:\n"
-            + json.dumps(selector, ensure_ascii=False)
-            + "\n\nMERGED COMPACT MEMORY:\n"
-            + json.dumps(self._history_view_record(merged), ensure_ascii=False)
-        )
-        replay = self.client.generate_complete_text(
-            prompt, think=False, temperature=0.0, num_predict=4800, max_segments=4
-        ).strip()
-        if not replay:
-            return False, {"issues": ["blank merged reconstruction"]}
-        verify_prompt = (
-            "Grade whether the reconstruction proves the merged compact memory still preserves this constituent task. "
-            "prior_task_identified requires the selected task ID/date. request_understood requires the material task and meaningful steps/itinerary. "
-            "lessons_used requires tools/efficiency/reusable lessons and improvement guidance when present. "
-            "sufficient_context is true only if the constituent can be usefully reconstructed without the original separate memory. "
-            "Return only structured JSON.\n\nAUTHORITATIVE CONSTITUENT MEMORY:\n"
-            + json.dumps(self._history_view_record(target), ensure_ascii=False)
-            + "\n\nRECONSTRUCTION:\n" + replay
-        )
-        raw = self.client.generate(
-            verify_prompt,
-            think=False,
-            temperature=0.0,
-            num_predict=900,
-            response_format=self._replay_schema(),
-        )
-        verdict = self.client.parse_json(raw)
-        deterministic_id = (
-            str(target["primary_task_id"]) in replay
-            and str(target.get("task_date") or "") in replay
-        )
-        passed = (
-            deterministic_id
-            and all(bool(verdict.get(k)) for k in (
-                "prior_task_identified", "request_understood",
-                "lessons_used", "sufficient_context",
-            ))
-            and not verdict.get("issues")
-        )
-        return passed, verdict
-
-    def _full_merge_records(self, records: list[dict], max_size: int = 6) -> tuple[list[dict], dict]:
-        final_records: list[dict] = []
-        attempts = merged_groups = fallback_groups = validations = 0
-        for cluster in self._full_merge_clusters(records, max_size=max_size):
-            if len(cluster) < 2:
-                final_records.extend(cluster)
-                continue
-            attempts += 1
-            try:
-                proposed = self._merge_compact_cluster(cluster)
-            except Exception:
-                logging.exception("Full-memory merge proposal failed; preserving original compact memories")
-                final_records.extend(cluster)
-                fallback_groups += 1
-                continue
-            source_by_id = {str(r["primary_task_id"]): r for r in cluster}
-            for candidate in proposed:
-                merged_ids = [str(v) for v in (candidate.get("_merged_source_primary_ids") or [])]
-                if len(merged_ids) < 2:
-                    final_records.append(candidate)
-                    continue
-                subset = [source_by_id[source_id] for source_id in merged_ids]
-                group_passed = True
-                for target in subset:
-                    validations += 1
-                    passed, _verdict = self._replay_merged_constituent(candidate, target)
-                    if not passed:
-                        group_passed = False
-                        break
-                if group_passed:
-                    candidate.pop("_merged_source_primary_ids", None)
-                    final_records.append(candidate)
-                    merged_groups += 1
-                else:
-                    final_records.extend(subset)
-                    fallback_groups += 1
-        return final_records, {
-            "merge_attempt_clusters": attempts,
-            "merged_groups": merged_groups,
-            "merge_fallback_groups": fallback_groups,
-            "merged_constituent_validations": validations,
-            "records_before_merge": len(records),
-            "records_after_merge": len(final_records),
-        }
+        return [self._history_view_record(record)] + [self._history_view_record(r) for r in related]
 
     def _summarize_group(self, group: list[dict], *, newer_context: list[dict] | None = None) -> dict:
         primary = self._choose_primary(group)
@@ -389,9 +183,9 @@ class DeepHistoryMaintainer:
         newer = list(newer_context or [])
         prompt = (
             "Compress this terminal Norm task history into one durable reusable record. Repeated attempts of the same request may be present. "
-            "Outcome: preserve the task/request, the meaningful execution steps or itinerary needed to reconstruct the work, final state/results, and important artifact/data pointers. "
-            "Lessons: preserve tools actually used, efficiency/what worked or failed, reusable fixes, constraints, and useful technical lessons. "
-            "Future_note: preserve concise notes for improvement: what to do differently/better next time and how to reuse prior work instead of repeating it. "
+            "Outcome: say what the user wanted, whether the final attempt succeeded/failed/cancelled, and preserve important artifact/data results. "
+            "Lessons: preserve only reusable fixes, tweaks, constraints, or new useful data learned from the attempts. "
+            "Future_note: state what we should tell ourselves if the same kind of task is asked again, including how to reuse prior work instead of repeating it. "
             "When RELEVANT NEWER COMPACT HISTORY is supplied, treat newer durable state as authoritative only when it materially addresses the same fact, behavior, constraint, or lesson. Remove or correct older guidance that newer evidence supersedes or proves wrong. Keep an older fact only when it remains useful as clearly historical context. Do not let weakly related newer records overwrite unrelated history. "
             "Do not preserve routine chatter, verifier narration, transient smoke details, credentials, or redundant failures that taught nothing. Consolidation must delete semantic redundancy: if the same state appears multiple times, preserve/reference the initial authoritative instance and represent later repetitions only as that state happening again with a timezone-aware timestamp. Default timestamps to America/New_York when unspecified. "
             "Return only the structured JSON required by the schema.\n\nTASK ATTEMPTS:\n"
@@ -428,71 +222,17 @@ class DeepHistoryMaintainer:
                 last_error = exc
         raise RuntimeError(f"task-history compression failed after 3 attempts: {last_error}")
 
-    def _repair_compact_record(self, group: list[dict], record: dict, verdict: dict, replay: str) -> dict:
-        primary = self._choose_primary(group)
-        payload = []
-        for item in group:
-            payload.append({
-                "task_id": item["task_id"],
-                "status": item["status"],
-                "title": item["title"],
-                "request": item.get("original_request", ""),
-                "task_kind": item.get("task_kind", "root"),
-                "parent_task_id": item.get("parent_task_id", ""),
-                "parent_step_id": item.get("parent_step_id", ""),
-                "task_depth": item.get("task_depth", 0),
-                "terminal_summary": item.get("terminal_summary", "")[:5000],
-                "effectiveness_note": item.get("effectiveness_note", "")[:1200],
-                "steps": item.get("steps", [])[:20],
-                "evidence": item.get("evidence", [])[:12],
-            })
-        prompt = (
-            "Repair ONE compact Norm history record that failed isolated reconstruction validation. "
-            "Use only this task's authoritative attempts plus the failed compact record and validator issues. "
-            "Do not use neighboring memories or unrelated history. Preserve enough concrete state, constraints, results, lessons, and next-step guidance that a future model can reconstruct the work from the repaired compact record alone. "
-            "Do not pad with transient chatter. Return only the structured archive JSON.\n\n"
-            "AUTHORITATIVE TASK ATTEMPTS:\n" + json.dumps(payload, ensure_ascii=False, default=str)
-            + "\n\nFAILED COMPACT RECORD:\n" + json.dumps(self._history_view_record(record), ensure_ascii=False)
-            + "\n\nVALIDATION ISSUES:\n" + json.dumps(verdict.get("issues") or [], ensure_ascii=False)
-            + "\n\nFAILED RECONSTRUCTION EXCERPT:\n" + str(replay or "")[:4000]
+    def _replay_one(self, record: dict, *, retrieved_override: list[dict] | None = None) -> tuple[bool, dict, str]:
+        retrieved = (
+            list(retrieved_override)
+            if retrieved_override is not None
+            else self.durable.relevant_task_history(record["original_request"], limit=5, include_unvalidated=True)
         )
-        raw = self.client.generate(
-            prompt, think=False, temperature=0.0, num_predict=2400, response_format=self._archive_schema()
-        )
-        parsed = self.client.parse_json(raw)
-        if not all(str(parsed.get(k) or "").strip() for k in ("outcome", "lessons", "future_note")):
-            raise ValueError("repaired archive summary contained blank required fields")
-        return {
-            "primary_task_id": primary["task_id"],
-            "task_date": primary["started_at"].date(),
-            "title": primary["title"],
-            "status": primary["status"],
-            "original_request": primary.get("original_request") or primary["title"],
-            "outcome": str(parsed["outcome"]).strip(),
-            "lessons": str(parsed["lessons"]).strip(),
-            "future_note": str(parsed["future_note"]).strip(),
-            "source_task_ids": list(dict.fromkeys(
-                source_id
-                for item in group
-                for source_id in ([str(item["task_id"])] + [str(v) for v in (item.get("source_task_ids") or [])])
-            )),
-            "task_kind": str(primary.get("task_kind") or "root"),
-            "parent_task_id": str(primary.get("parent_task_id") or ""),
-            "parent_step_id": str(primary.get("parent_step_id") or ""),
-            "task_depth": int(primary.get("task_depth") or 0),
-        }
-
-    def _replay_one(self, record: dict) -> tuple[bool, dict, str]:
-        # Replay validation is deliberately isolated: one compact record in,
-        # one reconstruction out. Never let neighboring memories or a prior
-        # replay help the sampled record pass.
-        retrieved = [self._history_view_record(record)]
         prompt = (
-            "Reconstruct what Norm had been working on and how it should be handled now using ONLY the single compact memory below. "
-            "Do not use raw messages, raw task steps, neighboring memories, prior replay output, or tools. "
-            "Recover the request, important constraints, prior result/state, reusable lessons, and next-step guidance from this memory alone. "
-            "Explicitly cite its task ID and date, and preserve parent/child lineage when present. Do not claim you actually executed the task. "
-            "Return the reconstruction only.\n\nSINGLE COMPACT MEMORY:\n" + json.dumps(retrieved[0], ensure_ascii=False)
+            "You are replaying an old user request using ONLY the compact task-history records below. Do not use raw messages, raw task steps, or tools. "
+            "Explain how Norm should handle the request now, explicitly cite the most relevant prior task by task ID and date, reuse its lessons, preserve important constraints, and preserve parent/child lineage when the compact record is a child task. "
+            "Do not claim you actually executed the task.\n\nOLD USER REQUEST:\n" + record["original_request"]
+            + "\n\nRETRIEVED COMPACT HISTORY:\n" + json.dumps(retrieved, ensure_ascii=False)
         )
         replay = self.client.generate_complete_text(
             prompt, think=False, temperature=0.0, num_predict=4800, max_segments=4
@@ -745,7 +485,7 @@ class DeepHistoryMaintainer:
                         "recovery_state_cleanup",
                         "Dangling recovery task was summarized but replay validation failed; raw task state was preserved.",
                         task_id=root,
-                        details={"status": "replay_failed", "verdict": verdict},
+                        details={"status": "replay_failed", "verdict": verdict, "replay": replay[:1600]},
                     )
                     continue
                 self.durable.mark_task_history_validated(primary_ids)
@@ -778,15 +518,7 @@ class DeepHistoryMaintainer:
         latest = self.durable.latest_background_snapshot() if incremental else None
         base_summary = str((latest or {}).get("summary") or "")
         source_cutoff = (latest or {}).get("source_through")
-        if incremental:
-            regular_window_days = max(1, int(self.config.get("regular_memory_window_days", 14)))
-            recent_cutoff = datetime.now(timezone.utc) - timedelta(days=regular_window_days)
-            delta_all = [
-                r for r in all_records
-                if r["at"] >= recent_cutoff and (source_cutoff is None or r["at"] > source_cutoff)
-            ]
-        else:
-            delta_all = all_records
+        delta_all = [r for r in all_records if source_cutoff is None or r["at"] > source_cutoff] if incremental else all_records
         if incremental:
             ignored_markers = ("[manual_background_condensation]", "[deep_history_consolidation]", "[background_memory_consolidation]")
             records = [r for r in delta_all if not (r.get("source") == "runtime_maintenance" and any(marker in r.get("text", "") for marker in ignored_markers))]
@@ -865,26 +597,25 @@ class DeepHistoryMaintainer:
     def _rebuild_background_snapshot(self) -> str:
         return self.rebuild_background_snapshot(incremental=False)
 
-    def run(self, *, force: bool = False, full: bool = False, recent_only: bool = False) -> dict | None:
+    def run(self, *, force: bool = False, full: bool = False) -> dict | None:
         retention_days = max(1, int(self.config.get("deep_history_retention_days", 30)))
+        interval_days = max(1, int(self.config.get("deep_history_interval_days", 7)))
         max_tasks = max(1, int(self.config.get("deep_history_max_tasks_per_pass", 500)))
-        full_batch_rows = max(1, int(self.config.get("deep_history_full_batch_rows", 200)))
+        full_batch_source_tasks = max(1, int(self.config.get("deep_history_full_batch_source_tasks", 200)))
         full_samples_per_batch = max(1, int(self.config.get("deep_history_full_samples_per_batch", 12)))
-        full_merge_max_records = max(2, min(6, int(self.config.get("deep_history_full_merge_max_records", 6))))
-        deep_sampled = bool(not full and not recent_only)
+        if not force and not self.durable.needs_deep_history_consolidation(retention_days, interval_days):
+            return None
         if self.queue is not None:
             stats = self.queue.stats()
             if stats.get("stream_length", 0) or stats.get("pending_count", 0):
                 return None
         if self.drain_event is not None and self.drain_event.is_set():
             return None
-        regular_window_days = max(1, int(self.config.get("regular_memory_window_days", 14)))
         raw_candidates = self.durable.deep_history_candidates(
             retention_days,
             max_tasks,
-            all_history=bool(full),
+            all_history=bool(force or full),
             unbounded=bool(full),
-            recent_days=regular_window_days if recent_only and not full else None,
         )
         archived_candidates = (
             self.durable.task_history_archive_candidates()
@@ -905,38 +636,24 @@ class DeepHistoryMaintainer:
         if not candidates:
             return None
 
-        groups = self._group_candidates(candidates)
-
         backup_dir = str(self.config.get("deep_history_backup_dir") or (self.runtime_root.parent / "Norm-backups" / "history-maintenance"))
         backup_path = self.durable.create_sql_backup(backup_dir)
         records: list[dict] = []
         primary_ids: list[str] = []
         replay_results: list[dict] = []
-        merge_stats = {
-            "merge_attempt_clusters": 0,
-            "merged_groups": 0,
-            "merge_fallback_groups": 0,
-            "merged_constituent_validations": 0,
-            "records_before_merge": 0,
-            "records_after_merge": 0,
-        }
         try:
+            groups = self._group_candidates(candidates)
             validation_batches = (
-                self._batch_groups_by_rows(groups, full_batch_rows)
-                if full or deep_sampled
+                self._batch_groups_by_source_tasks(groups, full_batch_source_tasks)
+                if full
                 else [groups]
             )
-            validation_policy = (
-                "full_sampled_batches_plus_hierarchical_merge"
-                if full
-                else "deep_sampled_batches"
-                if deep_sampled
-                else "recent_every_record"
-            )
+            validation_policy = "full_12_per_200_source_tasks" if full else "every_record"
 
             if full:
-                # Full mode walks the whole ordered archive in validation batches.
-                # Batch size controls QA sampling density, not how much of the archive is processed.
+                # Build the refreshed archive newest -> oldest entirely in memory.
+                # Older records can therefore reconcile against already-refreshed newer state,
+                # while trusted PostgreSQL history remains untouched until every batch passes.
                 for batch_index, batch_groups in enumerate(validation_batches, start=1):
                     batch_records: list[dict] = []
                     for group in batch_groups:
@@ -947,32 +664,16 @@ class DeepHistoryMaintainer:
 
                     sampled_records = self._sample_records(batch_records, full_samples_per_batch)
                     batch_replays: list[dict] = []
-                    groups_by_primary = {
-                        str(self._choose_primary(group)["task_id"]): group
-                        for group in batch_groups
-                    }
-                    for sampled in sampled_records:
-                        record = sampled
-                        passed, verdict, replay = self._replay_one(record)
-                        repaired = False
-                        if not passed:
-                            group = groups_by_primary.get(str(record["primary_task_id"]))
-                            if group is not None:
-                                repaired_record = self._repair_compact_record(group, record, verdict, replay)
-                                target_id = str(record["primary_task_id"])
-                                for collection in (batch_records, records):
-                                    for idx, existing in enumerate(collection):
-                                        if str(existing.get("primary_task_id") or "") == target_id:
-                                            collection[idx] = repaired_record
-                                            break
-                                record = repaired_record
-                                repaired = True
-                                passed, verdict, replay = self._replay_one(record)
+                    for record in sampled_records:
+                        passed, verdict, replay = self._replay_one(
+                            record,
+                            retrieved_override=self._replay_context_from_records(record, records, limit=5),
+                        )
                         result = {
                             "task_id": record["primary_task_id"],
                             "passed": passed,
-                            "repaired": repaired,
                             "verdict": verdict,
+                            "replay": replay[:2000],
                             "batch": batch_index,
                         }
                         batch_replays.append(result)
@@ -1000,90 +701,18 @@ class DeepHistoryMaintainer:
                             "replays": batch_replays,
                         }
 
-                records, merge_stats = self._full_merge_records(
-                    records, max_size=full_merge_max_records
-                )
-                primary_ids = self.durable.upsert_task_history(records, validated=False)
-            elif deep_sampled:
-                for batch_index, batch_groups in enumerate(validation_batches, start=1):
-                    batch_records: list[dict] = []
-                    for group in batch_groups:
-                        record = self._summarize_group(group)
-                        batch_records.append(record)
-                        records.append(record)
-
-                    sampled_records = self._sample_records(batch_records, full_samples_per_batch)
-                    batch_replays: list[dict] = []
-                    groups_by_primary = {
-                        str(self._choose_primary(group)["task_id"]): group
-                        for group in batch_groups
-                    }
-                    for sampled in sampled_records:
-                        record = sampled
-                        passed, verdict, replay = self._replay_one(record)
-                        repaired = False
-                        if not passed:
-                            group = groups_by_primary.get(str(record["primary_task_id"]))
-                            if group is not None:
-                                repaired_record = self._repair_compact_record(group, record, verdict, replay)
-                                target_id = str(record["primary_task_id"])
-                                for collection in (batch_records, records):
-                                    for idx, existing in enumerate(collection):
-                                        if str(existing.get("primary_task_id") or "") == target_id:
-                                            collection[idx] = repaired_record
-                                            break
-                                record = repaired_record
-                                repaired = True
-                                passed, verdict, replay = self._replay_one(record)
-                        result = {
-                            "task_id": record["primary_task_id"],
-                            "passed": passed,
-                            "repaired": repaired,
-                            "verdict": verdict,
-                            "batch": batch_index,
-                        }
-                        batch_replays.append(result)
-                        replay_results.append(result)
-
-                    if not batch_replays or not all(item["passed"] for item in batch_replays):
-                        self.durable.record_maintenance_note(
-                            "deep_history_consolidation",
-                            "Deep compact-history batch failed sampled replay validation; raw history was preserved and SQL backup retained.",
-                            details={
-                                "status": "replay_failed",
-                                "backup": backup_path,
-                                "validation_policy": validation_policy,
-                                "failed_batch": batch_index,
-                                "validation_batches": len(validation_batches),
-                                "replays": batch_replays,
-                            },
-                        )
-                        return {
-                            "status": "replay_failed",
-                            "backup": backup_path,
-                            "validation_policy": validation_policy,
-                            "failed_batch": batch_index,
-                            "validation_batches": len(validation_batches),
-                            "replays": batch_replays,
-                        }
                 primary_ids = self.durable.upsert_task_history(records, validated=False)
             else:
                 records = [self._summarize_group(group) for group in groups]
+                primary_ids = self.durable.upsert_task_history(records, validated=False)
                 batch_replays: list[dict] = []
-                for index, record in enumerate(list(records)):
+                for record in records:
                     passed, verdict, replay = self._replay_one(record)
-                    repaired = False
-                    if not passed:
-                        repaired_record = self._repair_compact_record(groups[index], record, verdict, replay)
-                        records[index] = repaired_record
-                        record = repaired_record
-                        repaired = True
-                        passed, verdict, replay = self._replay_one(record)
                     result = {
                         "task_id": record["primary_task_id"],
                         "passed": passed,
-                        "repaired": repaired,
                         "verdict": verdict,
+                        "replay": replay[:2000],
                         "batch": 1,
                     }
                     batch_replays.append(result)
@@ -1109,7 +738,6 @@ class DeepHistoryMaintainer:
                         "validation_batches": 1,
                         "replays": batch_replays,
                     }
-                primary_ids = self.durable.upsert_task_history(records, validated=False)
 
             self.durable.mark_task_history_validated(primary_ids)
             raw_task_ids = [str(item["task_id"]) for item in raw_candidates]
@@ -1123,18 +751,10 @@ class DeepHistoryMaintainer:
                     if str(item.get("task_id") or "") not in refreshed_primary_ids
                 ]
                 compact_rows_replaced = self.durable.delete_task_history_rows(obsolete_compact_ids)
-            if recent_only and not full:
-                conversation = {
-                    "messages_deleted": 0,
-                    "thread_summaries_deleted": 0,
-                    "memory_links_preserved": 0,
-                }
-                superseded_deleted = 0
-            else:
-                conversation = self.durable.prune_covered_conversation_history(
-                    retention_days, all_history=bool(full)
-                )
-                superseded_deleted = self.durable.delete_superseded_memories()
+            conversation = self.durable.prune_covered_conversation_history(
+                retention_days, all_history=bool(full)
+            )
+            superseded_deleted = self.durable.delete_superseded_memories()
             # Validated task_history rows are the durable long-term compact archive.
             # Do not collapse the growing archive into one bounded background snapshot:
             # prompt-size limits belong at retrieval/injection time, not durable storage time.
@@ -1147,9 +767,6 @@ class DeepHistoryMaintainer:
                 "replay_samples_passed": len(replay_results),
                 "compact_records_in_pass": len(records),
                 "compact_rows_replaced": compact_rows_replaced,
-                "recent_only": bool(recent_only and not full),
-                "regular_memory_window_days": regular_window_days if recent_only and not full else None,
-                **merge_stats,
                 "messages_deleted": conversation["messages_deleted"],
                 "thread_summaries_deleted": conversation["thread_summaries_deleted"],
                 "memory_links_preserved": conversation.get("memory_links_preserved", 0),

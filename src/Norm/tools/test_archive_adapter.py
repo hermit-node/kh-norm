@@ -21,7 +21,7 @@ def main() -> int:
         root = Path(tmp)
         folder = root / "folder"
         folder.mkdir()
-        (folder / "a.txt").write_text("hello\n", encoding="utf-8")
+        (folder / "a.txt").write_bytes(b"hello\n")
         (folder / "sub").mkdir()
         (folder / "sub" / "b.bin").write_bytes(b"abc123" * 1000)
         archive = root / "sample.zip"
@@ -46,7 +46,7 @@ def main() -> int:
         assert comparison["content_identical"] is True
         assert comparison["sha_files_checked"] == 2
 
-        (folder / "a.txt").write_text("HELLO\n", encoding="utf-8")
+        (folder / "a.txt").write_bytes(b"HELLO\n")
         mismatch = compare_archive_to_directory(archive, folder)
         assert mismatch["tree_size_match"] is True
         assert mismatch["content_identical"] is False

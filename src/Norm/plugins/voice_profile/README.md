@@ -46,3 +46,5 @@ Stored profile artifacts:
 Version 0.3.0 adds native schema-2 packaging, current FileAccessPolicy hard-locking,
 vision_parse source-identity verification, transcription-only ingestion, and active-profile
 conversation integration.
+
+Corpus reads use the shared file-access policy and can be extended with `[file_access_overrides] voice_profile.read_add`; profile state itself remains under the internal `state_root`.

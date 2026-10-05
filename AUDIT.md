@@ -1,13 +1,21 @@
-# Publication audit — Norm 0.53.14 / Installer 1.6.6
+# Publication audit - Norm 0.53.16 / Installer 1.6.7
 
-Public bundle generated from the 0.53.14 checkpoint package.
+This bundle was generated from the verified 0.53.16 release source as a GitHub-oriented source tree.
 
-Publication-specific changes:
+Publication boundary:
 
-- replaced private deployment chronology in `src/Norm/docs/DEVELOPMENT_NOTES.md` with a public boundary note;
-- removed a machine-specific Ollama model-store fallback from public source in favor of `OLLAMA_MODELS`/explicit configuration;
-- strengthened `.gitignore` for local secrets, SSH material, runtime state, logs, workspace, and local imprints;
-- retained generic/example topology only;
-- generated a fresh public portable-source ZIP and companion SHA-256.
+- retained runtime source, docs, tests, plugin source/manifests, installer source, generic config and bundled 7-Zip;
+- excluded generated installer executables, generated release/source ZIPs, caches/build output, runtime state/logs/workspace/temp, SSH material, local imprints and secrets;
+- excluded src/Norm/tools/weasyprint/runtime from Git history while retaining upstream license/source metadata and a SHA-verified fetch helper;
+- retained RELEASE_NOTES.md as the historical ledger;
+- retained current-state/current-contract/current-backlog/current-evidence docs without old-version chronology;
+- intentionally did not restore Publish-To-GitHub.ps1.
 
-Portable source SHA-256: `b856a9a3ce62956aa2661278391d2fec4bc51671e1b46d00e2fa53659a18186e`
+Validation before packaging:
+
+- private deployment/token literal scan: PASS;
+- public release guard: PASS;
+- Python syntax scan: PASS (105 files);
+- public-boundary regression: PASS;
+- selected maintenance/archive/N1 regressions: PASS;
+- pre-audit public tree files scanned: 163.

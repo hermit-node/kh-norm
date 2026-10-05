@@ -26,6 +26,7 @@ from .plugin_manager import PluginManager
 from .plugin_identity import verify_identity
 from .task_storage import TaskStorageLimitReached, TaskStorageManager
 from .archive_adapter import archive_manifest, compare_archive_to_directory, hash_archive_member, looks_like_archive, read_archive_member
+from .file_access_policy import authorize_path
 
 
 class StagedWriteError(PermissionError):
@@ -431,15 +432,7 @@ class FileToolExecutor:
                 primary_status = self._storage_context_for_call.get("primary") or {}
                 if primary_status.get("responsive") is False:
                     raise ConnectionError(primary_status.get("error") or "ca8d storage is unresponsive")
-        resolved = candidate.resolve(strict=False)
-        if not any(resolved == root or resolved.is_relative_to(root) for root in roots):
-            if hardlock:
-                raise PermissionError(
-                    f"HARDLOCKED out of directory for {access}: {resolved}. "
-                    "Do not retry this filesystem operation through another Norm Python/native/plugin file capability."
-                )
-            raise PermissionError(f"path is outside allowed {access} roots: {resolved}")
-        return resolved
+        return authorize_path(candidate, roots, access=access, hardlock=hardlock)
 
     def _run_command(self, arguments: dict[str, Any]) -> dict[str, Any]:
         if not self.shell_enabled:

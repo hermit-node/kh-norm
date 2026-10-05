@@ -291,3 +291,4 @@ def test_environment_connections(data: dict[str, Any], secrets: dict[str, str], 
     status, detail = _postgres_probe(host("postgres_host"), int(network["postgres_port"]), str(pg["user"]), str(secrets.get("NORM_POSTGRES_PASSWORD", "")), str(pg["database"]), python_candidates)
     results.append(("PostgreSQL", status, detail))
     return results
+
