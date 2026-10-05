@@ -255,6 +255,7 @@ def _full_backup(cfg: configparser.ConfigParser, *, label: str, validate_only: b
                 "documents_root": str(paths["documents_root"]),
                 "workspace_root": str(workspace_root),
                 "temp_root": str(temp_root),
+                "state_root": str(paths["state_root"]),
                 "plugin_root": str(plugins["plugin_root"]),
                 "ssh_root": str(ssh.get("root") or (ROOT / ".ssh")),
             },
@@ -295,7 +296,7 @@ def _full_backup(cfg: configparser.ConfigParser, *, label: str, validate_only: b
                 ("plugins", plugins["plugin_root"], set()),
                 (".ssh", Path(ssh.get("root") or (ROOT / ".ssh")), set()),
                 ("logs", ROOT / "logs", set()),
-                ("state", ROOT / "state", {"file-backups", "deletion-trash"}),
+                ("state", paths["state_root"], {"file-backups", "deletion-trash"}),
             ):
                 f, b = add_tree(zf, Path(folder), f"backup-state/runtime-persistent/{folder_name}", extra_excludes)
                 p_files += f

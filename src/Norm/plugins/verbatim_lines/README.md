@@ -15,3 +15,4 @@ This capability is intentionally low-level. Callers remain responsible for targe
 ## Upgrade compatibility
 
 The maintained private CLI is `src/_cli.py`. This package also includes a root `_cli.py` shim because older frozen Norm executables and older `settings.ini` files may still resolve `plugins\verbatim_lines\_cli.py` during an in-place upgrade. The shim delegates directly to the maintained schema-2 CLI; it is not a second implementation and is intentionally outside the `src/` identity hash. New runtime path loading accepts both locations.
+

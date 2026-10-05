@@ -321,14 +321,15 @@ class PromptWorker:
     def is_idle(self) -> bool:
         return self._idle.is_set()
 
-    def request_memory_condense(self, full: bool = False) -> dict:
-        """Schedule replay-validated deep-history condensation without creating a user task."""
+    def request_memory_condense(self, full: bool = False, deep: bool = False) -> dict:
+        """Schedule recent, deep, or full condensation without creating a user task."""
         if not self.durable:
             return {"status": "unavailable", "scheduled": False, "reason": "durable store unavailable"}
-        requested = "deep-full" if bool(full) else "deep"
+        requested = "full" if bool(full) else "deep" if bool(deep) else "regular"
+        priority = {"regular": 0, "deep": 1, "full": 2}
         with self._state_lock:
             current = self._manual_memory_condense_mode
-            if current != "deep-full":
+            if not current or priority.get(requested, 0) >= priority.get(current, 0):
                 self._manual_memory_condense_mode = requested
             scheduled = self._manual_memory_condense_mode
         return {
@@ -346,29 +347,41 @@ class PromptWorker:
                 return False
             self._manual_memory_condense_mode = ""
         self._idle.clear()
-        memory_cfg = self._runtime_config().get("memory", {})
-        full = mode == "deep-full"
+        memory_cfg = self._fresh_memory_config()
+        full = mode == "full"
+        deep = mode == "deep"
+        recent_only = mode == "regular"
         try:
             maintainer = DeepHistoryMaintainer(
                 self.durable, self.client, runtime_root=self._runtime_root(), config=memory_cfg,
                 queue=self.queue, drain_event=self._drain,
             )
-            recovery_cleanup = maintainer.cleanup_recovery_state()
-            result = maintainer.run(force=True, full=full)
+            recovery_cleanup = (
+                maintainer.cleanup_recovery_state()
+                if full or deep
+                else {"skipped": "regular_recent_only"}
+            )
+            result = maintainer.run(force=True, full=full, recent_only=recent_only)
             if result is None:
                 result = {"status": "success", "work": "no_eligible_history"}
             details = {
                 "status": str(result.get("status") or "success"),
                 "mode": mode,
-                "deep_history": result,
+                "condensation": result,
                 "recovery_cleanup": recovery_cleanup,
             }
             result_status = str(result.get("status") or "success")
             if result_status in {"success", "already_completed_before_resume"}:
-                note = "[manual_background_condensation] Manual replay-validated deep-history condensation completed."
+                note = (
+                    "[manual_background_condensation] Manual full-history hierarchical condensation completed."
+                    if full
+                    else "[manual_background_condensation] Manual deep-history condensation completed."
+                    if deep
+                    else "[manual_background_condensation] Manual recent-memory condensation completed."
+                )
             else:
                 note = (
-                    "[manual_background_condensation] Manual deep-history condensation did not prune history; "
+                    "[manual_background_condensation] Manual memory condensation did not prune history; "
                     "validation/recovery safeguards preserved the raw source state."
                 )
             self.durable.record_maintenance_note(
@@ -376,7 +389,7 @@ class PromptWorker:
                 note,
                 details=details,
             )
-            logging.info("Manual deep-history condensation finished mode=%s result=%s", mode, result_status)
+            logging.info("Manual memory condensation finished mode=%s result=%s", mode, result_status)
         except Exception as exc:
             try:
                 self.durable.record_maintenance_note(
@@ -1369,6 +1382,12 @@ class PromptWorker:
             return here.parent.parent
         return here.parents[2]
 
+    def _fresh_memory_config(self) -> dict:
+        """Reload memory-maintenance settings for each maintenance pass."""
+        from runtime_bootstrap import load_config
+
+        return dict(load_config(self._runtime_root()).get("memory", {}) or {})
+
     def _runtime_config(self) -> dict:
         cached = getattr(self, "_slice_config", None)
         if cached is not None:
@@ -1404,7 +1423,7 @@ class PromptWorker:
         plugin_cfg = load_plugin_settings(root)
         workspace_root = path_cfg["workspace_root"]
         temp_root = path_cfg["temp_root"]
-        file_policy = load_file_access_policy(root)
+        file_policy = load_file_access_policy(root, capability="core")
         allowed_roots = sorted({str(p) for p in (*file_policy.read_roots, *file_policy.write_roots)})
         redis_cfg = self._runtime_config().get("redis", {})
         dq = self._runtime_config().get("deletion_queue", {})
@@ -1413,14 +1432,14 @@ class PromptWorker:
             port=int(dq.get("port", redis_cfg.get("port", 6379))),
             db=int(dq.get("db", 2)),
             stream=str(dq.get("stream", "norm:deletion:queue")),
-            trash_root=str(dq.get("trash_root", root / "state" / "deletion-trash")),
+            trash_root=str(dq.get("trash_root", path_cfg["state_root"] / "deletion-trash")),
             items_key=str(dq.get("items_key", "norm:trash:items")),
             batches_key=str(dq.get("batches_key", "norm:trash:batches")),
             cross_volume_move_max_bytes=int(dq.get("cross_volume_move_max_bytes", 268_435_456)),
         )
         self._slice_file_tools = FileToolExecutor(
             allowed_roots,
-            backup_root=str(tools.get("backup_root", root / "state" / "file-backups")),
+            backup_root=str(tools.get("backup_root", path_cfg["state_root"] / "file-backups")),
             audit_log=str(tools.get("audit_log", root / "logs" / "tool-audit.jsonl")),
             max_read_bytes=file_policy.read_processing_buffer_bytes,
             max_tool_return_bytes=file_policy.read_chunk_bytes,
@@ -3381,7 +3400,7 @@ class PromptWorker:
     def _maybe_consolidate_background_memory(self) -> None:
         if not self.durable or not hasattr(self.durable, "get_runtime_state"):
             return
-        memory_cfg = self._runtime_config().get("memory", {})
+        memory_cfg = self._fresh_memory_config()
         maint_cfg = self._runtime_config().get("maintenance", {})
         if not bool(maint_cfg.get("weekly_cleanup_enabled", True)):
             return
@@ -3404,21 +3423,18 @@ class PromptWorker:
                 logging.error("Weekly maintenance marker is malformed; preserving evidence: %r", active_raw)
                 return
         now = _utc_now()
-        regular_days = max(1, int(memory_cfg.get("consolidation_days", 7)))
-        deep_days = max(1, int(memory_cfg.get("deep_history_interval_days", 21)))
+        scheduled_days = max(1, int(memory_cfg.get("scheduled_memory_interval_days", 7)))
         last_cleanup = self._runtime_state_time(self.durable.get_runtime_state("last_successful_cleanup_at"))
-        last_deep = self._runtime_state_time(self.durable.get_runtime_state("last_successful_deep_cleanup_at"))
-        regular_due = last_cleanup is None or last_cleanup <= now - timedelta(days=regular_days)
-        deep_due = bool(memory_cfg.get("deep_history_enabled", True)) and (
-            last_deep is None or last_deep <= now - timedelta(days=deep_days)
-        )
-        if marker is None and not regular_due:
+        scheduled_due = last_cleanup is None or last_cleanup <= now - timedelta(days=scheduled_days)
+        if marker is None and not scheduled_due:
             return
         resumed = marker is not None
         if marker is None:
+            last_mode = str(self.durable.get_runtime_state("last_successful_scheduled_memory_mode", "") or "").strip().lower()
+            next_mode = "full" if last_mode == "regular" else "regular"
             marker = {
                 "status": "cleanup_started", "run_id": str(uuid.uuid4()),
-                "mode": "deep" if deep_due else "regular",
+                "mode": next_mode,
                 "phase": "starting", "resume_count": 0,
                 "started_at": now.isoformat(), "started_at_epoch": now.timestamp(),
                 "consumer": self.consumer, "host": socket.gethostname(),
@@ -3432,7 +3448,7 @@ class PromptWorker:
             marker["consumer"] = self.consumer
             client.set(active_key, json.dumps(marker, sort_keys=True))
         run_id = str(marker.get("run_id") or "unknown")
-        mode = str(marker.get("mode") or ("deep" if deep_due else "regular"))
+        mode = str(marker.get("mode") or "regular")
         try:
             marker["phase"] = "temp_cleanup"
             client.set(active_key, json.dumps(marker, sort_keys=True))
@@ -3460,21 +3476,20 @@ class PromptWorker:
                 )
                 if hasattr(self.durable, "purge_validation_history") else {"skipped": "unsupported"}
             )
-            marker["phase"] = "deep_history" if mode == "deep" else "background_memory"
+            marker["phase"] = "full_history" if mode == "full" else "background_memory"
             client.set(active_key, json.dumps(marker, sort_keys=True))
-            if mode == "deep":
-                result = maintainer.run()
+            if mode == "full":
+                result = maintainer.run(force=True, full=True, recent_only=False)
                 if result is None:
                     result = {"status": "success", "work": "no_eligible_history"}
                 elif str(result.get("status", "")) not in {"success", "already_completed_before_resume"}:
-                    raise RuntimeError(f"deep maintenance did not complete successfully: {result}")
+                    raise RuntimeError(f"full maintenance did not complete successfully: {result}")
             else:
                 summary = maintainer.rebuild_background_snapshot(incremental=True)
                 result = {"status": "success", "background_chars": len(summary or "")}
             completed = _utc_now()
             self.durable.set_runtime_state("last_successful_cleanup_at", completed.isoformat())
-            if mode == "deep":
-                self.durable.set_runtime_state("last_successful_deep_cleanup_at", completed.isoformat())
+            self.durable.set_runtime_state("last_successful_scheduled_memory_mode", mode)
             self.durable.record_maintenance_note(
                 "weekly_cleanup", f"{mode.capitalize()} cleanup completed successfully.",
                 details={"status": "success", "mode": mode, "run_id": run_id,

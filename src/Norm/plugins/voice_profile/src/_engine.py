@@ -40,7 +40,8 @@ def _runtime_root() -> Path:
 
 
 def _profiles_root() -> Path:
-    path = _runtime_root() / "state" / "voice_profiles"
+    from norm_runtime.settings import load_path_settings
+    path = load_path_settings(_runtime_root())["state_root"] / "voice_profiles"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -137,7 +138,7 @@ def _assert_allowed(path: Path) -> Path:
     """
     from norm_runtime.file_access_policy import authorize_path, load_file_access_policy
 
-    policy = load_file_access_policy(_runtime_root())
+    policy = load_file_access_policy(_runtime_root(), capability="voice_profile")
     return authorize_path(path, policy.read_roots, access="read", hardlock=True)
 
 

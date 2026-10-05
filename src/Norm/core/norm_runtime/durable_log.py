@@ -1937,11 +1937,26 @@ class PostgresTaskLog:
         *,
         all_history: bool = False,
         unbounded: bool = False,
+        recent_days: int | None = None,
     ) -> list[dict]:
         cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, int(retention_days)))
+        recent_cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=max(1, int(recent_days)))
+            if recent_days is not None
+            else None
+        )
         with self._connect() as conn, conn.cursor() as cur:
             s = sql.Identifier(self.schema)
-            if all_history and unbounded:
+            if recent_cutoff is not None and not all_history:
+                cur.execute(sql.SQL("""
+                    SELECT tr.task_id,tr.title,tr.status,tr.plan,tr.started_at,tr.updated_at,tr.effectiveness_note,
+                           tr.task_kind,tr.parent_task_id,tr.parent_step_id,tr.task_depth,
+                           (SELECT ts.summary FROM {}.task_summaries ts WHERE ts.task_id=tr.task_id ORDER BY ts.created_at DESC LIMIT 1)
+                    FROM {}.task_runs tr
+                    WHERE tr.status IN ('completed','failed','cancelled') AND tr.started_at >= %s
+                    ORDER BY tr.started_at ASC LIMIT %s
+                """).format(s, s), (recent_cutoff, max(1, int(limit))))
+            elif all_history and unbounded:
                 cur.execute(sql.SQL("""
                     SELECT tr.task_id,tr.title,tr.status,tr.plan,tr.started_at,tr.updated_at,tr.effectiveness_note,
                            tr.task_kind,tr.parent_task_id,tr.parent_step_id,tr.task_depth,

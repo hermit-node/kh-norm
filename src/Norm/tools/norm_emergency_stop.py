@@ -5,18 +5,20 @@ import json
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib import request
 
 ROOT = Path(__file__).resolve().parents[1]
-EMERGENCY_SNAPSHOT_ROOT = ROOT / "state" / "emergency-stop"
 APP = ROOT / "core"
 if str(APP) not in sys.path:
     sys.path.insert(0, str(APP))
 
 from runtime_bootstrap import build_prompt_queue, build_runtime, close_postgres_pool
-from norm_runtime.settings import load_ports
+from norm_runtime.settings import load_ports, load_path_settings
 from norm_runtime.shutdown_snapshot import write_sos
+
+EMERGENCY_SNAPSHOT_ROOT = load_path_settings(ROOT)["state_root"] / "emergency-stop"
 
 
 def _tailscale_ipv4() -> str:
@@ -117,6 +119,21 @@ def _verify_snapshot(target: Path) -> tuple[int, str]:
     return len(data), digest
 
 
+def _signal_operator_consoles() -> Path:
+    state_root = load_path_settings(ROOT)["state_root"]
+    state_root.mkdir(parents=True, exist_ok=True)
+    target = state_root / "operator-console-shutdown.json"
+    payload = {
+        "schema": 1,
+        "reason": "stop-all-now",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "other_delay_seconds": 5,
+        "prompt_delay_seconds": 10,
+    }
+    target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return target
+
+
 def _force_kill_image(image: str) -> tuple[int, str]:
     proc = subprocess.run(
         ["taskkill", "/F", "/T", "/IM", image],
@@ -156,6 +173,8 @@ def main() -> int:
         sos_path = _snapshot()
         sos_size, sos_sha = _verify_snapshot(sos_path)
         print(f"SOS snapshot durably written and verified: {sos_path} bytes={sos_size} sha256={sos_sha}")
+        console_signal = _signal_operator_consoles()
+        print(f"Operator consoles signaled for timed shutdown: {console_signal}")
     except Exception as exc:
         print(f"SOS snapshot FAILED; refusing force-kill: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2

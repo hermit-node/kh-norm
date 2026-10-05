@@ -44,7 +44,7 @@ def main():
 
     try:
         client.ping(); pg.ensure_schema()
-        target=r"D:\ExampleShare\Norm.temp"
+        target=r"D:\Example\Norm.temp"
         desc="complete recursive inventory with file sizes and dates"
         with patch("norm_runtime.live_log.datetime",Clock):
             first=live.record_global_validations("a","s",[{"record_id":"new","tool":"run_command","target":target,"description":desc,"value":"inventory-v1"}])[0]

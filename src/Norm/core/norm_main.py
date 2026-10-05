@@ -35,7 +35,7 @@ from norm_runtime.rich_console import run_console
 from norm_runtime.settings import load_ports, load_project_metadata, load_path_settings
 
 MODEL_NAME = "norm"
-MODEL_STORE = os.environ.get("OLLAMA_MODELS", "")
+MODEL_STORE = str(Path(os.environ.get("OLLAMA_MODELS") or (Path.home() / ".ollama" / "models")).expanduser())
 _WINDOWS_CTRL_HANDLER = None
 
 
@@ -1010,7 +1010,7 @@ def main() -> int:
     ollama_host = str(ollama_cfg.get('host', '127.0.0.1'))
     ollama_url = f"http://{ollama_host}:{ports['ollama']}"
     model_name = str(ollama_cfg.get('model', MODEL_NAME))
-    model_store = str(ollama_cfg.get('model_store', MODEL_STORE))
+    model_store = str(ollama_cfg.get('model_store') or os.environ.get("OLLAMA_MODELS") or MODEL_STORE)
     logging.info("Resolved service ports: ollama=%s norm_http=%s activity=%s", ports['ollama'], ports['norm_http'], ports['activity'])
     ollama_process = start_ollama_if_needed(root, ollama_url, model_name, model_store)
     preload_norm(ollama_url, model_name)
