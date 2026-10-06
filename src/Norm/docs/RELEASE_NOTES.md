@@ -1,5 +1,19 @@
 # Release Notes
 
+## 0.53.18 — 2026-10-05 — Tight weekly working memory, controllable maintenance, and public runtime bootstrap
+
+- Regular scheduled background condensation is now explicitly a tight working-memory synthesis layer rather than a rewritten history. The default 14,000-character input slice targets about 1,800 characters per distilled slice and about 6,000 characters for the final snapshot; repeated project updates collapse into current state plus durable decisions, unresolved obligations, and reusable lessons while transient examples/levels/shorthand, routine successful checks, smoke narration, superseded state, and source-by-source restatement are discarded.
+- Regular snapshot generation no longer gets large blind continuation budgets. Slice generation uses 900 x 2 and final snapshot generation 1,800 x 2; over-target output is re-condensed as a candidate rather than continued. Compact-record reconstruction remains a separate 4,800 x 4 validation path.
+- Scheduled maintenance is now first-class operator-visible work. /status/busy reports maintenance mode/phase/run state; /queue and /queue-full show active or parked maintenance even when the prompt queue is empty.
+- /suppress-task falls through to active scheduled maintenance when there is no active/queued user task ahead of it. Suppression writes durable PostgreSQL weekly_maintenance_parked state, marks the Redis maintenance run suppressed with auto_resume=false, cancels the active model call, and preserves its checkpoint.
+- Added /resume-task maintenance to explicitly resume a suppressed or requires_attention scheduled maintenance run when the worker is idle.
+- ModelOutputTruncated during scheduled maintenance is now a deterministic attention condition: Norm parks the run as requires_attention with automatic retry disabled instead of hot-looping the same failed checkpoint. Other transient failures can still retain same-mode resume evidence.
+- Scheduled maintenance now clears the worker idle flag for its lifetime, so busy/status controls match actual model/GPU work.
+- Added tools/test_maintenance_control.py; six focused maintenance-control regressions pass alongside existing maintenance, model-switch/help, and suppression/resume tests.
+- Public WeasyPrint/Pango delivery changed from vendored native binaries to verified download-on-install/lazy repair. package-manifest.json pins the official WeasyPrint 70.0 Windows onedir URL and SHA-256; tools/fetch_weasyprint_runtime.py verifies, safely extracts, validates Pango, and renders a real PDF.
+- Installer 1.6.8 preserves a valid existing WeasyPrint runtime, invokes the canonical source helper when it is missing/stale, and then repeats --info plus real PDF smoke validation. tools/weasyprint.cmd uses the same helper for runtime repair.
+- The canonical public release layout is installer + installer source + portable-source ZIP + SHA + matching exploded src tree. Private machine state/configuration remains local rather than defining a separate private code edition.
+
 ## 0.53.17 — 2026-10-05 — Session model switching and single-source operator help
 
 - Added /switch-model as a Norm runtime control backed by the live Ollama API instead of model-store directory scanning. With no selector it lists installed models as deterministic one-based choices (norm / norm:latest first, then alphabetical); a number, exact tag, or uniquely resolvable base name can be selected.
@@ -373,7 +387,7 @@ Rules:
 
 ## 0.51.1 — 2026-09-20 — Runtime/workspace split and reproducible backup
 
-- Moved the runtime to `C:\Norm` while keeping the model-editable workspace at `%USERPROFILE%\Documents\Norm`; startup validates that the two roots do not overlap.
+- Moved the runtime to `C:\Norm` while keeping the model-editable workspace at `C:\Users\NORM-HOST\Documents\Norm`; startup validates that the two roots do not overlap.
 - Normal and recovery-child tools receive the configured workspace plus approved external roots, while the runtime tree itself is not model-writable.
 - Added `/backup-zip` with PostgreSQL `norm_runtime`, workspace, runtime, manifest, and restore helpers while excluding disposable build/cache output.
 - Removed the large rebuildable `.venv` from backups and added pinned Python/CUDA-Torch/dependency rebuild settings and documentation.

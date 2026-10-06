@@ -2,7 +2,7 @@
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.53.17 / Installer 1.6.7-unified** package only. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.53.18 / Installer 1.6.8-unified** package only. Version history belongs only in RELEASE_NOTES.md.
 
 ## Runtime layout
 
@@ -88,11 +88,14 @@ Norm separates recent maintenance from full historical consolidation.
 
 ### Regular background maintenance
 
-Scheduled regular background-memory condensation is shallow. It only considers the configurable recent window. Default:
+Scheduled regular background-memory condensation is shallow and deliberately aggressive. It only considers the configurable recent window. Defaults:
 
     "regular_memory_window_days": 14
+    "consolidation_batch_chars": 14000
+    "consolidation_batch_target_chars": 1800
+    "consolidation_snapshot_target_chars": 6000
 
-It updates current background memory from recent activity and does not walk deep historical compact archives.
+The background snapshot is working memory, not an archive. Detailed reconstructable task history remains in PostgreSQL task_history. Regular condensation merges repeated project updates into current state plus reusable lessons, and drops routine chatter, smoke-test narration, one-off examples, transient market levels, temporary shorthand, superseded states, and source-by-source repetition.
 
 ### /memory-condense
 
@@ -116,7 +119,9 @@ Scheduled memory maintenance alternates successful passes:
 
     regular -> full -> regular -> full -> ...
 
-The interval is controlled by memory.scheduled_memory_interval_days (default 7). A failed/interrupted scheduled pass resumes the same recorded mode; alternation advances only after success.
+The interval is controlled by memory.scheduled_memory_interval_days (default 7). A transient crash/failure can retain the same recorded mode for resume; alternation advances only after success. A deterministic ModelOutputTruncated failure is different: Norm durably parks the maintenance run as requires_attention and disables automatic retry until the operator explicitly resumes it.
+
+Scheduled maintenance is visible through /status/busy, /queue, and /queue-full. When no user task is ahead of it, /suppress-task parks the active maintenance run and cancels its model call. /resume-task maintenance explicitly resumes a suppressed/requires_attention maintenance checkpoint.
 
 Scheduled regular uses the recent-window background condensation path. Scheduled full sweeps the complete historical archive, validates every configured date-ordered row batch by sampling, then performs one conservative hierarchical merge level over neighboring compact rows.
 
@@ -204,15 +209,16 @@ vision_parse handles up to 10 pages per call, treats native text as an untrusted
 
 Windows HTML/CSS-to-PDF rendering is self-contained.
 
-Norm bundles **WeasyPrint 70.0** under tools\weasyprint with the UCRT64 native stack including **Pango 1.58.2**, HarfBuzz, Cairo, Fontconfig, FreeType, and dependencies.
+Norm uses the official **WeasyPrint 70.0** Windows onedir runtime with the UCRT64 native stack including **Pango 1.58.2**. The public source does not vendor that frozen native tree. Instead package-manifest.json pins the official upstream URL and archive SHA-256.
 
 Entry points:
 
 - tools\weasyprint.cmd
-- tools\weasyprint\runtime\weasyprint.exe
+- tools\fetch_weasyprint_runtime.py
+- tools\weasyprint\runtime\weasyprint.exe (generated/downloaded locally)
 - tools\weasyprint_smoke.py
 
-Installer acceptance runs --info and an actual HTML-to-PDF render. The target machine does not need MSYS2 or separately compiled Pango.
+Installer 1.6.8 preserves an already-valid local runtime. If it is missing or stale, the installer invokes the source helper, verifies the pinned upstream archive SHA-256, extracts it, then runs --info and a real HTML-to-PDF render. The command wrapper uses the same helper for lazy repair. The target machine does not need MSYS2 or locally compiled Pango.
 
 ## Backups
 
@@ -220,9 +226,9 @@ Installer acceptance runs --info and an actual HTML-to-PDF render. The target ma
 
 /backup full creates a sensitive recovery package including source, plugins, configured secrets, .ssh, workspace, selected state/log/recovery material, PostgreSQL dump, and environment rebuild metadata. Rebuildable .venv and ordinary build products are excluded.
 
-## Installer 1.6.7
+## Installer 1.6.8
 
-Installer 1.6.7 performs managed in-place updates, preserves persistent machine state, migrates existing configuration, reuses a compatible virtual environment, validates packaged source/tools, validates WeasyPrint/Pango by rendering a PDF, and binds the exact portable-source payload by filename and SHA-256.
+Installer 1.6.8 performs managed in-place updates, preserves persistent machine state and the verified WeasyPrint runtime, migrates existing configuration, reuses a compatible virtual environment, validates packaged source/tools, downloads/repairs WeasyPrint/Pango from the package-pinned official archive when needed, verifies its SHA-256 and PDF rendering, and binds the exact portable-source payload by filename and SHA-256.
 
 ## Documentation
 

@@ -80,6 +80,7 @@ def _activity_app(
     shutdown_norm: Callable[[bool], dict] | None,
     stop_all: Callable[[bool], dict] | None,
     suppress_task: Callable[[str | None, str], dict] | None,
+    resume_maintenance: Callable[[], dict] | None,
     flush_suppressed: Callable[[], dict] | None,
     trash_list: Callable[[], dict] | None,
     trash_restore: Callable[[str], dict] | None,
@@ -227,6 +228,10 @@ def _activity_app(
                         suppress_task, payload.get("task_id"), str(payload.get("reason") or "")
                     )
                     return web.json_response(result, status=200 if result.get("status") == "ok" else 409)
+                if path == "/control/resume-maintenance":
+                    if resume_maintenance is None:
+                        return web.json_response({"error": "resume-maintenance control unavailable"}, status=503)
+                    return web.json_response(await _call(resume_maintenance))
                 if path == "/control/flush-suppressed":
                     if flush_suppressed is None:
                         return web.json_response({"error": "flush-suppressed control unavailable"}, status=503)
@@ -284,6 +289,7 @@ def _activity_app(
             "/control/shutdown-norm",
             "/control/shutdown-norm-now",
             "/control/suppress-task",
+            "/control/resume-maintenance",
             "/control/flush-suppressed",
             "/control/delete-list",
             "/control/restore-delete",
@@ -308,6 +314,7 @@ def start_activity_server(
     shutdown_norm: Callable[[bool], dict] | None = None,
     stop_all: Callable[[bool], dict] | None = None,
     suppress_task: Callable[[str | None, str], dict] | None = None,
+    resume_maintenance: Callable[[], dict] | None = None,
     flush_suppressed: Callable[[], dict] | None = None,
     trash_list: Callable[[], dict] | None = None,
     trash_restore: Callable[[str], dict] | None = None,
@@ -329,6 +336,7 @@ def start_activity_server(
             shutdown_norm=shutdown_norm,
             stop_all=stop_all,
             suppress_task=suppress_task,
+            resume_maintenance=resume_maintenance,
             flush_suppressed=flush_suppressed,
             trash_list=trash_list,
             trash_restore=trash_restore,

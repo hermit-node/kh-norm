@@ -1,17 +1,11 @@
-# Release
+# Norm 0.53.18 / Installer 1.6.8-unified
 
-## Norm 0.53.17 / Installer 1.6.7
+Key current-release changes:
 
-- N1/N2 tool gating and verified-result reuse remain the execution boundary.
-- /switch-model provides fail-closed session-only model selection through the live Ollama API; every restart boots norm.
-- docs/help_menu.txt is the single live operator-help authority for both prompt frontends.
-- Canonical internal state_root keeps trusted runtime state separate from model file-tool authority.
-- /memory-condense is recent-only; /memory-condense -deep is manual bounded older-history compaction.
-- Scheduled maintenance alternates successful regular/full passes.
-- Full condensation sweeps the whole date-ordered archive and samples 12 per 200 compact rows by default.
-- Replay validation is isolated per sample with up to 4,800 x 4 output tokens.
-- Full mode performs one hierarchical merge level over neighboring windows of up to six rows; only validated replacements supersede originals.
-- Windows checkpoint replacement is hardened with unique temp files, fsync, retries and durable fallback.
-- /stop-all now coordinates exact Norm console hosts with readable 5-second/10-second close windows and Enter/Ctrl+C interruption.
-- WeasyPrint 70.0 / Pango 1.58.2 is integrated into the turnkey release; Git source keeps reproducible acquisition metadata instead of vendoring its frozen runtime.
-- Installer 1.6.7 validates the release runtime with both info discovery and an actual HTML-to-PDF render.
+- weekly regular memory is aggressively synthesized into a small working-memory snapshot rather than source-by-source restatement;
+- active/parked maintenance appears in queue/busy status and can be suppressed/resumed by the operator;
+- deterministic output truncation parks scheduled maintenance instead of hot-looping;
+- /switch-model remains fail-closed and session-only; boot always uses norm;
+- operator help is sourced from src/Norm/docs/help_menu.txt;
+- public delivery no longer vendors the frozen WeasyPrint/Pango runtime;
+- Installer 1.6.8 and runtime repair fetch the exact official WeasyPrint 70.0 Windows archive using the package-pinned URL/SHA and require a real PDF render.

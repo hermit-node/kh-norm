@@ -20,7 +20,7 @@ from typing import Any, Callable, Iterable
 
 import installer_environment as envtools
 
-INSTALLER_VERSION = "1.6.7-unified"
+INSTALLER_VERSION = "1.6.8-unified"
 PIP_VERSION = "26.2.1"
 PIP_MIN_VERSION = PIP_VERSION  # backward-compatible internal print helper
 PIP_SPEC = f"pip=={PIP_VERSION}"
@@ -141,34 +141,61 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _validate_bundled_weasyprint(target: Path, manifest: dict, log: LogFn) -> None:
+def _validate_bundled_weasyprint(
+    target: Path,
+    manifest: dict,
+    python_exe: Path,
+    log: LogFn,
+) -> None:
     cfg = dict((manifest.get("bundled_tools") or {}).get("weasyprint") or {})
     if not cfg:
         return
     rel = str(cfg.get("entrypoint") or "tools/weasyprint/runtime/weasyprint.exe")
     exe = target / rel
-    if not exe.is_file():
-        raise InstallerError(f"Bundled WeasyPrint executable is missing: {exe}")
-    info = _run([str(exe), "--info"], cwd=target, log=log)
-    combined = info.stdout or ""
     expected = str(cfg.get("version") or "").strip()
-    if expected and f"WeasyPrint version: {expected}" not in combined:
-        raise InstallerError(f"Bundled WeasyPrint version check failed; expected {expected}")
-    if "Pango version:" not in combined:
-        raise InstallerError("Bundled WeasyPrint did not report a Pango runtime")
 
-    with tempfile.TemporaryDirectory(prefix="norm-weasyprint-smoke-") as temp_name:
-        temp = Path(temp_name)
-        html = temp / "smoke.html"
-        pdf = temp / "smoke.pdf"
-        html.write_text(
-            "<html><body><h1>Norm installer render check</h1><p>Pango is available.</p></body></html>",
-            encoding="utf-8",
+    def validate_existing() -> None:
+        if not exe.is_file():
+            raise InstallerError(f"WeasyPrint executable is missing: {exe}")
+        info = _run([str(exe), "--info"], cwd=target, log=log)
+        combined = (info.stdout or "") + (info.stderr or "")
+        if expected and f"WeasyPrint version: {expected}" not in combined:
+            raise InstallerError(f"WeasyPrint version check failed; expected {expected}")
+        if "Pango version:" not in combined:
+            raise InstallerError("WeasyPrint did not report a Pango runtime")
+
+        with tempfile.TemporaryDirectory(prefix="norm-weasyprint-smoke-") as temp_name:
+            temp = Path(temp_name)
+            html = temp / "smoke.html"
+            pdf = temp / "smoke.pdf"
+            html.write_text(
+                "<html><body><h1>Norm installer render check</h1><p>Pango is available.</p></body></html>",
+                encoding="utf-8",
+            )
+            _run([str(exe), str(html), str(pdf)], cwd=target, log=log)
+            if not pdf.is_file() or pdf.stat().st_size < 5 or pdf.read_bytes()[:5] != b"%PDF-":
+                raise InstallerError("WeasyPrint/Pango smoke test did not produce a valid PDF")
+            log(f"WeasyPrint/Pango render smoke passed: {pdf.stat().st_size} bytes")
+
+    try:
+        validate_existing()
+        log(f"Verified existing WeasyPrint/Pango runtime: {exe}")
+        return
+    except Exception as first_error:
+        helper_rel = str(cfg.get("fetch_helper") or "tools/fetch_weasyprint_runtime.py")
+        helper = target / helper_rel
+        if not helper.is_file():
+            raise InstallerError(
+                f"WeasyPrint runtime is missing/invalid and fetch helper is unavailable: {helper}"
+            ) from first_error
+        log(
+            "WeasyPrint/Pango runtime is missing or stale; downloading the package-pinned "
+            "official runtime and verifying its SHA-256."
         )
-        _run([str(exe), str(html), str(pdf)], cwd=target, log=log)
-        if not pdf.is_file() or pdf.stat().st_size < 5 or pdf.read_bytes()[:5] != b"%PDF-":
-            raise InstallerError("Bundled WeasyPrint/Pango smoke test did not produce a valid PDF")
-        log(f"Bundled WeasyPrint/Pango render smoke passed: {pdf.stat().st_size} bytes")
+        _run([str(python_exe), str(helper), "--quiet"], cwd=target, log=log)
+
+    validate_existing()
+    log(f"Downloaded/repaired verified WeasyPrint/Pango runtime: {exe}")
 
 
 
@@ -949,6 +976,7 @@ def install_norm(
             "backups",
             ".env",
             ".norm-install-state.json",
+            "tools/weasyprint/runtime",
         }
 
         config_snapshot = _snapshot_existing_config(target, log) if target_nonempty else None
@@ -1116,8 +1144,8 @@ def install_norm(
             for cache in sorted(scan_root.rglob("__pycache__"), reverse=True):
                 shutil.rmtree(cache, ignore_errors=True)
 
-    progress(70, "Validating bundled WeasyPrint/Pango")
-    _validate_bundled_weasyprint(target, manifest, log)
+    progress(70, "Ensuring verified WeasyPrint/Pango")
+    _validate_bundled_weasyprint(target, manifest, venv_python, log)
 
     compiled: Path | None = None
     if options.compile_exe:

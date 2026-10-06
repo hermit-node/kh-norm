@@ -94,6 +94,8 @@
     "scheduled_memory_interval_days": 7,
     "consolidation_check_seconds": 3600,
     "consolidation_batch_chars": 14000,
+    "consolidation_batch_target_chars": 1800,
+    "consolidation_snapshot_target_chars": 6000,
     "regular_memory_window_days": 14,
     "deep_history_retention_days": 30,
     "deep_history_max_tasks_per_pass": 500,

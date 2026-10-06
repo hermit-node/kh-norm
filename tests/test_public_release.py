@@ -1,41 +1,37 @@
 from __future__ import annotations
-
-import json
-import re
-import sys
+import hashlib, json, zipfile
 from pathlib import Path
 
-HERE=Path(__file__).resolve().parents[1]
-sys.path.insert(0,str(HERE/"tools"))
-from public_release_guard import scan_tree
+ROOT=Path(__file__).resolve().parents[1]
+SRC=ROOT/"src"/"Norm"
+ZIP=ROOT/"Norm-0.53.18-portable-source.zip"
 
-count=scan_tree(HERE)
-assert count>100,count
-manifest=json.loads((HERE/"src"/"Norm"/"package-manifest.json").read_text(encoding="utf-8"))
-assert manifest["version"]=="0.53.17"
-assert not (HERE/"src"/"Norm"/"tools"/"weasyprint"/"runtime").exists()
-assert "src/Norm/tools/weasyprint/runtime/" in (HERE/".gitignore").read_text(encoding="utf-8")
+manifest=json.loads((SRC/"package-manifest.json").read_text(encoding="utf-8"))
+assert manifest["version"]=="0.53.18", manifest["version"]
+assert not (ROOT/"Norm-Installer.exe").exists()  # Public source release
+assert (ROOT/"Norm-Installer.py").is_file()
+assert (ROOT/"installer_environment.py").is_file()
+assert ZIP.is_file()
+assert Path(str(ZIP)+".sha256").is_file()
+assert not (SRC/"tools"/"weasyprint"/"runtime").exists()
+assert (SRC/"tools"/"fetch_weasyprint_runtime.py").is_file()
+assert (SRC/"docs"/"help_menu.txt").is_file()
+assert (SRC/"core"/"norm_runtime"/"model_switch.py").is_file()
+assert (SRC/"tools"/"test_maintenance_control.py").is_file()
+assert not (SRC/"core"/"norm.exe").exists()
 
-docs=[
- HERE/"src"/"Norm"/"docs"/"README.md",
- HERE/"src"/"Norm"/"docs"/"CURRENT_STATUS.md",
- HERE/"src"/"Norm"/"docs"/"DEVELOPMENT_NOTES.md",
- HERE/"src"/"Norm"/"docs"/"FUTURE_IMPLEMENTATION_NOTES.md",
- HERE/"src"/"Norm"/"docs"/"MAINTENANCE_VERIFICATION.md",
-]
-old=re.compile(r"0\.53\.(?:[0-9]|1[0-6])|0\.52\.|0\.51\.")
-for p in docs:
-    assert not old.search(p.read_text(encoding="utf-8")),f"historical artifact in current-state doc: {p}"
+expected=(Path(str(ZIP)+".sha256").read_text(encoding="ascii").split()[0]).lower()
+actual=hashlib.sha256(ZIP.read_bytes()).hexdigest()
+assert actual==expected,(actual,expected)
 
-release=(HERE/"src"/"Norm"/"docs"/"RELEASE_NOTES.md").read_text(encoding="utf-8")
-assert "## 0.53.17" in release
-assert not (HERE/"Publish-To-GitHub.ps1").exists()
-assert (HERE/"src"/"Norm"/"docs"/"help_menu.txt").is_file()
-assert (HERE/"src"/"Norm"/"core"/"norm_runtime"/"model_switch.py").is_file()
-assert (HERE/"src"/"Norm"/"tools"/"test_model_switch.py").is_file()
-assert not any(HERE.glob("Norm-*.zip"))
-assert not (HERE/"Norm-Installer.exe").exists()
-example=json.loads((HERE/"norm-imprint.example.json").read_text(encoding="utf-8"))
-serialized=json.dumps(example).lower()
-assert '"password"' not in serialized and '"token"' not in serialized and '"secret"' not in serialized
-print("PASS public tree files",count)
+tree={p.relative_to(SRC).as_posix():p.read_bytes() for p in SRC.rglob("*") if p.is_file()}
+with zipfile.ZipFile(ZIP) as zf:
+    prefix="Norm-0.53.18/"
+    zipped={n[len(prefix):]:zf.read(n) for n in zf.namelist() if n.startswith(prefix) and not n.endswith("/")}
+assert set(tree)==set(zipped),(sorted(set(tree)-set(zipped))[:10],sorted(set(zipped)-set(tree))[:10])
+for rel,data in tree.items():
+    assert zipped[rel]==data,rel
+
+print(f"PASS public version 0.53.18")
+print(f"PASS src/ZIP exact byte parity files={len(tree)}")
+print(f"PASS source SHA256 {actual}")

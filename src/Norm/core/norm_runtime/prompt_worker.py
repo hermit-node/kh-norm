@@ -79,6 +79,7 @@ class PromptWorker:
         self._state_lock = Lock()
         self._active_task_id = ""
         self._suppress_requested: set[str] = set()
+        self._maintenance_suppress_requested = Event()
         self._manual_memory_condense_mode = ""
         self.deferred_append_planner = deferred_append_planner
         self.context_injections = context_injections
@@ -181,11 +182,184 @@ class PromptWorker:
         with self._state_lock:
             self._suppress_requested.discard(task_id)
 
+    def _weekly_maintenance_marker(self) -> tuple[object, str, dict | None]:
+        maint_cfg = self._runtime_config().get("maintenance", {})
+        client = self._maintenance_redis_client()
+        active_key = str(
+            maint_cfg.get("weekly_cleanup_active_key", "norm:maintenance:weekly_cleanup:active")
+        )
+        raw = client.get(active_key)
+        if not raw:
+            return client, active_key, None
+        try:
+            marker = json.loads(raw)
+        except Exception:
+            marker = {"status": "malformed", "raw": str(raw)[:2000]}
+        return client, active_key, marker
+
+    def maintenance_status(self) -> dict:
+        parked = None
+        if self.durable and hasattr(self.durable, "get_runtime_state"):
+            parked = self.durable.get_runtime_state("weekly_maintenance_parked")
+        try:
+            _client, _key, marker = self._weekly_maintenance_marker()
+        except Exception as exc:
+            marker = None
+            marker_error = f"{type(exc).__name__}: {exc}"
+        else:
+            marker_error = ""
+        if isinstance(parked, dict):
+            return {
+                "active": False,
+                "parked": True,
+                "status": str(parked.get("status") or "suppressed"),
+                "mode": str(parked.get("mode") or (marker or {}).get("mode") or ""),
+                "phase": str(parked.get("phase") or (marker or {}).get("phase") or ""),
+                "run_id": str(parked.get("run_id") or (marker or {}).get("run_id") or ""),
+                "reason": str(parked.get("reason") or ""),
+                "marker": marker,
+            }
+        if marker:
+            status = str(marker.get("status") or "")
+            return {
+                "active": status not in {"suppressed", "requires_attention"},
+                "parked": status in {"suppressed", "requires_attention"},
+                "status": status,
+                "mode": str(marker.get("mode") or ""),
+                "phase": str(marker.get("phase") or ""),
+                "run_id": str(marker.get("run_id") or ""),
+                "reason": str(marker.get("error") or marker.get("reason") or ""),
+                "marker": marker,
+            }
+        return {
+            "active": False,
+            "parked": False,
+            "status": "inactive",
+            "mode": "",
+            "phase": "",
+            "run_id": "",
+            "reason": marker_error,
+        }
+
+    def request_suppress_maintenance(self, reason: str = "") -> dict:
+        if not self.durable or not hasattr(self.durable, "set_runtime_state"):
+            return {
+                "status": "unavailable",
+                "suppressed": False,
+                "reason": "durable runtime state unavailable",
+            }
+        try:
+            client, active_key, marker = self._weekly_maintenance_marker()
+        except Exception as exc:
+            return {
+                "status": "error",
+                "suppressed": False,
+                "reason": f"could not read maintenance marker: {type(exc).__name__}: {exc}",
+            }
+        if not marker:
+            return {
+                "status": "ok",
+                "suppressed": False,
+                "reason": "no active scheduled maintenance",
+            }
+        status = str(marker.get("status") or "")
+        if status in {"suppressed", "requires_attention"}:
+            parked = self.durable.get_runtime_state("weekly_maintenance_parked")
+            return {
+                "status": "ok",
+                "suppressed": False,
+                "maintenance": True,
+                "reason": "scheduled maintenance is already parked",
+                "parked": parked or marker,
+            }
+
+        now = _utc_now().isoformat()
+        parked = {
+            "status": "suppressed",
+            "run_id": str(marker.get("run_id") or ""),
+            "mode": str(marker.get("mode") or "regular"),
+            "phase": str(marker.get("phase") or ""),
+            "suppressed_at": now,
+            "reason": reason or "Operator requested /suppress-task while scheduled maintenance was active.",
+        }
+        self.durable.set_runtime_state("weekly_maintenance_parked", parked)
+        marker.update({
+            "status": "suppressed",
+            "suppressed_at": now,
+            "reason": parked["reason"],
+            "auto_resume": False,
+        })
+        client.set(active_key, json.dumps(marker, sort_keys=True))
+        self._maintenance_suppress_requested.set()
+        cancelled = OllamaClient.cancel_active()
+        return {
+            "status": "ok",
+            "suppressed": True,
+            "maintenance": True,
+            "task_id": f"maintenance:{parked['run_id'] or 'weekly'}",
+            "title": f"Weekly maintenance ({parked['mode']})",
+            "mode": parked["mode"],
+            "phase": parked["phase"],
+            "cancelled_model_calls": cancelled,
+        }
+
+    def request_resume_maintenance(self) -> dict:
+        if not self.durable or not hasattr(self.durable, "get_runtime_state"):
+            return {
+                "status": "unavailable",
+                "resumed": False,
+                "reason": "durable runtime state unavailable",
+            }
+        parked = self.durable.get_runtime_state("weekly_maintenance_parked")
+        try:
+            client, active_key, marker = self._weekly_maintenance_marker()
+        except Exception as exc:
+            return {
+                "status": "error",
+                "resumed": False,
+                "reason": f"could not read maintenance marker: {type(exc).__name__}: {exc}",
+            }
+        if not isinstance(parked, dict) and not (
+            isinstance(marker, dict)
+            and str(marker.get("status") or "") in {"suppressed", "requires_attention"}
+        ):
+            return {
+                "status": "ok",
+                "resumed": False,
+                "reason": "scheduled maintenance is not parked",
+            }
+        self.durable.delete_runtime_state("weekly_maintenance_parked")
+        now = _utc_now().isoformat()
+        marker = dict(marker or parked or {})
+        marker.update({
+            "status": "cleanup_resumed",
+            "resumed_at": now,
+            "resumed_by_operator": True,
+            "auto_resume": True,
+        })
+        marker.pop("error", None)
+        marker.pop("failure_kind", None)
+        client.set(active_key, json.dumps(marker, sort_keys=True))
+        self._maintenance_suppress_requested.clear()
+        self._last_memory_maintenance_check = 0.0
+        return {
+            "status": "ok",
+            "resumed": True,
+            "maintenance": True,
+            "run_id": str(marker.get("run_id") or ""),
+            "mode": str(marker.get("mode") or ""),
+            "phase": str(marker.get("phase") or ""),
+            "runs_when": "worker_idle",
+        }
+
     def request_suppress_task(self, task_id: str | None = None, reason: str = "") -> dict:
         explicit = bool(str(task_id or "").strip())
         seed = str(task_id or "").strip() or self.active_task_id() or str(self.queue.oldest_task_id() or "")
         if not seed:
-            return {"status": "ok", "suppressed": False, "reason": "no active or queued task"}
+            maintenance = self.maintenance_status()
+            if maintenance.get("active"):
+                return self.request_suppress_maintenance(reason)
+            return {"status": "ok", "suppressed": False, "reason": "no active or queued task or maintenance job"}
         if self._suppression_requested(seed):
             return {
                 "status": "ok", "suppressed": False, "task_id": seed,
@@ -3404,6 +3578,9 @@ class PromptWorker:
         maint_cfg = self._runtime_config().get("maintenance", {})
         if not bool(maint_cfg.get("weekly_cleanup_enabled", True)):
             return
+        parked_state = self.durable.get_runtime_state("weekly_maintenance_parked")
+        if isinstance(parked_state, dict):
+            return
         now_clock = monotonic()
         check_seconds = max(60, int(memory_cfg.get("consolidation_check_seconds", 3600)))
         if now_clock - self._last_memory_maintenance_check < check_seconds:
@@ -3422,6 +3599,19 @@ class PromptWorker:
             except Exception:
                 logging.error("Weekly maintenance marker is malformed; preserving evidence: %r", active_raw)
                 return
+        if isinstance(marker, dict) and str(marker.get("status") or "") in {"suppressed", "requires_attention"}:
+            self.durable.set_runtime_state(
+                "weekly_maintenance_parked",
+                {
+                    "status": str(marker.get("status") or "suppressed"),
+                    "run_id": str(marker.get("run_id") or ""),
+                    "mode": str(marker.get("mode") or "regular"),
+                    "phase": str(marker.get("phase") or ""),
+                    "reason": str(marker.get("error") or marker.get("reason") or ""),
+                    "parked_at": str(marker.get("suppressed_at") or marker.get("failed_at") or _utc_now().isoformat()),
+                },
+            )
+            return
         now = _utc_now()
         scheduled_days = max(1, int(memory_cfg.get("scheduled_memory_interval_days", 7)))
         last_cleanup = self._runtime_state_time(self.durable.get_runtime_state("last_successful_cleanup_at"))
@@ -3449,6 +3639,7 @@ class PromptWorker:
             client.set(active_key, json.dumps(marker, sort_keys=True))
         run_id = str(marker.get("run_id") or "unknown")
         mode = str(marker.get("mode") or "regular")
+        self._idle.clear()
         try:
             marker["phase"] = "temp_cleanup"
             client.set(active_key, json.dumps(marker, sort_keys=True))
@@ -3497,7 +3688,60 @@ class PromptWorker:
                          "recovery_cleanup": recovery_cleanup, "verification_history_cleanup": verification_history_cleanup, "maintenance_result": result},
             )
             client.delete(active_key)
+            self.durable.delete_runtime_state("weekly_maintenance_parked")
+            self._maintenance_suppress_requested.clear()
             logging.info("Weekly maintenance completed run_id=%s mode=%s temp=%s trash=%s purge=%s result=%s", run_id, mode, temp_cleanup, trash_purge, purge, result)
+        except ModelGenerationCancelled as exc:
+            parked = self.durable.get_runtime_state("weekly_maintenance_parked")
+            if self._maintenance_suppress_requested.is_set() or isinstance(parked, dict):
+                suppressed = {
+                    **marker,
+                    "status": "suppressed",
+                    "suppressed_at": _utc_now().isoformat(),
+                    "reason": str((parked or {}).get("reason") or exc or "operator suppression"),
+                    "auto_resume": False,
+                }
+                client.set(active_key, json.dumps(suppressed, sort_keys=True))
+                logging.info("Weekly maintenance suppressed run_id=%s mode=%s phase=%s", run_id, mode, marker.get("phase"))
+            else:
+                failed = {**marker, "status": "failed", "failed_at": _utc_now().isoformat(), "error": str(exc)[:2000]}
+                client.set(active_key, json.dumps(failed, sort_keys=True))
+                logging.exception("Weekly maintenance generation cancelled unexpectedly run_id=%s mode=%s; marker retained for resume", run_id, mode)
+        except ModelOutputTruncated as exc:
+            failed_at = _utc_now().isoformat()
+            reason = (
+                "Scheduled maintenance exhausted the model output budget. "
+                "The checkpoint was preserved, but automatic retry is disabled until explicitly resumed."
+            )
+            parked = {
+                "status": "requires_attention",
+                "run_id": run_id,
+                "mode": mode,
+                "phase": str(marker.get("phase") or ""),
+                "parked_at": failed_at,
+                "reason": reason,
+                "error": f"{type(exc).__name__}: {exc}"[:2000],
+            }
+            self.durable.set_runtime_state("weekly_maintenance_parked", parked)
+            failed = {
+                **marker,
+                "status": "requires_attention",
+                "failed_at": failed_at,
+                "failure_kind": "model_output_truncated",
+                "error": parked["error"],
+                "reason": reason,
+                "auto_resume": False,
+            }
+            client.set(active_key, json.dumps(failed, sort_keys=True))
+            try:
+                self.durable.record_maintenance_note(
+                    "weekly_cleanup",
+                    "Scheduled memory maintenance was parked after exhausting its model output budget.",
+                    details=parked,
+                )
+            except Exception:
+                logging.exception("Could not record parked weekly-maintenance note")
+            logging.exception("Weekly maintenance parked after output truncation run_id=%s mode=%s", run_id, mode)
         except Exception as exc:
             failed = {**marker, "status": "failed", "failed_at": _utc_now().isoformat(), "error": str(exc)[:2000]}
             try:
@@ -3505,6 +3749,8 @@ class PromptWorker:
             except Exception:
                 logging.exception("Could not update weekly maintenance failure marker")
             logging.exception("Weekly maintenance failed run_id=%s mode=%s; marker retained for resume", run_id, mode)
+        finally:
+            self._idle.set()
 
     def _heartbeat_loop(self, stop: Event, job: PromptJob, started_clock: float) -> None:
         while not stop.wait(self.heartbeat_seconds):

@@ -526,6 +526,18 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             durable=resources.get("durable"),
             ollama_active_calls=OllamaClient.active_count(),
         )
+        worker_obj = resources.get("worker")
+        maintenance = (
+            worker_obj.maintenance_status()
+            if worker_obj is not None and hasattr(worker_obj, "maintenance_status")
+            else {"active": False, "parked": False, "status": "unavailable"}
+        )
+        payload["maintenance"] = maintenance
+        if maintenance.get("active"):
+            payload["status"] = "busy"
+            payload["busy"] = True
+            payload["phase"] = "maintenance:" + str(maintenance.get("phase") or maintenance.get("mode") or "scheduled")
+            payload["confidence"] = 1.0
         if not bool(resources.get("startup_ready")):
             payload["status"] = "initializing"
             payload["busy"] = True
@@ -808,7 +820,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         result = worker_obj.request_suppress_task(task_id=task_id, reason=reason)
         if bool(result.get("suppressed")) or str(task_id or "").strip():
             return result
-        if str(result.get("reason") or "") != "no active or queued task":
+        if not str(result.get("reason") or "").startswith("no active or queued task"):
             return result
         try:
             ingress = _suppress_console_prompt_state(config, "console_queue", default_prefix="norm:gui")
@@ -824,6 +836,12 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             )
             return ingress
         return result
+
+    def request_resume_maintenance() -> dict:
+        worker_obj = resources.get("worker")
+        if worker_obj is None:
+            return {"status": "unavailable", "resumed": False, "reason": "worker is still initializing"}
+        return worker_obj.request_resume_maintenance()
 
     def request_flush_suppressed() -> dict:
         worker_obj = resources.get("worker")
@@ -945,6 +963,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             shutdown_norm=request_shutdown,
             stop_all=request_stop_all,
             suppress_task=request_suppress_task,
+            resume_maintenance=request_resume_maintenance,
             flush_suppressed=request_flush_suppressed,
             trash_list=request_trash_list,
             trash_restore=request_trash_restore,

@@ -801,6 +801,8 @@ class DeepHistoryMaintainer:
             if not records:
                 return ""
         batch_chars = max(4000, int(self.config.get("consolidation_batch_chars", 14000)))
+        batch_target_chars = max(800, int(self.config.get("consolidation_batch_target_chars", 1800)))
+        snapshot_target_chars = max(2500, int(self.config.get("consolidation_snapshot_target_chars", 6000)))
         lines = [f"[{record['at'].isoformat()}][{record['source']}] {record['text']}" for record in records]
         chunks, current, used = [], [], 0
         for line in lines:
@@ -821,41 +823,76 @@ class DeepHistoryMaintainer:
             if index < len(partials):
                 continue
             prompt = (
-                "Compress this PostgreSQL history slice into compact reusable Norm background memory. "
-                "Preserve current architecture, verified behavior, durable decisions/preferences, reusable failure lessons, unresolved work, and important artifact pointers. "
-                "Collapse retries/smokes and superseded narration. Preserve meaningful timezone-aware chronology. "
-                "Target <=3500 characters. Do not invent facts. Return plain text only.\n\n" + chunk
+                "Distill this PostgreSQL history slice into SMALL working-memory notes, not a rewritten transcript. "
+                "Keep only information that is likely to materially change a future answer or action: current project state, durable decisions, stable preferences, unresolved obligations, reusable technical lessons, and artifact/data pointers that remain operationally useful. "
+                "Aggressively merge repeated updates about the same project/fact into one current-state statement plus at most one reusable lesson or constraint. "
+                "DROP routine chatter, successful smoke-test narration, one-off examples, transient values/market levels, temporary shorthand/terminology, intermediate attempts, redundant chronology, and details already recoverable from compact task_history unless they are needed to understand current state. "
+                "Do NOT produce one bullet/line per source record. Fewer synthesized items are better. Preserve a timestamp only when timing itself remains meaningful. "
+                f"Hard target: <= {batch_target_chars} characters. Do not invent facts. Return plain text only.\n\n" + chunk
             )
             resume = str(state.get("current_partial") or "") if int(state.get("current_index", -1)) == index else ""
             def save_batch_partial(text: str, complete: bool, segment: int, idx=index) -> None:
                 state.update({"current_index": idx, "current_partial": text, "current_complete": bool(complete), "current_segment": int(segment)})
                 self._checkpoint_write(checkpoint_path, state)
             part = self.client.generate_complete_text(
-                prompt, think=False, temperature=0.0, num_predict=1800, max_segments=4,
+                prompt, think=False, temperature=0.0, num_predict=900, max_segments=2,
                 response_so_far=resume, on_partial=save_batch_partial,
             ).strip()
             if not part:
                 raise RuntimeError(f"background condensation returned blank batch {index + 1}/{len(chunks)}")
+            if len(part) > int(batch_target_chars * 1.20):
+                tighten = (
+                    "Rewrite the candidate below as materially smaller working memory. "
+                    "It is still too close to source-by-source narration. Merge duplicates, remove examples/transient details, and keep only state/decisions/preferences/unresolved obligations/reusable lessons that can change future work. "
+                    f"Return <= {batch_target_chars} characters, plain text only.\n\nCANDIDATE:\n" + part
+                )
+                part = self.client.generate_complete_text(
+                    tighten, think=False, temperature=0.0, num_predict=900, max_segments=2,
+                ).strip()
+                if len(part) > int(batch_target_chars * 1.20):
+                    raise RuntimeError(
+                        f"background condensation batch {index + 1}/{len(chunks)} refused compression target "
+                        f"chars={len(part)} target={batch_target_chars}"
+                    )
             partials.append(part)
             state.update({"completed_batches": partials, "current_index": index + 1, "current_partial": "", "current_complete": True})
             self._checkpoint_write(checkpoint_path, state)
         combined = "\n\n--- MEMORY BATCH ---\n\n".join(partials)
         base = ("PREVIOUS CONSOLIDATED MEMORY:\n" + base_summary + "\n\n") if base_summary else ""
         merge_prompt = (
-            "Merge the prior consolidated memory and these newer/surviving summaries into one highly compressed global background memory. "
-            "Prefer the newest non-superseded state, remove repetition/transient execution chatter, and retain only information likely to improve future work. "
-            "Validated compact task-history replaces deleted raw attempts. Preserve meaningful chronology with timezone-aware timestamps. "
-            "Target <=12000 characters. Do not invent facts. Return plain text only.\n\n" + base + "NEW/SURVIVING SUMMARIES:\n" + combined
+            "Produce ONE tight global working-memory snapshot from the prior snapshot and newer distilled notes. "
+            "This is NOT an archive and must NOT re-list every source item. The validated task_history archive already preserves reconstructable detail. "
+            "Keep only information whose absence would likely cause a materially worse future answer/action: current project state, durable decisions, stable preferences, unresolved obligations, reusable failure/efficiency lessons, and still-useful artifact/data pointers. "
+            "For repeated project updates, keep the newest non-superseded state and only history needed to explain a current constraint or lesson. "
+            "Delete transient market levels, temporary terminology, examples, smoke-test narration, routine successes, superseded states, duplicated instructions, and narrative chronology that does not change current behavior. "
+            "Prefer concise labeled statements over prose. Do NOT preserve one bullet per memory/source record. "
+            f"Hard target: <= {snapshot_target_chars} characters. Do not invent facts. Return plain text only.\n\n"
+            + base + "NEW/SURVIVING SUMMARIES:\n" + combined
         )
         def save_merge_partial(text: str, complete: bool, segment: int) -> None:
             state.update({"stage": "merge", "merge_partial": text, "merge_complete": bool(complete), "merge_segment": int(segment)})
             self._checkpoint_write(checkpoint_path, state)
         summary = self.client.generate_complete_text(
-            merge_prompt, think=False, temperature=0.0, num_predict=3000, max_segments=4,
+            merge_prompt, think=False, temperature=0.0, num_predict=1800, max_segments=2,
             response_so_far=str(state.get("merge_partial") or ""), on_partial=save_merge_partial,
         ).strip()
         if not summary:
             raise RuntimeError("background condensation merge returned blank")
+        if len(summary) > int(snapshot_target_chars * 1.15):
+            tighten = (
+                "The candidate below is too verbose for background working memory. Re-condense it; do not continue it. "
+                "Remove source-by-source narration, repeated project state, examples, transient values, and anything safely recoverable from task_history. "
+                "Keep only current state, durable decisions/preferences, unresolved obligations, and reusable lessons that materially affect future work. "
+                f"Return <= {snapshot_target_chars} characters, plain text only.\n\nCANDIDATE:\n" + summary
+            )
+            summary = self.client.generate_complete_text(
+                tighten, think=False, temperature=0.0, num_predict=1800, max_segments=2,
+            ).strip()
+            if len(summary) > int(snapshot_target_chars * 1.15):
+                raise RuntimeError(
+                    f"background condensation merge refused compression target "
+                    f"chars={len(summary)} target={snapshot_target_chars}"
+                )
         source_through = max(record["at"] for record in (delta_all if incremental else records))
         self.durable.save_background_snapshot(summary, source_through)
         self.durable.keep_latest_background_snapshot()

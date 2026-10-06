@@ -1,6 +1,6 @@
 # Norm development notes
 
-These are current engineering contracts for **Norm 0.53.17**. This file intentionally contains no release chronology.
+These are current engineering contracts for **Norm 0.53.18**. This file intentionally contains no release chronology.
 
 ## Architectural authority
 
@@ -69,19 +69,25 @@ Routine retries, verifier chatter, duplicate smokes, and execution narration are
 
 Regular scheduled background condensation and manual /memory-condense are recent-only.
 
-memory.regular_memory_window_days defaults to 14.
+memory.regular_memory_window_days defaults to 14. Regular background snapshot tuning defaults to consolidation_batch_chars=14000, consolidation_batch_target_chars=1800, and consolidation_snapshot_target_chars=6000.
+
+The regular background snapshot is working memory, not archival memory. PostgreSQL task_history retains reconstructable detail. Batch/final prompts must aggressively synthesize repeated project updates, preserve only current state/durable decisions/stable preferences/unresolved obligations/reusable lessons/still-useful pointers, and explicitly reject one-output-item-per-source behavior. Transient examples, temporary shorthand, routine successful checks, superseded states, and detail recoverable from task_history are disposable.
+
+Regular batch condensation uses a bounded 900 × 2 generation budget; the final working-memory merge uses 1800 × 2. If either result exceeds its configured character target tolerance, Norm asks the model to re-condense the candidate rather than blindly continuing it.
 
 Manual force means run now, not ignore history scope.
 
-Each replay is isolated: one compact record in, no neighboring memory, no prior replay, no tools, maximum 4,800 × 4 continuation budget, authoritative source used only by grader/repair, replay text discarded after the decision.
+Compact-record replay validation remains separate from the working-memory snapshot: one compact record in, no neighboring memory, no prior replay, no tools, maximum 4,800 × 4 continuation budget, authoritative source used only by grader/repair, replay text discarded after the decision.
 
-A failed record may be repaired from its own authoritative task source and retried. The persisted row must be the repaired row rather than the pre-repair version.
+A failed compact record may be repaired from its own authoritative task source and retried. The persisted row must be the repaired row rather than the pre-repair version.
 
 ## Scheduled maintenance contract
 
 Scheduled maintenance alternates **regular -> full -> regular -> full** using memory.scheduled_memory_interval_days (default 7).
 
-The last successful scheduled mode is durable PostgreSQL runtime state. A failed/crashed run retains the Redis active marker and resumes the same mode; the alternation advances only after successful completion.
+The last successful scheduled mode is durable PostgreSQL runtime state. Transient crashes/failures may retain the Redis active marker for same-mode resume; alternation advances only after successful completion. ModelOutputTruncated is deterministic attention state, not an automatic retry signal: Norm writes durable weekly_maintenance_parked state, marks the Redis run requires_attention with auto_resume=false, and waits for explicit operator resume.
+
+Scheduled maintenance is first-class operator-visible work. The worker idle flag is cleared while it runs; /status/busy carries a maintenance object; /queue and /queue-full display active or parked maintenance even when the prompt queue is empty. If there is no active/queued user task ahead of it, /suppress-task durably parks the maintenance run, checkpoints existing maintenance state, cancels the active model call, and disables automatic resume. /resume-task maintenance clears the durable park and explicitly resumes the saved run when the worker is idle.
 
 Scheduled regular uses recent incremental background-memory condensation. Scheduled full sweeps the complete historical archive with the full hierarchical validation/merge rules below.
 
@@ -158,9 +164,9 @@ Rendered page evidence outranks an untrusted/corrupt text layer. Large documents
 
 ## WeasyPrint contract
 
-Windows PDF rendering is self-contained under tools\weasyprint. Invoke the bundled standalone executable/wrapper rather than mixing its frozen DLL set into Norm's Python process.
+Windows PDF rendering uses the official standalone WeasyPrint onedir runtime under tools\weasyprint\runtime. Do not mix its frozen DLL set into Norm's Python process.
 
-Installer acceptance proves both --info discovery and actual PDF creation.
+The public package does not vendor that generated native runtime. package-manifest.json pins the official upstream URL, version, and archive SHA-256. tools\fetch_weasyprint_runtime.py is the canonical fetch/repair implementation; Installer 1.6.8 calls it when the runtime is absent/stale, and tools\weasyprint.cmd calls the same helper for lazy repair. Existing valid runtime directories are persistent across source sync. Installer acceptance proves both --info discovery and actual PDF creation after ensure/repair.
 
 ## Installer/package contract
 

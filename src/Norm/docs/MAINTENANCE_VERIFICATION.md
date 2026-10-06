@@ -1,6 +1,6 @@
 # Norm maintenance verification
 
-Current package under verification: **Norm 0.53.17 / Installer 1.6.7-unified**.
+Current package under verification: **Norm 0.53.18 / Installer 1.6.8-unified**.
 
 This file records current package evidence only.
 
@@ -19,6 +19,8 @@ PASS: current maintenance/runtime/operator source compiles with Python py_compil
 - core\norm_runtime\rich_console.py
 - tools\norm_gui_common.py
 - tools\norm_gui_prompt.py
+- tools\fetch_weasyprint_runtime.py
+- tools\test_maintenance_control.py
 - tools\test_maintenance_reliability.py
 - tools\test_model_switch.py
 
@@ -39,6 +41,18 @@ The regression set verifies:
 - runtime startup is hardwired to MODEL_NAME = norm rather than restoring a configured/session alternate.
 
 Source inspection additionally verifies startup switches are blocked, tracked work is checked before and after candidate probes, every distinct live Ollama endpoint is probed, all live clients are committed together, and commit failure restores prior model pointers.
+
+## Maintenance control / tight-summary regression
+
+PASS: python tools\test_maintenance_control.py.
+
+Current result: **6 tests passed**.
+
+The regression set verifies active scheduled maintenance can be suppressed when no user task is active/queued, suppression writes durable park state, requires_attention is non-active/parked, explicit maintenance resume clears the durable park and records operator resume, regular background-summary prompts reject source-by-source restatement and use the tight generation/character targets, deterministic ModelOutputTruncated is wired to requires_attention with auto-resume disabled, and the Prompt queue exposes maintenance plus its resume control.
+
+PASS: python tools\test_suppression_resume.py --services-root <package-root>.
+
+The existing user-task suppression/resume regression still passes: suppression captures exactly once, flush/suppress races remain idempotent, durably suppressed pending work is not requeued on startup, resume restores exactly one captured job, and test Redis keys are cleaned up.
 
 ## Memory-maintenance regression
 
@@ -93,17 +107,25 @@ Current checks verify coverage-cursor advancement, stale-state pruning, rejectio
 
 ## WeasyPrint / Pango
 
-PASS: python tools\weasyprint_smoke.py.
+PASS: tools\fetch_weasyprint_runtime.py was tested against the exact pinned upstream archive with an empty destination. The helper verified SHA-256, safely extracted the official onedir build, reported WeasyPrint 70.0 / Pango 1.58.2, rendered a valid PDF, and cleaned up its test destination.
 
-Observed current-package smoke result:
+Observed helper validation:
 
-    WEASYPRINT_SMOKE_PASS version=70.0 pdf_bytes=7195
+    archive_sha256=ab1151f210b4e6bb7aa7a79e91a67e8ddb760094c107bfda55241b6aaefe7d53
+    WeasyPrint version: 70.0
+    Pango version: 15802
+    WEASYPRINT_FETCH_HELPER_PASS
 
-The bundled runtime reports WeasyPrint 70.0 / Pango and creates a valid PDF from HTML.
+PASS: Installer 1.6.8's missing-runtime branch was invoked against a scratch target with no tools\weasyprint\runtime directory. It called the installed source helper through the Norm Python environment, verified the same pinned archive, then independently repeated --info and a real HTML-to-PDF render.
 
-Bundled upstream runtime archive SHA-256:
+Observed installer fetch-path render:
 
-    ab1151f210b4e6bb7aa7a79e91a67e8ddb760094c107bfda55241b6aaefe7d53
+    WeasyPrint version: 70.0
+    Pango version: 15802
+    WeasyPrint/Pango render smoke passed: 7042 bytes
+    INSTALLER_FETCH_PATH_PASS
+
+The public source/runtime ZIP intentionally omits the generated native runtime; the package manifest retains the official upstream URL and SHA-256. Existing valid installed runtime is persistent across source updates, and tools\weasyprint.cmd invokes the same helper for lazy repair.
 
 ## Emergency-console behavior
 
