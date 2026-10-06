@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "name": "Norm Web Browser",
+  "version": "1.0.0",
+  "date": "2026-10-05",
+  "entrypoint": "src/main.py",
+  "description": "Optional Playwright browser, Beautiful Soup/Soup Sieve parser, bounded crawler/search, Trafilatura text extraction, and workspace-confined file downloader.",
+  "capabilities": [
+    "real browser navigation",
+    "javascript-rendered page extraction",
+    "Beautiful Soup parsing",
+    "Soup Sieve CSS selection",
+    "bounded public web crawling",
+    "Bing web and news search",
+    "file link discovery and download",
+    "persistent browser sessions"
+  ],
+  "sha256": "b27bd2c85ea35b2c72d97c151054437947cd552a572e34dd6a159cd15341a638"
+}

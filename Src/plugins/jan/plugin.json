@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "name": "jan",
+  "version": "1.0.0",
+  "date": "2026-10-05",
+  "entrypoint": "src/main.py",
+  "description": "Remote Jan adapter for model/chat delegation over an operator-configured Tailscale endpoint.",
+  "capabilities": [
+    "network",
+    "remote-agent",
+    "model-provider"
+  ],
+  "sha256": "800092f44721f5dbf5e0e33db751d27dca074339dec632c3787bdc3ae57448ea"
+}

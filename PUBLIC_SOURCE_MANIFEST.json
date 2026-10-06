@@ -1,0 +1,35 @@
+{
+  "name": "kh-norm self-contained source/install kit",
+  "norm_version": "0.53.20",
+  "installer_version": "1.6.10-unified",
+  "repository": "hermit-node/kh-norm",
+  "layout": {
+    "installer_source": [
+      "Norm-Installer.py",
+      "installer_environment.py",
+      "Norm-Installer.spec"
+    ],
+    "build": [
+      "Build-Installer.py",
+      "Build-Installer.bat"
+    ],
+    "run": "Run-Installer.bat",
+    "source_package": "Norm-0.53.20-portable-source.zip",
+    "extracted_source": "Src/"
+  },
+  "source_package_sha256": "04E605A21F9428579C4006A3EE7D001BF83D7C2A75C211DA25B6BBE06997B1BD",
+  "reference_installer_exe_sha256": "8A23A8A93FD45A3EF72BF3F4E6735A333C3973E76825B2A91597527B7CDA80BE",
+  "omitted_from_git": [
+    "generated dist/build output",
+    "machine-local imprints, credentials and secrets",
+    "runtime state/logs/workspace/temp",
+    "fetched WeasyPrint native runtime tree"
+  ],
+  "installer_source_sha256": {
+    "Norm-Installer.py": "03E8C0F8B3F061D9B190BE9B1FBB5C5B232260DEB295FBC852B12BFC94024109",
+    "installer_environment.py": "28A8BE77F0FA2F85791341C0CC7DC8DC16A791ADC5A56ED07B8228AE9511BB22",
+    "Norm-Installer.spec": "4E0AAE3312B0700BBA467EF998B959FC90E4E166CA4AE5E6E1D10DBDE775F57A"
+  },
+  "historical_reference_installer_exe_sha256": "8A23A8A93FD45A3EF72BF3F4E6735A333C3973E76825B2A91597527B7CDA80BE",
+  "rebuild_note": "Exact installer source/spec are preserved. PyInstaller rebuilds are functionally reproducible but generated EXE bytes may differ because executable metadata is not deterministic."
+}
