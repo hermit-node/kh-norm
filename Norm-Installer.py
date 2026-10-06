@@ -20,7 +20,7 @@ from typing import Any, Callable, Iterable
 
 import installer_environment as envtools
 
-INSTALLER_VERSION = "1.6.6-unified"
+INSTALLER_VERSION = "1.6.7-unified"
 PIP_VERSION = "26.2.1"
 PIP_MIN_VERSION = PIP_VERSION  # backward-compatible internal print helper
 PIP_SPEC = f"pip=={PIP_VERSION}"
@@ -139,6 +139,36 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _validate_bundled_weasyprint(target: Path, manifest: dict, log: LogFn) -> None:
+    cfg = dict((manifest.get("bundled_tools") or {}).get("weasyprint") or {})
+    if not cfg:
+        return
+    rel = str(cfg.get("entrypoint") or "tools/weasyprint/runtime/weasyprint.exe")
+    exe = target / rel
+    if not exe.is_file():
+        raise InstallerError(f"Bundled WeasyPrint executable is missing: {exe}")
+    info = _run([str(exe), "--info"], cwd=target, log=log)
+    combined = info.stdout or ""
+    expected = str(cfg.get("version") or "").strip()
+    if expected and f"WeasyPrint version: {expected}" not in combined:
+        raise InstallerError(f"Bundled WeasyPrint version check failed; expected {expected}")
+    if "Pango version:" not in combined:
+        raise InstallerError("Bundled WeasyPrint did not report a Pango runtime")
+
+    with tempfile.TemporaryDirectory(prefix="norm-weasyprint-smoke-") as temp_name:
+        temp = Path(temp_name)
+        html = temp / "smoke.html"
+        pdf = temp / "smoke.pdf"
+        html.write_text(
+            "<html><body><h1>Norm installer render check</h1><p>Pango is available.</p></body></html>",
+            encoding="utf-8",
+        )
+        _run([str(exe), str(html), str(pdf)], cwd=target, log=log)
+        if not pdf.is_file() or pdf.stat().st_size < 5 or pdf.read_bytes()[:5] != b"%PDF-":
+            raise InstallerError("Bundled WeasyPrint/Pango smoke test did not produce a valid PDF")
+        log(f"Bundled WeasyPrint/Pango render smoke passed: {pdf.stat().st_size} bytes")
 
 
 
@@ -1085,6 +1115,9 @@ def install_norm(
         if scan_root.is_dir():
             for cache in sorted(scan_root.rglob("__pycache__"), reverse=True):
                 shutil.rmtree(cache, ignore_errors=True)
+
+    progress(70, "Validating bundled WeasyPrint/Pango")
+    _validate_bundled_weasyprint(target, manifest, log)
 
     compiled: Path | None = None
     if options.compile_exe:

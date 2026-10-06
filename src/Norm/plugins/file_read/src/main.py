@@ -13,7 +13,7 @@ def _root() -> Path:
 
 
 def _resolve(path: str) -> tuple[Path, object]:
-    policy = load_file_access_policy(_root())
+    policy = load_file_access_policy(_root(), capability="file_read")
     target = authorize_path(path, policy.read_roots, access="read", hardlock=policy.enforce_read_directories)
     if is_secret_file(target):
         raise PermissionError("Secret files must be loaded internally; raw reads are disabled")

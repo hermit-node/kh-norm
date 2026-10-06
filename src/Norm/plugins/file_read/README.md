@@ -17,3 +17,5 @@ Chunk defaults/maxima come from `[file_access]` in `config/settings.ini`. Secret
 ## Package identity
 
 `plugin.json` schema 2 records this plugin's name, version, release date, `src/main.py` injection point, and one SHA-256 for the complete `src/` tree. Norm recalculates that tree hash before loading the plugin. README changes do not change the code SHA; edits or renames anywhere under `src/` do.
+
+Per-capability additions can be configured centrally with `[file_access_overrides] file_read.read_add`.

@@ -248,7 +248,11 @@ def _activity_app(
                 if path == "/control/memory-condense":
                     if memory_condense is None:
                         return web.json_response({"error": "memory-condense control unavailable"}, status=503)
-                    return web.json_response(await _call(memory_condense, bool(payload.get("full", False))))
+                    return web.json_response(await _call(
+                        memory_condense,
+                        bool(payload.get("full", False)),
+                        bool(payload.get("deep", False)),
+                    ))
                 if path in {"/control/stop-all", "/control/stop-all-now"}:
                     if stop_all is None:
                         return web.json_response({"error": "stop-all control unavailable"}, status=503)

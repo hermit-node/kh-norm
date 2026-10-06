@@ -294,10 +294,10 @@ class NormConsole:
         except Exception as exc:
             self.console.print(f"[red]Could not build about information: {exc}[/]")
 
-    def _memory_condense(self, full: bool = False) -> None:
+    def _memory_condense(self, full: bool = False, deep: bool = False) -> None:
         req = request.Request(
             self.memory_condense_url,
-            data=json.dumps({"full": bool(full)}).encode("utf-8"),
+            data=json.dumps({"full": bool(full), "deep": bool(deep)}).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
@@ -344,8 +344,9 @@ class NormConsole:
             "  /delete-files      Permanently purge reversible trash now.\n"
             "  /backup            Create a portable installer/source backup.\n"
             "  /backup full       Create a sensitive full backup with private state and PostgreSQL.\n"
-            "  /memory-condense   Replay-validate and compact a bounded batch of terminal task history.\n"
-            "  /memory-condense -full  Replay-validate and compact all terminal history, then full-prune covered raw history.\n"
+            "  /memory-condense   Compact and replay-validate only the recent memory window (default 14 days).\n"
+            "  /memory-condense -deep  Run one bounded older-history compaction/validation pass without hierarchical merging.\n"
+            "  /memory-condense -full  Sweep full history: sample 12 per 200 dated rows, then merge neighboring rows conservatively.\n"
             "  /status            Show local mute, pause, and pending-input state.\n"
             "  /status/busy       Show authoritative runtime busy state.\n"
             "  /stop-all          Finish the current step, snapshot recovery state, then stop Norm/Ollama.\n"
@@ -412,9 +413,11 @@ class NormConsole:
         elif parts in (["/backup", "full"], ["/backup-zip"]):
             threading.Thread(target=self._run_backup, kwargs={"full": True}, daemon=True).start()
         elif parts == ["/memory-condense"]:
-            threading.Thread(target=self._memory_condense, kwargs={"full": False}, daemon=True).start()
+            threading.Thread(target=self._memory_condense, kwargs={"full": False, "deep": False}, daemon=True).start()
+        elif parts in (["/memory-condense", "-deep"], ["/memory-condense", "--deep"], ["/memory-condense", "deep"]):
+            threading.Thread(target=self._memory_condense, kwargs={"full": False, "deep": True}, daemon=True).start()
         elif parts in (["/memory-condense", "-full"], ["/memory-condense", "--full"], ["/memory-condense", "full"]):
-            threading.Thread(target=self._memory_condense, kwargs={"full": True}, daemon=True).start()
+            threading.Thread(target=self._memory_condense, kwargs={"full": True, "deep": False}, daemon=True).start()
         elif parts == ["/new"] or (parts and parts[0] == "/new"):
             name = stripped[len("/new"):].strip()
             try:

@@ -49,7 +49,7 @@
     "allowed_roots": [
       "{documents_root}"
     ],
-    "backup_root": "{runtime_root}\\state\\file-backups",
+    "backup_root": "{state_root}\\file-backups",
     "audit_log": "{runtime_root}\\logs\\tool-audit.jsonl",
     "max_read_bytes": 25165824,
     "max_write_bytes": 5242880,
@@ -96,15 +96,15 @@
     "candidate_threads": 12,
     "recent_messages": 12,
     "background_context_chars": 32000,
-    "consolidation_days": 7,
+    "scheduled_memory_interval_days": 7,
     "consolidation_check_seconds": 3600,
     "consolidation_batch_chars": 14000,
-    "deep_history_enabled": true,
+    "regular_memory_window_days": 14,
     "deep_history_retention_days": 30,
-    "deep_history_interval_days": 21,
     "deep_history_max_tasks_per_pass": 500,
-    "deep_history_full_batch_source_tasks": 200,
+    "deep_history_full_batch_rows": 200,
     "deep_history_full_samples_per_batch": 12,
+    "deep_history_full_merge_max_records": 6,
     "deep_history_backup_dir": "%USERPROFILE%\\Documents\\Norm-backups\\history-maintenance",
     "recovery_stale_hours": 24,
     "recovery_cleanup_max_trees": 20
@@ -132,7 +132,7 @@
   "deletion_queue": {
     "db": 2,
     "stream": "norm:deletion:queue",
-    "trash_root": "{runtime_root}\\state\\deletion-trash",
+    "trash_root": "{state_root}\\deletion-trash",
     "items_key": "norm:trash:items",
     "batches_key": "norm:trash:batches",
     "cross_volume_move_max_bytes": 268435456

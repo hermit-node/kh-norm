@@ -5,6 +5,8 @@ import json
 import re
 from pathlib import Path
 
+from .settings import load_path_settings
+
 
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,96}$")
 _MAX_ACTIVE_PROMPT_CHARS = 64_000
@@ -18,7 +20,7 @@ def load_active_voice_context(runtime_root: str | Path) -> str:
     an empty string so a damaged profile cannot prevent Norm from starting.
     """
     root = Path(runtime_root).resolve()
-    state_root = (root / "state" / "voice_profiles").resolve()
+    state_root = (load_path_settings(root)["state_root"] / "voice_profiles").resolve()
     pointer_path = state_root / "active.json"
     prompt_path = state_root / "active_prompt.txt"
     if not pointer_path.is_file() or not prompt_path.is_file():
