@@ -37,6 +37,7 @@ class NormConsole:
         self.stop_all_url = control_base + "/stop-all"
         self.stop_all_now_url = control_base + "/stop-all-now"
         self.suppress_task_url = control_base + "/suppress-task"
+        self.resume_maintenance_url = control_base + "/resume-maintenance"
         self.flush_suppressed_url = control_base + "/flush-suppressed"
         self.delete_list_url = control_base + "/delete-list"
         self.restore_delete_url = control_base + "/restore-delete"
@@ -240,6 +241,23 @@ class NormConsole:
         except Exception as exc:
             self.console.print(f"[red]Could not suppress task: {exc}[/]")
 
+    def _resume_maintenance(self) -> None:
+        req = request.Request(self.resume_maintenance_url, data=b"{}", method="POST")
+        try:
+            with request.urlopen(req, timeout=10) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            if result.get("resumed"):
+                self.console.print(
+                    f"[yellow]Resumed weekly maintenance ({result.get('mode') or 'unknown'}) "
+                    f"from {result.get('phase') or 'saved checkpoint'}; it will run when idle.[/]"
+                )
+            else:
+                self.console.print(
+                    f"[yellow]Maintenance not resumed: {result.get('reason') or result.get('status') or 'not parked'}.[/]"
+                )
+        except Exception as exc:
+            self.console.print(f"[red]Could not resume maintenance: {exc}[/]")
+
     def _flush_suppressed(self) -> None:
         req = request.Request(self.flush_suppressed_url, data=b"{}", method="POST")
         try:
@@ -426,6 +444,8 @@ class NormConsole:
             return False
         elif parts == ["/suppress-task"]:
             threading.Thread(target=self._suppress_task, daemon=True).start()
+        elif parts == ["/resume-task", "maintenance"]:
+            threading.Thread(target=self._resume_maintenance, daemon=True).start()
         elif parts == ["/flush-suppressed"]:
             threading.Thread(target=self._flush_suppressed, daemon=True).start()
         elif parts == ["/delete-list"]:

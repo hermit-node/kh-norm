@@ -320,6 +320,33 @@ def show_help() -> None:
         print(f"Could not read help menu {path}: {exc}")
 
 
+def maintenance_from_busy(ep: dict[str, str]) -> dict:
+    try:
+        payload = get_json(ep["busy"])
+    except Exception:
+        return {}
+    maintenance = payload.get("maintenance")
+    return maintenance if isinstance(maintenance, dict) else {}
+
+
+def print_maintenance_status(maintenance: dict) -> bool:
+    if not maintenance:
+        return False
+    active = bool(maintenance.get("active"))
+    parked = bool(maintenance.get("parked"))
+    status = str(maintenance.get("status") or "")
+    if not active and not parked and status in {"", "inactive", "unavailable"}:
+        return False
+    state = "active" if active else "parked" if parked else status or "maintenance"
+    mode = str(maintenance.get("mode") or "unknown")
+    phase = str(maintenance.get("phase") or "unknown")
+    run_id = str(maintenance.get("run_id") or "")
+    reason = str(maintenance.get("reason") or "").strip()
+    suffix = f" | {reason}" if reason else ""
+    print(f"[M] {state:<11} weekly-maintenance {mode} | phase={phase} | run={run_id[:8] or '-'}{suffix}")
+    return True
+
+
 def switch_model(ep: dict[str, str], selector: str | None = None) -> None:
     try:
         result = post_json(
@@ -554,6 +581,7 @@ def main() -> int:
                 print(f"LIVE QUEUE: {len(live_items)} queued/in-flight entry(s)  runtime_phase={runtime_phase}")
                 for item in live_items:
                     print(json.dumps(item, indent=2, ensure_ascii=False))
+                print_maintenance_status(maintenance_from_busy(ep))
                 print(f"PARKED / UNCERTAIN: {len(items)} delivery record(s)")
                 for item in items:
                     print(json.dumps(item, indent=2, ensure_ascii=False))
@@ -573,7 +601,11 @@ def main() -> int:
                         continue
                 items = dispatcher.queue_snapshot(limit=limit)
                 if not items:
-                    print("GUI Redis queue is empty.")
+                    maintenance = maintenance_from_busy(ep)
+                    if print_maintenance_status(maintenance):
+                        print("GUI Redis prompt queue is empty; maintenance is shown above.")
+                    else:
+                        print("GUI Redis queue is empty.")
                     continue
                 items, runtime_phase = enrich_queue_with_runtime(ep, items)
                 for item in items:
@@ -594,6 +626,7 @@ def main() -> int:
                             preview = preview[:107] + "..."
                         detail = preview
                     print(f"[{item['index']}] {item['state']:<11} {item['entry_id']} {item['prompt_id'][:8]}  {detail}")
+                print_maintenance_status(maintenance_from_busy(ep))
                 continue
             if lowered == "/resume-queue" or lowered.startswith("/resume-queue "):
                 parts = text.split()
@@ -685,7 +718,26 @@ def main() -> int:
                 dispatcher.publish_reply(text, source="repeat")
                 print("Redisplayed the last completed Norm answer verbatim from Redis.")
                 continue
+            elif lowered == "/resume-task maintenance":
+                try:
+                    result = post_json(ep["resume_maintenance"], timeout=10)
+                except Exception as exc:
+                    print(f"Could not resume maintenance: {exc}")
+                    continue
+                if result.get("resumed"):
+                    print(
+                        f"Resumed weekly maintenance ({result.get('mode') or 'unknown'}) "
+                        f"from phase {result.get('phase') or 'saved checkpoint'}; it will run when the worker is idle."
+                    )
+                else:
+                    print(f"Maintenance not resumed: {result.get('reason') or result.get('status') or 'not parked'}.")
+                continue
             elif lowered == "/resume-task" or lowered.startswith("/resume-task "):
+                if lowered == "/resume-task":
+                    maintenance = maintenance_from_busy(ep)
+                    if maintenance.get("parked"):
+                        print_maintenance_status(maintenance)
+                        print("Use /resume-task maintenance to resume the parked maintenance run.")
                 submit_resume_command(ep, dispatcher, text)
                 continue
             elif lowered == "/suppress-task":

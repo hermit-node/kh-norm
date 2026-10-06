@@ -1,40 +1,35 @@
-# Local/private operator configuration
-norm-imprint.local.json
-norm-imprint.*.local.json
+# Machine-local/private state
 .env
 .env.*
 !.env.example
-secrets/
+norm-imprint.local.json
+norm-imprint.*.local.json
+.norm-local/
 .ssh/
+secrets/
+state/
+logs/
+workspace/
+temp/
+backup/
+backups/
+*.dump
+*.sql
 *.key
 *.pem
 *.pfx
 *.p12
 
-# Runtime/user state
-state/
-logs/
-workspace/
-temp/
-backups/
-*.dump
-*.sql
-
-# Generated release/build output
-Norm-Installer.exe
-Norm-*.zip
-Norm-*.zip.sha256
-SHA256SUMS.txt
+# Generated source/runtime output
+src/Norm/.venv/
+src/Norm/core/norm.exe
+src/Norm/tools/weasyprint/runtime/
+**/__pycache__/
+*.pyc
+.pytest_cache/
 build/
 dist/
 *.spec
-.installer-build/
-__pycache__/
-*.pyc
-.pytest_cache/
-
-# Reproducible third-party binary runtime
-src/Norm/tools/weasyprint/runtime/
 
 # Editor/OS
 .vscode/

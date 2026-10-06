@@ -1,11 +1,9 @@
 # Security
 
-Never commit local imprints, .env files, passwords, API/OAuth/Tailscale tokens, SSH private keys, private certificates, PostgreSQL dumps containing runtime/user state, logs, workspace content or full-state backups.
+The public repository contains package code and distributable installer artifacts only.
 
-The public tree contains topology-neutral source/configuration only. Runtime Redis/PostgreSQL data can contain sensitive tool results and user context and must remain local.
+Never commit local imprints, .env/secret files, passwords/tokens, SSH private keys, runtime PostgreSQL/Redis state, logs, workspace content, full-state backups, or downloaded machine-local WeasyPrint runtime output.
 
-The frozen WeasyPrint runtime is reproducible third-party binary material and is intentionally ignored by Git.
+src/Norm/tools/weasyprint/runtime/ is generated locally from a package-pinned official upstream archive and is intentionally Git-ignored.
 
-Run this before publication:
-
-    python tools/public_release_guard.py --tree .
+Run python tools/public_release_guard.py --tree . before publishing.

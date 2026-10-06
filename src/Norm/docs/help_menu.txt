@@ -23,9 +23,9 @@ Status / context
   /network-map [--json]
       Passive Tailscale inventory plus explicitly allowlisted probes.
   /queue [N]
-      Show queued GUI prompts with stable snapshot indexes.
+      Show queued GUI prompts plus any active/parked scheduled maintenance job.
   /queue-full
-      Show full prompts and live + parked/uncertain state.
+      Show full prompts, scheduled maintenance, and parked/uncertain delivery state.
 
 Threads / input
   /new [name]
@@ -45,9 +45,11 @@ Threads / input
 
 Task control
   /suppress-task
-      Park the active task tree, or oldest next queued task tree.
+      Park the active task tree, oldest queued task tree, or active scheduled maintenance when no user task is ahead of it.
   /resume-task [N]
-      List suppressed tasks, or resume an index/task-id/prefix directly.
+      List suppressed user tasks, or resume an index/task-id/prefix directly.
+  /resume-task maintenance
+      Explicitly resume scheduled maintenance that was suppressed or parked for attention.
   /flush-suppressed
       Permanently delete suppressed tasks and parked delivery records.
 
@@ -64,6 +66,9 @@ Files / backup
       Create a sensitive full backup with private state and PostgreSQL.
 
 Memory maintenance
+  Scheduled regular maintenance distills recent history into a tight working-memory snapshot; detailed reconstructable history remains in task_history.
+  A deterministic output-budget failure parks scheduled maintenance instead of automatically retrying forever.
+
   /memory-condense
       Compact/replay-validate only the recent memory window (default 14 days).
   /memory-condense -deep

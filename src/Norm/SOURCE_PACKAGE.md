@@ -1,6 +1,6 @@
-# Norm 0.53.17 portable source package
+# Norm 0.53.18 portable source package
 
-This directory is the exact source payload intended for **Norm 0.53.17 / Installer 1.6.7-unified**.
+This directory is the exact source payload intended for **Norm 0.53.18 / Installer 1.6.8-unified**.
 
 The portable source package excludes generated or machine-private material such as .venv, compiled core\norm.exe, build output, Python caches, secrets, and private runtime state.
 
@@ -18,7 +18,7 @@ The portable source package excludes generated or machine-private material such 
 - Canonical internal state_root and capability-specific file-access overrides.
 - Package-local 7-Zip archive support.
 - First-party PDF vision parsing.
-- Bundled WeasyPrint 70.0 / Pango 1.58.2 Windows runtime.
+- Verified-download WeasyPrint 70.0 / Pango 1.58.2 runtime with package-pinned upstream URL/SHA and lazy repair helper.
 - Managed dynamic plugins and shared PostgreSQL pool.
 - Operator consoles and emergency shutdown coordination.
 
@@ -28,6 +28,9 @@ config\runtime.json defaults:
 
     scheduled_memory_interval_days = 7
     regular_memory_window_days = 14
+    consolidation_batch_chars = 14000
+    consolidation_batch_target_chars = 1800
+    consolidation_snapshot_target_chars = 6000
     deep_history_full_batch_rows = 200
     deep_history_full_samples_per_batch = 12
     deep_history_full_merge_max_records = 6
@@ -47,4 +50,4 @@ These settings are re-read when a maintenance pass starts.
 
 package-manifest.json is the installer-facing source contract.
 
-Installer 1.6.7 binds the portable-source ZIP by exact filename and SHA-256, migrates/preserves machine configuration/state, validates bundled WeasyPrint/Pango with a real render, and recreates/reuses generated environment/build output as appropriate.
+Installer 1.6.8 binds the portable-source ZIP by exact filename and SHA-256, migrates/preserves machine configuration/state, preserves a valid native WeasyPrint runtime or fetches/repairs it from the pinned official archive, validates its SHA-256 and real PDF render, and recreates/reuses generated environment/build output as appropriate.

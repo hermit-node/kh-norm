@@ -1,6 +1,6 @@
 # Norm current status
 
-Current package: **Norm 0.53.17** with **Installer 1.6.7-unified**.
+Current package: **Norm 0.53.18** with **Installer 1.6.8-unified**.
 
 This file is a current-state snapshot only.
 
@@ -57,9 +57,11 @@ This file is a current-state snapshot only.
 
 Regular background maintenance and manual /memory-condense are recent-only. Default recent window: **14 days**.
 
-Manual recent condensation validates every compact record. Each reconstruction is isolated and has a maximum generation budget of **4,800 tokens × 4 continuation segments**. Replays are disposable and never carry into the next record.
+The scheduled regular background snapshot is a small working-memory layer, not a second archive. Defaults are 14,000 input chars per slice, about 1,800 output chars per slice, and about 6,000 chars for the final snapshot. It aggressively synthesizes repeated state and drops routine chatter, examples, transient levels/shorthand, smoke narration, superseded state, and source-by-source restatement.
 
-Scheduled memory maintenance alternates **regular -> full -> regular -> full** on the configured interval (default 7 days). Failed/interrupted passes resume the same mode and do not advance the alternation. Scheduled full sweeps the complete historical compact/raw archive. Deep is manual-only through /memory-condense -deep and performs bounded older-history compaction/validation without hierarchical merging.
+Manual recent compact-record validation is separate: every compact record reconstruction is isolated and has a maximum generation budget of **4,800 tokens × 4 continuation segments**. Replays are disposable and never carry into the next record.
+
+Scheduled memory maintenance alternates **regular -> full -> regular -> full** on the configured interval (default 7 days). Transient failures may resume the same mode and do not advance alternation. Deterministic output truncation parks the run as requires_attention with auto-resume disabled. /status/busy, /queue, and /queue-full expose maintenance; /suppress-task can park it when no user task is ahead; /resume-task maintenance explicitly resumes it. Scheduled full sweeps the complete historical compact/raw archive. Deep is manual-only through /memory-condense -deep and performs bounded older-history compaction/validation without hierarchical merging.
 
 Full historical condensation defaults:
 
@@ -105,12 +107,12 @@ One process-global bounded pool is canonical. postgres_pool borrows approved con
 - Package-local 7-Zip is the preferred archive backend.
 - vision_parse handles up to 10 PDF pages per call and uses rendered pages as authority over corrupt/untrusted text.
 - PDF rendering uses adaptive 1.5× / 2.2× / 2.9× tiers with crop fallback for dense/truncated pages.
-- WeasyPrint 70.0 and Pango 1.58.2 are bundled under tools\weasyprint.
-- Installer acceptance requires a real HTML-to-PDF render.
+- WeasyPrint 70.0 / Pango 1.58.2 is a package-pinned verified external runtime. Public source carries the fetch/validation helper, not the frozen native tree.
+- Installer/runtime repair verifies the pinned official archive SHA-256 and requires a real HTML-to-PDF render.
 
 ## Installer
 
-Installer 1.6.7 performs managed in-place source sync, preserves persistent machine state, migrates configuration, reuses a compatible .venv, validates bundled source/tools, validates WeasyPrint/Pango, and binds one exact portable-source payload by filename and SHA-256.
+Installer 1.6.8 performs managed in-place source sync, preserves persistent machine state plus a valid native WeasyPrint runtime, migrates configuration, reuses a compatible .venv, fetches/repairs WeasyPrint/Pango when absent/stale, validates it, and binds one exact portable-source payload by filename and SHA-256.
 
 ## Validation boundary
 
