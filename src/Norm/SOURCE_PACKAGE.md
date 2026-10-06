@@ -1,6 +1,6 @@
-# Norm 0.53.18 portable source package
+# Norm 0.53.19 portable source package
 
-This directory is the exact source payload intended for **Norm 0.53.18 / Installer 1.6.8-unified**.
+This directory is the exact source payload intended for **Norm 0.53.19 / Installer 1.6.8-unified**.
 
 The portable source package excludes generated or machine-private material such as .venv, compiled core\norm.exe, build output, Python caches, secrets, and private runtime state.
 
@@ -9,6 +9,7 @@ The portable source package excludes generated or machine-private material such 
 - N1/N2 tool gating and loop supervision.
 - Session-only transactional /switch-model discovery/switching through the live Ollama API; every restart boots norm.
 - Single-source operator help from docs\help_menu.txt, loaded on demand by both prompt frontends.
+- Public web/news search plus bounded readable page extraction with public-network-only SSRF controls, direct publisher fetch, and optional verified reader fallback.
 - Durable PostgreSQL task/memory/history state.
 - Redis prompt queues and hot validation pool.
 - Recent-only manual/background memory condensation.

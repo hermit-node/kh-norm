@@ -2,7 +2,7 @@
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.53.18 / Installer 1.6.8-unified** package only. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.53.19 / Installer 1.6.8-unified** package only. Version history belongs only in RELEASE_NOTES.md.
 
 ## Runtime layout
 
@@ -13,7 +13,7 @@ Default installation root: C:\Norm.
 - config\runtime.json — worker, model, maintenance, queue, storage, and memory policy.
 - docs\ — maintained current-state documentation plus the release ledger.
 - plugins\ — first-party and operator-added dynamic plugins.
-- tools\ — operator helpers, build/test tools, bundled 7-Zip, and bundled WeasyPrint.
+- tools\ — operator helpers, build/test tools, bundled 7-Zip, and verified WeasyPrint fetch/repair tooling.
 - .ssh\ — persistent Norm SSH material.
 - state_root — trusted internal runtime state resolved from [paths].state_root.
 - %USERPROFILE%\Documents\Norm\workspace — durable generated artifacts/work files.
@@ -52,6 +52,21 @@ Model switches are session-only: /switch-model does not rewrite runtime.json, se
 ## Operator help authority
 
 docs\help_menu.txt is the single human-editable operator-help source. Both the GUI Prompt and Rich console read it at command time for help / /help. Editing the text file changes the visible command menu without rebuilding norm.exe.
+
+## Public web access
+
+Public internet access is explicitly enabled through native tools rather than unrestricted internal-network probing.
+
+- web_search(query, mode="web"|"news", max_results?, freshness_days?) uses structured Bing RSS search. News results decode to publisher URLs when Bing supplies them.
+- web_fetch(url, start_char?, max_chars?, include_links?, reader_fallback?) fetches public HTTP(S) pages and returns bounded readable text, title/metadata, links, continuation offsets, and fetch provenance.
+- Direct publisher fetch is always attempted first.
+- If direct extraction fails or yields less than the configured useful-text threshold, the default reader fallback uses https://r.jina.ai/ to retrieve readable Markdown. Signed/tokenized/auth-looking query URLs are never sent to the reader proxy.
+- The reader fallback can be disabled globally with tools.public_web.reader_fallback_enabled=false or per call.
+- Only ports 80/443 are allowed. localhost, RFC1918/private, link-local/metadata, loopback, reserved/non-global addresses, Tailscale 100.64.0.0/10, and *.ts.net/private-style hostnames are blocked; redirects are revalidated.
+- Search/fetch output is labeled untrusted external content. Page text is evidence/data, never operator/system instruction.
+- web_search and web_fetch are information tools, so they remain inside N1 and the mandatory Redis verification preflight/check-in flow.
+
+Current defaults live under tools.public_web in config\runtime.json.
 
 ## Validation/evidence pool
 

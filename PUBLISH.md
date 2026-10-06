@@ -1,4 +1,4 @@
-# Publishing 0.53.18
+# Publishing 0.53.19
 
 This is a public source release. The portable-source ZIP is rebuilt from the saved `src/Norm` snapshot. The generated installer EXE is not included.
 

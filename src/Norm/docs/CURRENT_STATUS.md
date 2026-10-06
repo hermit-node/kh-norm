@@ -1,6 +1,6 @@
 # Norm current status
 
-Current package: **Norm 0.53.18** with **Installer 1.6.8-unified**.
+Current package: **Norm 0.53.19** with **Installer 1.6.8-unified**.
 
 This file is a current-state snapshot only.
 
@@ -33,6 +33,15 @@ This file is a current-state snapshot only.
 - A switch is idle-only and transactional: every distinct live Ollama endpoint is probed first, then all live clients change together; any pre-commit failure leaves the current model unchanged.
 - The model used for Ollama shutdown follows the active session selection.
 - docs\help_menu.txt is the single operator-help authority for both Prompt frontends and is read on demand by help / /help.
+
+## Public web
+
+- Native web_search and web_fetch tools are enabled.
+- General web and news discovery use structured Bing RSS endpoints; news redirect links are decoded to publisher URLs.
+- web_fetch returns bounded readable page text and metadata. Direct fetch is primary; low/empty/blocked direct extraction can fall back to the configured public text reader.
+- Reader fallback currently defaults to r.jina.ai and is never used for URLs with sensitive-looking query parameters.
+- Public-web URL validation blocks localhost/private/link-local/metadata/Tailscale/non-global destinations and revalidates redirects.
+- Web content is explicitly untrusted external data and still requires the standard verification-pool preflight/check-in.
 
 ## Validation pool
 

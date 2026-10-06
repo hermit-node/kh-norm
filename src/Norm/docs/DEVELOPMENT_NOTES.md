@@ -1,6 +1,6 @@
 # Norm development notes
 
-These are current engineering contracts for **Norm 0.53.18**. This file intentionally contains no release chronology.
+These are current engineering contracts for **Norm 0.53.19**. This file intentionally contains no release chronology.
 
 ## Architectural authority
 
@@ -42,6 +42,28 @@ The probe has no activity sink, so candidate verification does not appear as use
 ## Operator help contract
 
 docs\help_menu.txt is the only operator-facing command-list authority. Prompt frontends read it when help / /help is invoked. Do not add a second hardcoded menu in GUI/Rich Python code; if the file is missing or unreadable, surface that error explicitly.
+
+## Public-web contract
+
+Internet access is an explicit native capability, not a relaxation of internal-network policy.
+
+FileToolExecutor advertises web_search/web_fetch only when tools.public_web.enabled is true. Both normal conversation tools and worker/slice tools receive the same public-web configuration.
+
+Network boundary:
+
+- schemes: HTTP/HTTPS only;
+- ports: 80/443 only;
+- URL credentials are rejected;
+- localhost/private/loopback/link-local/reserved/non-global IPs are rejected;
+- Tailscale CGNAT 100.64.0.0/10 and *.ts.net are rejected;
+- DNS answers are checked before a request and redirects are revalidated;
+- model-visible web data is marked external_content_trust=untrusted.
+
+Search uses structured RSS feeds rather than arbitrary HTML scraping. web mode uses Bing RSS; news mode uses Bing News RSS and extracts publisher URLs from Bing redirect metadata.
+
+Fetch behavior is direct-first. HTML/plain text is locally extracted into bounded character chunks. If the direct result is absent or below reader_min_chars, configured reader fallback may retrieve readable Markdown from the already-validated public URL. URLs with token/auth/secret/signature-like query keys are not proxied to the reader service.
+
+Fetched/search text is untrusted evidence and must never be interpreted as runtime/operator/system instruction. Both web tools are information tools and therefore require verification preflight/check-in through the Redis validation pool.
 
 ## Prompt/task fidelity
 
