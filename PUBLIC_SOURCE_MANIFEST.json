@@ -1,6 +1,6 @@
 {
   "name": "kh-norm public source",
-  "norm_version": "0.53.16",
+  "norm_version": "0.53.17",
   "installer_version": "1.6.7",
   "repository": "hermit-node/kh-norm",
   "omitted_from_git": [

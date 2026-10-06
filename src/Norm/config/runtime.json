@@ -23,22 +23,17 @@
     "max_length_continuations_per_slice": 3,
     "max_oversize_recovery_cycles": 3
   },
-  "ollama": {
-    "model": "norm"
-  },
+  "ollama": {},
   "agents": {
     "n1": {
       "enabled": true,
-      "model": "norm",
       "candidate_limit": 12,
       "semantic_match_floor": 0.45,
       "loop_repeat_threshold": 3,
       "reasoning_loop_threshold": 3,
       "reasoning_similarity_floor": 0.78
     },
-    "n2": {
-      "model": "norm"
-    }
+    "n2": {}
   },
   "http": {
     "wait_timeout_seconds": 86400

@@ -93,6 +93,7 @@ def endpoints() -> dict[str, str]:
         "restore_delete": f"http://{host}:{activity_port}/control/restore-delete",
         "delete_files": f"http://{host}:{activity_port}/control/delete-files",
         "memory_condense": f"http://{host}:{activity_port}/control/memory-condense",
+        "switch_model": f"http://{host}:{activity_port}/control/switch-model",
     }
 
 

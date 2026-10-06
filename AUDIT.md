@@ -1,6 +1,6 @@
-# Publication audit - Norm 0.53.16 / Installer 1.6.7
+# Publication audit - Norm 0.53.17 / Installer 1.6.7
 
-This bundle was generated from the verified 0.53.16 release source as a GitHub-oriented source tree.
+This bundle was generated from the verified 0.53.17 release source as a GitHub-oriented source tree.
 
 Publication boundary:
 
@@ -15,7 +15,7 @@ Validation before packaging:
 
 - private deployment/token literal scan: PASS;
 - public release guard: PASS;
-- Python syntax scan: PASS (105 files);
+- Python syntax scan: PASS (107 files);
 - public-boundary regression: PASS;
-- selected maintenance/archive/N1 regressions: PASS;
-- pre-audit public tree files scanned: 163.
+- selected model-switch/help, maintenance, archive, and N1 regressions: PASS;
+- pre-audit public tree files scanned: 166.

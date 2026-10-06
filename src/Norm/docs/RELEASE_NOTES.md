@@ -1,5 +1,15 @@
 # Release Notes
 
+## 0.53.17 — 2026-10-05 — Session model switching and single-source operator help
+
+- Added /switch-model as a Norm runtime control backed by the live Ollama API instead of model-store directory scanning. With no selector it lists installed models as deterministic one-based choices (norm / norm:latest first, then alphabetical); a number, exact tag, or uniquely resolvable base name can be selected.
+- Norm now always boots all model roles on canonical norm. Interactive switches are session-only and never rewrite runtime configuration or durable boot state; restarting Norm returns to norm.
+- Model switching is idle-only and fail-closed. Norm silently probes the candidate on every distinct live Ollama endpoint used by N1, N2/chat/worker, context, and vision, re-checks tracked work after probing, then changes all live client model pointers together. Missing models, probe/load failures, endpoint disagreement, new work, or commit failure leave or restore the prior model.
+- Ollama shutdown now targets the active session model rather than assuming the boot model.
+- Added docs\help_menu.txt as the single operator-help authority. Both Prompt frontends read it at help / /help time; the duplicated hardcoded Python command menus were removed.
+- Fixed the activity-control callback signature for /memory-condense -deep so the existing full/deep API payload reaches PromptWorker.request_memory_condense without a one-argument callback mismatch.
+- Added tools\test_model_switch.py; seven model/help regressions pass alongside the existing five maintenance tests, N1 gate tests, and requirements-manifest checks.
+
 ## 0.53.16 — 2026-10-04 — Maintenance reliability, hierarchical memory condensation, complete console teardown, and bundled WeasyPrint
 
 - Deep-history reconstruction is isolated per sampled compact memory. Each replay gets up to **4,800 output tokens per continuation segment × 4 segments**; no neighboring compact memory, previous replay, or tool call can help the sample pass. Replay text is disposable and is not persisted as memory.

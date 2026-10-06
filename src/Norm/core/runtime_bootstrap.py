@@ -218,6 +218,7 @@ def build_conversation_service(
     coordinator=None,
     durable=None,
     n1_gatekeeper=None,
+    model_override: str | None = None,
 ) -> ConversationService:
     config = load_config(root)
     pg_cfg = config["postgres"]
@@ -236,7 +237,7 @@ def build_conversation_service(
     ollama_port = int(n2_cfg.get("port", ports["ollama"]))
     client = OllamaClient(
         base_url=f"http://{ollama_host}:{ollama_port}",
-        model=n2_cfg.get("model", ollama_cfg.get("model", "norm")),
+        model=str(model_override or n2_cfg.get("model", ollama_cfg.get("model", "norm"))),
         activity_sink=activity_sink,
         activity_source="n2-chat",
     )
