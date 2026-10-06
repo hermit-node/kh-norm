@@ -1,6 +1,6 @@
 # Norm development notes
 
-These are current engineering contracts for **Norm 0.53.16**. This file intentionally contains no release chronology.
+These are current engineering contracts for **Norm 0.53.17**. This file intentionally contains no release chronology.
 
 ## Architectural authority
 
@@ -19,6 +19,29 @@ N1 must never fabricate a tool result, rewrite a fresh executor result before N2
 Mutation invalidation must happen before a later read can reuse stale data.
 
 Loop supervision is passive until repeated behavior crosses configured thresholds. A loop decision blocks the repeated turn before its proposed tools execute.
+
+## Session model-switch contract
+
+norm is the immutable process boot model. Interactive switching is intentionally ephemeral and must not mutate persistent configuration/state.
+
+Model discovery uses Ollama /api/tags, not direct model-store directory parsing. The displayed list is deterministic: canonical norm first, then remaining installed names alphabetically.
+
+A model switch is fail-closed:
+
+1. Startup must be complete and tracked work must be idle.
+2. Resolve the numbered/exact selector against installed models.
+3. Enumerate every distinct Ollama endpoint used by live Norm model clients.
+4. Verify the candidate exists/resolves and produces nonblank probe output on every endpoint.
+5. Re-check tracked work after probe completion.
+6. Gather the live client set again.
+7. Update all client model values together and update the in-process active-model label.
+8. On commit exception, restore every previous client model and active-model label.
+
+The probe has no activity sink, so candidate verification does not appear as user/model output. A failed probe may cause Ollama itself to load or evict native model memory, but Norm's logical active model remains unchanged unless commit succeeds.
+
+## Operator help contract
+
+docs\help_menu.txt is the only operator-facing command-list authority. Prompt frontends read it when help / /help is invoked. Do not add a second hardcoded menu in GUI/Rich Python code; if the file is missing or unreadable, surface that error explicitly.
 
 ## Prompt/task fidelity
 

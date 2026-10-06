@@ -2,7 +2,7 @@
 
 A persistent, self-hosted Windows AI-agent runtime built around local Ollama inference, PostgreSQL durable state, Redis live coordination, controlled tools, resumable work, and hot-loaded Python plugins.
 
-Current public source: Norm 0.53.16 / Installer 1.6.7.
+Current public source: Norm 0.53.17 / Installer 1.6.7.
 
 ## Current architecture
 
@@ -27,6 +27,14 @@ The 200-row size is a QA grouping, not a pass limit. Every 200 dated compact row
 After all QA batches pass, one hierarchical merge level examines chronological neighboring windows of up to six compact rows. Unrelated neighbors remain separate. Related/redundant subsets can reduce to 1..N replacement rows. Every constituent represented by an actual merge must reconstruct successfully from the replacement before superseded originals are deleted.
 
 Scheduled maintenance alternates successful regular -> full -> regular -> full passes. Interrupted scheduled work resumes the same mode.
+
+## Session model switching
+
+Norm always starts on canonical model norm. /switch-model asks the live Ollama API for installed models, supports numbered or exact-name selection, probes the candidate on every distinct live Ollama endpoint before commit, and changes all live model clients together only while Norm is idle. Switching is session-only; restart returns to norm.
+
+## Operator help
+
+docs/help_menu.txt is the single operator command-list authority. Both prompt frontends read it at help or /help time instead of embedding duplicate Python print menus.
 
 ## WeasyPrint and Pango
 

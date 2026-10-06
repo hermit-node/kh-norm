@@ -1,6 +1,6 @@
 # Norm maintenance verification
 
-Current package under verification: **Norm 0.53.16 / Installer 1.6.7-unified**.
+Current package under verification: **Norm 0.53.17 / Installer 1.6.7-unified**.
 
 This file records current package evidence only.
 
@@ -8,13 +8,37 @@ This file records current package evidence only.
 
 PASS: current maintenance/runtime/operator source compiles with Python py_compile, including:
 
+- core\norm_main.py
+- core\runtime_bootstrap.py
 - core\norm_runtime\history_maintenance.py
 - core\norm_runtime\durable_log.py
 - core\norm_runtime\prompt_worker.py
 - core\norm_runtime\activity_stream.py
+- core\norm_runtime\ollama_client.py
+- core\norm_runtime\model_switch.py
 - core\norm_runtime\rich_console.py
+- tools\norm_gui_common.py
 - tools\norm_gui_prompt.py
 - tools\test_maintenance_reliability.py
+- tools\test_model_switch.py
+
+## Session model-switch / help regression
+
+PASS: python tools\test_model_switch.py.
+
+Current result: **7 tests passed**.
+
+The regression set verifies:
+
+- norm / norm:latest is ordered first and model names are case-insensitively deduplicated;
+- one-based numeric, exact-tag, and unique base-name selectors resolve correctly;
+- ambiguous, missing, and out-of-range selectors fail closed;
+- norm and norm:latest are treated as the same logical model;
+- Ollama model discovery uses /api/tags;
+- docs\help_menu.txt exists as the single command-list authority and the previous hardcoded Python help menu is absent;
+- runtime startup is hardwired to MODEL_NAME = norm rather than restoring a configured/session alternate.
+
+Source inspection additionally verifies startup switches are blocked, tracked work is checked before and after candidate probes, every distinct live Ollama endpoint is probed, all live clients are committed together, and commit failure restores prior model pointers.
 
 ## Memory-maintenance regression
 

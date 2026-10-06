@@ -193,6 +193,36 @@ class OllamaClient:
                     pass
         return len(active)
 
+    def list_models(self) -> list[str]:
+        req = request.Request(f"{self.base_url}/api/tags", method="GET")
+        timeout = 30.0 if self.timeout_seconds is None else min(30.0, float(self.timeout_seconds))
+        with request.urlopen(req, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        names = []
+        for item in list(payload.get("models") or []):
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or item.get("model") or "").strip()
+            if name and name not in names:
+                names.append(name)
+        return names
+
+    def probe_model(self, model: str) -> str:
+        candidate = OllamaClient(
+            base_url=self.base_url,
+            model=str(model),
+            timeout_seconds=min(120.0, float(self.timeout_seconds or 120.0)),
+            activity_sink=None,
+            activity_source="model-switch-probe",
+        )
+        return candidate.generate(
+            "Reply with exactly OK.",
+            think=False,
+            num_predict=16,
+            temperature=0.0,
+            emit_stream=False,
+        ).strip()
+
     def generate(
         self,
         prompt: str,

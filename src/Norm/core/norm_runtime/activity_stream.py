@@ -84,7 +84,8 @@ def _activity_app(
     trash_list: Callable[[], dict] | None,
     trash_restore: Callable[[str], dict] | None,
     trash_purge: Callable[[], dict] | None,
-    memory_condense: Callable[[bool], dict] | None,
+    memory_condense: Callable[[bool, bool], dict] | None,
+    switch_model: Callable[[str | None], dict] | None,
     busy_status: Callable[[], dict] | None,
     context_status: Callable[[], dict] | None,
     inject_context: Callable | None,
@@ -253,6 +254,11 @@ def _activity_app(
                         bool(payload.get("full", False)),
                         bool(payload.get("deep", False)),
                     ))
+                if path == "/control/switch-model":
+                    if switch_model is None:
+                        return web.json_response({"error": "switch-model control unavailable"}, status=503)
+                    selector = str(payload.get("selector") or "").strip() or None
+                    return web.json_response(await _call(switch_model, selector))
                 if path in {"/control/stop-all", "/control/stop-all-now"}:
                     if stop_all is None:
                         return web.json_response({"error": "stop-all control unavailable"}, status=503)
@@ -283,6 +289,7 @@ def _activity_app(
             "/control/restore-delete",
             "/control/delete-files",
             "/control/memory-condense",
+            "/control/switch-model",
             "/control/stop-all",
             "/control/stop-all-now",
         ):
@@ -305,7 +312,8 @@ def start_activity_server(
     trash_list: Callable[[], dict] | None = None,
     trash_restore: Callable[[str], dict] | None = None,
     trash_purge: Callable[[], dict] | None = None,
-    memory_condense: Callable[[bool], dict] | None = None,
+    memory_condense: Callable[[bool, bool], dict] | None = None,
+    switch_model: Callable[[str | None], dict] | None = None,
     busy_status: Callable[[], dict] | None = None,
     context_status: Callable[[], dict] | None = None,
     inject_context: Callable | None = None,
@@ -326,6 +334,7 @@ def start_activity_server(
             trash_restore=trash_restore,
             trash_purge=trash_purge,
             memory_condense=memory_condense,
+            switch_model=switch_model,
             busy_status=busy_status,
             context_status=context_status,
             inject_context=inject_context,

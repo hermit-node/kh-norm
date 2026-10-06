@@ -42,6 +42,7 @@ class NormConsole:
         self.restore_delete_url = control_base + "/restore-delete"
         self.delete_files_url = control_base + "/delete-files"
         self.memory_condense_url = control_base + "/memory-condense"
+        self.switch_model_url = control_base + "/switch-model"
         self.busy_url = activity_url.rsplit("/", 1)[0] + "/status/busy"
         shared_endpoints = {
             "chat": self.chat_url,
@@ -314,6 +315,54 @@ class NormConsole:
         except Exception as exc:
             self.console.print(f"[red]Could not schedule memory condensation: {exc}[/]")
 
+    def _switch_model(self, selector: str | None = None) -> None:
+        req = request.Request(
+            self.switch_model_url,
+            data=json.dumps({"selector": str(selector or "")}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with request.urlopen(req, timeout=180) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except Exception as exc:
+            self.console.print(f"[red]Could not query/switch model: {exc}[/]")
+            return
+
+        status = str(result.get("status") or "")
+        current = str(result.get("current") or "unknown")
+        boot_model = str(result.get("boot_model") or "norm")
+        if status == "listed":
+            self.console.print(
+                f"[cyan]Current session model: {current}  (restart/boot model: {boot_model})[/]"
+            )
+            for item in list(result.get("models") or []):
+                marker = "*" if item.get("current") else " "
+                self.console.print(
+                    f" {marker} {item.get('index')}) {item.get('name')}",
+                    markup=False,
+                )
+            return
+        if status == "ok":
+            if result.get("switched"):
+                self.console.print(
+                    f"[green]Model switched for this session: {result.get('previous')} -> "
+                    f"{result.get('current')} ({result.get('client_count')} live client(s)).[/]"
+                )
+                self.console.print(
+                    f"[yellow]Restarting Norm will return to {boot_model}.[/]"
+                )
+            else:
+                self.console.print(
+                    f"[yellow]Model unchanged: {current}. {result.get('reason') or ''}[/]"
+                )
+            return
+
+        self.console.print(
+            f"[red]Model switch failed; still using {current}. "
+            f"{result.get('reason') or result.get('status') or 'unknown reason'}[/]"
+        )
+
     def _show_busy(self) -> None:
         try:
             with request.urlopen(self.busy_url, timeout=5) as response:
@@ -323,38 +372,12 @@ class NormConsole:
             self.console.print(f"[red]Could not read busy status: {exc}[/]")
 
     def _show_help(self) -> None:
-        self.console.print(
-            "[bold]Commands[/]\n"
-            "  /about             Show Norm version, runtime, package, and plugin summary.\n"
-            "  /mute ollama       Hide Ollama thinking/answer output; work continues.\n"
-            "  /unmute ollama     Show Ollama output again.\n"
-            "  /mute norm         Hide Norm runtime messages; work continues.\n"
-            "  /unmute norm       Show Norm runtime messages again.\n"
-            "  /stop ollama       Cancel active Ollama generation.\n"
-            "  /shutdown ollama   Unload the model and gracefully stop the Ollama server.\n"
-            "  /stop norm         Pause sending queued console prompts after the current one.\n"
-            "  /start norm        Resume sending queued console prompts.\n"
-            "  /new [name]        Start a fresh conversation thread, optionally with a title.\n"
-            "  /thread-list       List active conversation threads.\n"
-            "  /thread-resume NAME  Switch to a thread by exact title, unique prefix, ID, or ID prefix.\n"
-            "  /suppress-task     Park the active root task tree, or oldest next queued task tree.\n"
-            "  /flush-suppressed  Permanently delete suppressed tasks and parked delivery records.\n"
-            "  /delete-list       List reversible soft-deleted files.\n"
-            "  /restore-delete ID Restore one deletion ID; use all to restore all non-conflicting items.\n"
-            "  /delete-files      Permanently purge reversible trash now.\n"
-            "  /backup            Create a portable installer/source backup.\n"
-            "  /backup full       Create a sensitive full backup with private state and PostgreSQL.\n"
-            "  /memory-condense   Compact and replay-validate only the recent memory window (default 14 days).\n"
-            "  /memory-condense -deep  Run one bounded older-history compaction/validation pass without hierarchical merging.\n"
-            "  /memory-condense -full  Sweep full history: sample 12 per 200 dated rows, then merge neighboring rows conservatively.\n"
-            "  /status            Show local mute, pause, and pending-input state.\n"
-            "  /status/busy       Show authoritative runtime busy state.\n"
-            "  /stop-all          Finish the current step, snapshot recovery state, then stop Norm/Ollama.\n"
-            "  /stop-all now      Emergency checkpoint/snapshot and stop Norm/Ollama now.\n"
-            "  /shutdown norm     Gracefully stop Norm after checkpointing current work.\n"
-            "  /shutdown norm now Cancel active work and stop Norm promptly.\n"
-            "  /help              Show these commands."
-        )
+        runtime_root = Path(os.environ.get("NORM_RUNTIME_ROOT") or Path(__file__).resolve().parents[2]).resolve()
+        path = runtime_root / "docs" / "help_menu.txt"
+        try:
+            self.console.print(path.read_text(encoding="utf-8").rstrip(), markup=False)
+        except Exception as exc:
+            self.console.print(f"Could not read help menu {path}: {exc}", markup=False)
 
     def _command(self, text: str) -> bool:
         stripped = text.strip()
@@ -363,6 +386,9 @@ class NormConsole:
             self._show_help()
         elif parts == ["/about"]:
             self._show_about()
+        elif parts and parts[0] == "/switch-model":
+            selector = stripped[len("/switch-model"):].strip() or None
+            threading.Thread(target=self._switch_model, args=(selector,), daemon=True).start()
         elif len(parts) == 2 and parts[0] in {"/mute", "/unmute"} and parts[1] in {"ollama", "norm"}:
             muted = parts[0] == "/mute"
             self._set_muted(parts[1], muted)
@@ -506,6 +532,9 @@ class NormConsole:
                     except (EOFError, KeyboardInterrupt):
                         break
                     if not text:
+                        continue
+                    if text.casefold() == "help":
+                        self._show_help()
                         continue
                     if text.startswith("/"):
                         if not self._command(text):

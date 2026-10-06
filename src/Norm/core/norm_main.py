@@ -16,7 +16,7 @@ import time
 
 import psycopg
 import redis
-from threading import Event
+from threading import Event, Lock
 from urllib import request
 from urllib.parse import urlparse
 
@@ -28,6 +28,7 @@ from norm_runtime.context_injections import ContextInjections
 from norm_runtime.http_api import start_chat_api
 from norm_runtime.ollama_client import ModelOutputTruncated, OllamaClient
 from norm_runtime.ollama_lifecycle import shutdown_ollama
+from norm_runtime.model_switch import ordered_models, resolve_model_selector, same_model
 from norm_runtime.n1_gatekeeper import N1Gatekeeper
 from norm_runtime.prompt_worker import PromptWorker
 from norm_runtime.shutdown_snapshot import write_sos
@@ -484,7 +485,12 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
     shutdown_now = Event()
     stop_all_requested = Event()
     stop_all_now = Event()
-    resources: dict[str, object] = {"startup_phase": "initializing", "startup_ready": False}
+    resources: dict[str, object] = {
+        "startup_phase": "initializing",
+        "startup_ready": False,
+        "active_model": str(model_name or MODEL_NAME),
+    }
+    model_switch_lock = Lock()
 
     def request_activity_health() -> dict:
         if bool(resources.get("startup_ready")):
@@ -493,7 +499,8 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
 
     def request_ollama_shutdown() -> dict:
         OllamaClient.cancel_active()
-        result = shutdown_ollama(ollama_process, ollama_url, model_name)
+        active_model = str(resources.get("active_model") or model_name or MODEL_NAME)
+        result = shutdown_ollama(ollama_process, ollama_url, active_model)
         logging.info("Ollama shutdown result: %s", result)
         return result
 
@@ -525,6 +532,221 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             payload["phase"] = str(resources.get("startup_phase") or "initializing")
             payload["confidence"] = 1.0
         return payload
+
+    def _switch_clients() -> list[OllamaClient]:
+        candidates = [
+            resources.get("context_client"),
+            resources.get("n1_client"),
+            resources.get("n2_client"),
+        ]
+        worker_obj = resources.get("worker")
+        if worker_obj is not None:
+            candidates.append(getattr(worker_obj, "client", None))
+        gatekeeper = resources.get("n1_gatekeeper")
+        if gatekeeper is not None:
+            candidates.append(getattr(gatekeeper, "client", None))
+        service_obj = resources.get("conversation_service")
+        if service_obj is not None:
+            candidates.append(getattr(service_obj, "ollama", None))
+            file_tools = getattr(service_obj, "file_tools", None)
+            if file_tools is not None:
+                candidates.append(getattr(file_tools, "vision_client", None))
+        unique = []
+        seen = set()
+        for client in candidates:
+            if not isinstance(client, OllamaClient):
+                continue
+            identity = id(client)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            unique.append(client)
+        return unique
+
+    def _tracked_work_busy() -> bool:
+        if OllamaClient.active_count() > 0:
+            return True
+        chat_server = resources.get("chat_server")
+        if int(getattr(chat_server, "active_request_count", 0) or 0) > 0:
+            return True
+        worker_obj = resources.get("worker")
+        if worker_obj is not None and not bool(worker_obj.is_idle()):
+            return True
+        prompt_queue_obj = resources.get("prompt_queue")
+        if prompt_queue_obj is not None:
+            stats = prompt_queue_obj.stats()
+            if int(stats.get("stream_length", 0) or 0) > 0 or int(stats.get("pending_count", 0) or 0) > 0:
+                return True
+            if int(prompt_queue_obj.r.xlen(prompt_queue_obj.retry_stream) or 0) > 0:
+                return True
+            if int(prompt_queue_obj.r.xlen(prompt_queue_obj.escalation_stream) or 0) > 0:
+                return True
+        return False
+
+    def request_model_switch(selector: str | None = None) -> dict:
+        clients = _switch_clients()
+        reference = next((client for client in clients if client.activity_source == "n2-worker"), None)
+        if reference is None:
+            reference = next((client for client in clients if client.activity_source == "n2-chat"), None)
+        if reference is None and clients:
+            reference = clients[0]
+        if reference is None:
+            return {
+                "status": "unavailable",
+                "switched": False,
+                "reason": "model clients are still initializing",
+                "boot_model": MODEL_NAME,
+            }
+
+        try:
+            models = ordered_models(reference.list_models(), str(resources.get("active_model") or MODEL_NAME))
+        except Exception as exc:
+            logging.warning("Could not list Ollama models for switch-model: %s", exc)
+            return {
+                "status": "error",
+                "switched": False,
+                "reason": f"could not list Ollama models: {type(exc).__name__}: {exc}",
+                "boot_model": MODEL_NAME,
+            }
+
+        current = str(resources.get("active_model") or MODEL_NAME)
+        listing = [
+            {"index": index, "name": name, "current": same_model(name, current)}
+            for index, name in enumerate(models, start=1)
+        ]
+        if selector is None:
+            return {
+                "status": "listed",
+                "current": current,
+                "boot_model": MODEL_NAME,
+                "models": listing,
+            }
+        if not bool(resources.get("startup_ready")):
+            return {
+                "status": "unavailable",
+                "switched": False,
+                "current": current,
+                "boot_model": MODEL_NAME,
+                "reason": "Norm is still initializing; model switches are enabled after startup completes",
+                "models": listing,
+            }
+
+        with model_switch_lock:
+            if _tracked_work_busy():
+                return {
+                    "status": "busy",
+                    "switched": False,
+                    "current": current,
+                    "boot_model": MODEL_NAME,
+                    "reason": "Norm has active or queued work; retry the switch when idle",
+                    "models": listing,
+                }
+            try:
+                candidate = resolve_model_selector(models, selector)
+            except ValueError as exc:
+                return {
+                    "status": "error",
+                    "switched": False,
+                    "current": current,
+                    "boot_model": MODEL_NAME,
+                    "reason": str(exc),
+                    "models": listing,
+                }
+
+            if same_model(candidate, current):
+                return {
+                    "status": "ok",
+                    "switched": False,
+                    "current": current,
+                    "boot_model": MODEL_NAME,
+                    "reason": "requested model is already active",
+                    "models": listing,
+                }
+
+            resolved_by_url: dict[str, str] = {}
+            endpoint_clients: dict[str, OllamaClient] = {}
+            for client in _switch_clients():
+                endpoint_clients.setdefault(client.base_url, client)
+            try:
+                for base_url, endpoint_client in endpoint_clients.items():
+                    endpoint_models = ordered_models(endpoint_client.list_models(), current)
+                    endpoint_candidate = resolve_model_selector(endpoint_models, candidate)
+                    probe = endpoint_client.probe_model(endpoint_candidate)
+                    if not probe.strip():
+                        raise RuntimeError(f"{base_url} returned no usable output")
+                    resolved_by_url[base_url] = endpoint_candidate
+            except Exception as exc:
+                logging.warning(
+                    "Model switch probe failed candidate=%s error=%s", candidate, exc
+                )
+                return {
+                    "status": "error",
+                    "switched": False,
+                    "current": current,
+                    "candidate": candidate,
+                    "boot_model": MODEL_NAME,
+                    "reason": f"candidate probe failed on at least one Ollama endpoint: {type(exc).__name__}: {exc}",
+                    "models": listing,
+                }
+
+            if _tracked_work_busy():
+                return {
+                    "status": "busy",
+                    "switched": False,
+                    "current": current,
+                    "candidate": candidate,
+                    "boot_model": MODEL_NAME,
+                    "reason": "work started while the candidate was being probed; active model was not changed",
+                    "models": listing,
+                }
+
+            clients = _switch_clients()
+            if not clients:
+                return {
+                    "status": "unavailable",
+                    "switched": False,
+                    "current": current,
+                    "candidate": candidate,
+                    "boot_model": MODEL_NAME,
+                    "reason": "live model clients disappeared before commit",
+                    "models": listing,
+                }
+            previous = [(client, str(client.model)) for client in clients]
+            try:
+                for client in clients:
+                    client.model = resolved_by_url.get(client.base_url, candidate)
+                resources["active_model"] = candidate
+            except Exception as exc:
+                for client, old_model in previous:
+                    client.model = old_model
+                resources["active_model"] = current
+                logging.exception("Model switch commit failed candidate=%s", candidate)
+                return {
+                    "status": "error",
+                    "switched": False,
+                    "current": current,
+                    "candidate": candidate,
+                    "boot_model": MODEL_NAME,
+                    "reason": f"commit failed and was rolled back: {type(exc).__name__}: {exc}",
+                    "models": listing,
+                }
+
+            logging.info(
+                "Norm session model switched previous=%s current=%s clients=%s",
+                current, candidate, len(clients),
+            )
+            return {
+                "status": "ok",
+                "switched": True,
+                "previous": current,
+                "current": candidate,
+                "boot_model": MODEL_NAME,
+                "client_count": len(clients),
+                "models": [
+                    {"index": index, "name": name, "current": same_model(name, candidate)}
+                    for index, name in enumerate(models, start=1)
+                ],
+            }
 
     def generate_context_summary(raw_markdown: str, raw_path: str, raw_hash: str, generated_at: str) -> str:
         client = resources.get("context_client")
@@ -656,11 +878,11 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             logging.exception("Could not purge deletion trash")
             return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
 
-    def request_memory_condense(full: bool = False) -> dict:
+    def request_memory_condense(full: bool = False, deep: bool = False) -> dict:
         worker_obj = resources.get("worker")
         if worker_obj is None:
             return {"status": "unavailable", "scheduled": False, "reason": "worker is still initializing"}
-        return worker_obj.request_memory_condense(full=bool(full))
+        return worker_obj.request_memory_condense(full=bool(full), deep=bool(deep))
 
     def request_inject_context(task_id: str | None, content: str, request_id: str) -> dict:
         worker_obj = resources.get("worker")
@@ -691,7 +913,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
     context_ollama_host = str(context_ollama_cfg.get("host", "127.0.0.1"))
     resources["context_client"] = OllamaClient(
         base_url=f"http://{context_ollama_host}:{ports['ollama']}",
-        model=context_ollama_cfg.get("model", MODEL_NAME),
+        model=str(model_name or MODEL_NAME),
         timeout_seconds=600,
         activity_sink=activity_hub.publish,
         activity_source="context-snapshot",
@@ -728,6 +950,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             trash_restore=request_trash_restore,
             trash_purge=request_trash_purge,
             memory_condense=request_memory_condense,
+            switch_model=request_model_switch,
             inject_context=request_inject_context,
             busy_status=request_busy_status,
             context_status=request_context_status,
@@ -767,7 +990,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         n1_cfg = dict(agents_cfg.get("n1", {}) or {})
         n1_host = str(n1_cfg.get("host", config.get("ollama", {}).get("host", "127.0.0.1")))
         n1_port = int(n1_cfg.get("port", ports["ollama"]))
-        n1_model = str(n1_cfg.get("model", config.get("ollama", {}).get("model", MODEL_NAME)))
+        n1_model = str(model_name or MODEL_NAME)
         n1_client = OllamaClient(
             base_url=f"http://{n1_host}:{n1_port}",
             model=n1_model,
@@ -799,8 +1022,10 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             coordinator=coordinator,
             durable=durable,
             n1_gatekeeper=n1_gatekeeper,
+            model_override=str(model_name or MODEL_NAME),
         )
 
+        resources["conversation_service"] = service
         statuses = {"redis": "ok", "prompt_queue": "ok", "postgres": "ok"}
         http_cfg = config.get("http", {})
         worker_cfg = config.get("worker", {})
@@ -824,7 +1049,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             n2_cfg = dict((config.get("agents", {}) or {}).get("n2", {}) or {})
             ollama_host = str(n2_cfg.get("host", ollama_cfg.get('host', '127.0.0.1')))
             ollama_port = int(n2_cfg.get("port", ports['ollama']))
-            n2_model = str(n2_cfg.get("model", ollama_cfg.get("model", MODEL_NAME)))
+            n2_model = str(model_name or MODEL_NAME)
             worker_client = OllamaClient(
                 base_url=f"http://{ollama_host}:{ollama_port}",
                 model=n2_model,
@@ -1009,7 +1234,9 @@ def main() -> int:
     ollama_cfg = config.get('ollama', {})
     ollama_host = str(ollama_cfg.get('host', '127.0.0.1'))
     ollama_url = f"http://{ollama_host}:{ports['ollama']}"
-    model_name = str(ollama_cfg.get('model', MODEL_NAME))
+    # Session model selection is intentionally ephemeral. Every Norm process
+    # starts on the canonical "norm" model; /switch-model never rewrites startup config.
+    model_name = MODEL_NAME
     model_store = str(ollama_cfg.get('model_store') or os.environ.get("OLLAMA_MODELS") or MODEL_STORE)
     logging.info("Resolved service ports: ollama=%s norm_http=%s activity=%s", ports['ollama'], ports['norm_http'], ports['activity'])
     ollama_process = start_ollama_if_needed(root, ollama_url, model_name, model_store)

@@ -1,6 +1,6 @@
 # Norm current status
 
-Current package: **Norm 0.53.16** with **Installer 1.6.7-unified**.
+Current package: **Norm 0.53.17** with **Installer 1.6.7-unified**.
 
 This file is a current-state snapshot only.
 
@@ -25,6 +25,14 @@ This file is a current-state snapshot only.
 - Exact same-step repeat requests can reuse raw results.
 - Successful mutations invalidate affected validation/cache targets.
 - Deterministic post-write verification remains a runtime safety invariant outside model approval.
+
+## Session model and operator help
+
+- Norm process startup always selects norm; interactive model selection is never persisted across restart.
+- /switch-model lists installed Ollama models through the live Ollama API and supports numbered or exact-name selection.
+- A switch is idle-only and transactional: every distinct live Ollama endpoint is probed first, then all live clients change together; any pre-commit failure leaves the current model unchanged.
+- The model used for Ollama shutdown follows the active session selection.
+- docs\help_menu.txt is the single operator-help authority for both Prompt frontends and is read on demand by help / /help.
 
 ## Validation pool
 

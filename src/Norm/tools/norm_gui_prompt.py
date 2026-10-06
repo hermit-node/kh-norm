@@ -313,37 +313,49 @@ def ensure_norm_running(ep: dict[str, str]) -> None:
 
 
 def show_help() -> None:
-    print("Norm GUI commands:")
-    print("  help or /help       List current operator commands")
-    print("  /about              Show Norm version, runtime, package, and plugin summary")
-    print("  /status             Show runtime and queue state")
-    print("  /status/busy        Show authoritative runtime busy state")
-    print("  /network-map [--json]  Passive Tailscale inventory plus explicitly allowlisted probes")
-    print("  /queue [N]          Show queued GUI prompts with stable snapshot indexes")
-    print("  /queue-full         Show full prompts and live + parked/uncertain state")
-    print("  /resume-queue [N]   Resume/rotate the GUI queue, optionally from snapshot index N")
-    print("  /new [name]         Start a fresh conversation thread, optionally with a title")
-    print("  /thread-list        List active conversation threads; * marks the current thread")
-    print("  /thread-resume NAME Switch back to a thread by exact title, unique prefix, ID, or ID prefix")
-    print("  /multi              Start multiline prompt entry; finish with ::send or cancel with ::cancel")
-    print("  /inject-context [--task ID] TEXT  Save context for the current task tree without creating a new task")
-    print("  /repeat-submission  Requeue the last submitted prompt verbatim")
-    print("  /repeat-answer      Redisplay the last completed Norm answer verbatim")
-    print("  /suppress-task      Park the active task tree, or oldest next queued task tree")
-    print("  /resume-task [N]    List suppressed tasks, or resume an index/task-id/prefix directly")
-    print("  /flush-suppressed   Permanently delete suppressed tasks and parked delivery records")
-    print("  /delete-list        List reversible soft-deleted files")
-    print("  /restore-delete ID  Restore one deletion ID; use all for every non-conflicting item")
-    print("  /delete-files       Permanently purge reversible trash now")
-    print("  /backup             Create a portable installer/source backup")
-    print("  /backup full        Create a sensitive full backup with private state and PostgreSQL")
-    print("  /memory-condense    Compact/replay-validate only the recent memory window (default 14 days)")
-    print("  /memory-condense -deep  Run one bounded older-history compaction/validation pass without hierarchical merging")
-    print("  /memory-condense -full  Sweep full history: sample 12 per 200 dated rows, then merge neighboring rows conservatively")
-    print("  /stop-all           Finish the current step, then stop Norm/Ollama")
-    print("  /stop-all now       Emergency snapshot to temp\\recovery\\SOS.md, then force-stop Norm/Ollama")
-    print("  /shutdown           Request Norm's graceful shutdown and close this console")
-    print("  /shutdown now       Immediately request Norm shutdown and close this console")
+    path = ROOT / "docs" / "help_menu.txt"
+    try:
+        print(path.read_text(encoding="utf-8").rstrip())
+    except Exception as exc:
+        print(f"Could not read help menu {path}: {exc}")
+
+
+def switch_model(ep: dict[str, str], selector: str | None = None) -> None:
+    try:
+        result = post_json(
+            ep["switch_model"],
+            payload={"selector": str(selector or "")},
+            timeout=180,
+        )
+    except Exception as exc:
+        print(f"Could not query/switch model: {exc}")
+        return
+
+    status = str(result.get("status") or "")
+    current = str(result.get("current") or "unknown")
+    boot_model = str(result.get("boot_model") or "norm")
+    if status == "listed":
+        print(f"Current session model: {current}  (restart/boot model: {boot_model})")
+        for item in list(result.get("models") or []):
+            marker = "*" if item.get("current") else " "
+            print(f" {marker} {item.get('index')}) {item.get('name')}")
+        return
+
+    if status == "ok":
+        if result.get("switched"):
+            print(
+                f"Model switched for this session: {result.get('previous')} -> "
+                f"{result.get('current')} ({result.get('client_count')} live client(s))."
+            )
+            print(f"Restarting Norm will return to {boot_model}.")
+        else:
+            print(f"Model unchanged: {current}. {result.get('reason') or ''}".rstrip())
+        return
+
+    print(
+        f"Model switch failed; still using {current}. "
+        f"{result.get('reason') or result.get('status') or 'unknown reason'}"
+    )
 
 
 def run_backup(*, full: bool) -> None:
@@ -486,6 +498,10 @@ def main() -> int:
                     print(format_about(ROOT))
                 except Exception as exc:
                     print(f"Could not build about information: {exc}")
+                continue
+            if lowered == "/switch-model" or lowered.startswith("/switch-model "):
+                selector = text[len("/switch-model"):].strip() or None
+                switch_model(ep, selector)
                 continue
             if lowered == "/inject-context" or lowered.startswith("/inject-context "):
                 body = text[len("/inject-context"):].strip()

@@ -2,7 +2,7 @@
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.53.16 / Installer 1.6.7-unified** package only. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.53.17 / Installer 1.6.7-unified** package only. Version history belongs only in RELEASE_NOTES.md.
 
 ## Runtime layout
 
@@ -30,6 +30,28 @@ Normal user text and N2 user-facing answers are not rewritten by N1.
 For cacheable information requests, N2 proposes the actual tool plus stable need/target metadata. N1 checks the live Redis validation pool first. A sufficiently current verified result can be reused without re-running the tool. A fresh execution result is forwarded to N2 unchanged and checked into the validation pool out-of-band.
 
 Successful known mutations invalidate affected target and parent-directory cache state. Deterministic post-write verification is a core safety check and does not require model approval.
+
+## Session model switching
+
+Norm always boots with the canonical Ollama model norm. A previous interactive switch is never restored across process restart.
+
+- /switch-model asks the running Ollama service for /api/tags and prints a deterministic numbered model list. norm / norm:latest is first; remaining installed models are alphabetical.
+- /switch-model N selects by one-based list index.
+- /switch-model MODEL selects an exact installed model name; an untagged base name is accepted only when it resolves uniquely.
+- Switching is allowed only after startup is complete and while Norm has no active or queued work.
+- The candidate is silently generation-probed before any live client pointer changes.
+- Every distinct live Ollama endpoint used by N1, N2/chat/worker, context, or vision is checked and probed before commit.
+- Norm checks for newly started work again after probes and before commit.
+- A successful commit changes all live Ollama clients together for the current process; commit failure restores every prior client model.
+- A missing model, failed probe/load, endpoint disagreement, or busy-state conflict leaves the current model unchanged.
+- /shutdown ollama targets the current session model.
+- Restarting Norm always returns to norm.
+
+Model switches are session-only: /switch-model does not rewrite runtime.json, settings.ini, PostgreSQL runtime state, or another persistent boot selector.
+
+## Operator help authority
+
+docs\help_menu.txt is the single human-editable operator-help source. Both the GUI Prompt and Rich console read it at command time for help / /help. Editing the text file changes the visible command menu without rebuilding norm.exe.
 
 ## Validation/evidence pool
 

@@ -1,8 +1,10 @@
 # Release
 
-## Norm 0.53.16 / Installer 1.6.7
+## Norm 0.53.17 / Installer 1.6.7
 
 - N1/N2 tool gating and verified-result reuse remain the execution boundary.
+- /switch-model provides fail-closed session-only model selection through the live Ollama API; every restart boots norm.
+- docs/help_menu.txt is the single live operator-help authority for both prompt frontends.
 - Canonical internal state_root keeps trusted runtime state separate from model file-tool authority.
 - /memory-condense is recent-only; /memory-condense -deep is manual bounded older-history compaction.
 - Scheduled maintenance alternates successful regular/full passes.
