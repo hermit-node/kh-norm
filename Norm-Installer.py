@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -20,7 +21,7 @@ from typing import Any, Callable, Iterable
 
 import installer_environment as envtools
 
-INSTALLER_VERSION = "1.6.8-unified"
+INSTALLER_VERSION = "1.6.10-unified"
 PIP_VERSION = "26.2.1"
 PIP_MIN_VERSION = PIP_VERSION  # backward-compatible internal print helper
 PIP_SPEC = f"pip=={PIP_VERSION}"
@@ -140,6 +141,291 @@ def _sha256_file(path: Path) -> str:
             digest.update(chunk)
     return digest.hexdigest()
 
+def _schema2_plugin_src_hash(folder: Path) -> str:
+    """Return the deterministic Schema-2 src/ tree hash without importing Norm runtime code."""
+    src = Path(folder) / "src"
+    if not src.is_dir():
+        raise InstallerError(f"Schema-2 plugin is missing src/: {folder}")
+    digest = hashlib.sha256()
+    files: list[Path] = []
+    for path in sorted(src.rglob("*")):
+        rel = path.relative_to(src)
+        if any(part.startswith(".") or part == "__pycache__" for part in rel.parts):
+            continue
+        if path.is_symlink():
+            raise InstallerError(f"Plugin source may not contain symlinks: {folder / 'src' / rel}")
+        if path.is_file() and path.suffix != ".pyc":
+            files.append(path)
+    for path in files:
+        rel = path.relative_to(src).as_posix().encode("utf-8")
+        data = path.read_bytes()
+        digest.update(len(rel).to_bytes(4, "big"))
+        digest.update(rel)
+        digest.update(len(data).to_bytes(8, "big"))
+        digest.update(data)
+    return digest.hexdigest()
+
+
+def _verify_schema2_plugin_folder(folder: Path) -> dict[str, Any]:
+    manifest_path = Path(folder) / "plugin.json"
+    if not manifest_path.is_file():
+        raise InstallerError(f"Public plugin source is missing plugin.json: {folder}")
+    try:
+        meta = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    except Exception as exc:
+        raise InstallerError(f"Invalid plugin.json in {folder}: {exc}") from exc
+    if not isinstance(meta, dict) or meta.get("schema_version") != 2:
+        raise InstallerError(f"Public plugin source is not Schema-2: {folder}")
+    expected = str(meta.get("sha256") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected):
+        raise InstallerError(f"Public plugin source has invalid sha256: {folder}")
+    actual = _schema2_plugin_src_hash(folder)
+    if actual != expected:
+        raise InstallerError(
+            f"Public plugin source hash mismatch for {folder.name}: expected {expected}, got {actual}"
+        )
+    return meta
+
+
+def _replace_plugin_src(source_folder: Path, destination: Path) -> None:
+    """Atomically replace only a managed plugin's src/ tree, preserving all other plugin state."""
+    source_src = Path(source_folder) / "src"
+    if not source_src.is_dir():
+        raise InstallerError(f"Managed plugin source is missing src/: {source_folder}")
+    destination = Path(destination)
+    destination.mkdir(parents=True, exist_ok=True)
+    target_src = destination / "src"
+    staged = destination / ".src.norm-new"
+    previous = destination / ".src.norm-old"
+    for stale in (staged, previous):
+        if stale.exists():
+            if stale.is_dir():
+                shutil.rmtree(stale)
+            else:
+                stale.unlink()
+    shutil.copytree(source_src, staged)
+    try:
+        if target_src.exists():
+            target_src.rename(previous)
+        staged.rename(target_src)
+        if previous.exists():
+            shutil.rmtree(previous)
+    except Exception:
+        if target_src.exists() and not previous.exists():
+            shutil.rmtree(target_src, ignore_errors=True)
+        if previous.exists() and not target_src.exists():
+            previous.rename(target_src)
+        shutil.rmtree(staged, ignore_errors=True)
+        raise
+
+
+def _copy_plugin_metadata(source_folder: Path, destination: Path) -> list[str]:
+    """Refresh small Norm-owned plugin metadata after src/ has passed its target hash."""
+    destination.mkdir(parents=True, exist_ok=True)
+    changed: list[str] = []
+    for name in ("plugin.json", "README.md"):
+        src = Path(source_folder) / name
+        dst = destination / name
+        if not src.is_file():
+            continue
+        if dst.is_file() and dst.read_bytes() == src.read_bytes():
+            continue
+        shutil.copy2(src, dst)
+        changed.append(name)
+    return changed
+
+
+def _reconcile_public_plugins(
+    target: Path,
+    packaged_root: Path,
+    manifest: dict,
+    temp_root: Path,
+    *,
+    log: LogFn,
+    warnings: list[str],
+) -> None:
+    """Checksum-first reconciliation for Norm-managed public/optional plugins.
+
+    Order is deliberately read-before-write:
+      1. Hash installed src/ against the release's trusted Schema-2 SHA.
+      2. If it already matches, leave src/ untouched and refresh only trusted small metadata
+         (plugin.json/README.md) when those files differ.
+      3. If src differs, replace only src/ from the verified packaged Norm adapter and re-hash.
+      4. Only if that still fails, fetch the pinned public release, verify it against the same
+         trusted identity, replace src/ from that public copy, and re-hash again.
+
+    Missing plugins prefer the pinned public source and fall back to the verified packaged
+    adapter. Non-src plugin state/cache is never deleted by a repair.
+    """
+    cfg = manifest.get("public_plugin_install") or manifest.get("fresh_install_public_plugin_refresh") or {}
+    catalog = (manifest.get("public_optional_plugins") or {}).get("plugins") or {}
+    if not isinstance(cfg, dict) or not isinstance(catalog, dict):
+        return
+    url = str(cfg.get("package_url") or "").strip()
+    subtrees = [str(x).strip().replace("\\", "/") for x in (cfg.get("subtrees") or []) if str(x).strip()]
+    expected_version = str(cfg.get("package_version") or manifest.get("version") or "").strip()
+    if not subtrees:
+        return
+
+    public_root: Path | None = None
+    public_attempted = False
+    public_error: Exception | None = None
+
+    def get_public_root() -> Path | None:
+        nonlocal public_root, public_attempted, public_error
+        if public_attempted:
+            return public_root
+        public_attempted = True
+        if not url:
+            public_error = InstallerError("no public plugin package URL is configured")
+            return None
+        if not url.lower().startswith("https://"):
+            public_error = InstallerError("public plugin source URL is not HTTPS")
+            return None
+        temp_root.mkdir(parents=True, exist_ok=True)
+        downloaded = temp_root / "public-plugin-source.zip"
+        try:
+            log(f"Fetching pinned public plugin source: {url}")
+            req = urllib.request.Request(url, headers={"User-Agent": "Norm-Installer"})
+            with urllib.request.urlopen(req, timeout=30) as response, downloaded.open("wb") as out:
+                shutil.copyfileobj(response, out)
+            public_info = inspect_package(downloaded)
+            if public_info.version != expected_version:
+                raise InstallerError(
+                    f"Public package version mismatch: expected {expected_version}, got {public_info.version}"
+                )
+            public_root = _extract_package(public_info, temp_root / "public-plugin-source")
+            return public_root
+        except Exception as exc:
+            public_error = exc
+            public_root = None
+            return None
+
+    repaired = 0
+    installed = 0
+    verified = 0
+    public_repairs = 0
+    fallback_installs = 0
+
+    for rel in subtrees:
+        rel_path = PurePosixPath(rel)
+        if rel_path.is_absolute() or ".." in rel_path.parts or not rel_path.parts or rel_path.parts[0] != "plugins":
+            raise InstallerError(f"Unsafe public plugin subtree declaration: {rel!r}")
+
+        expected = catalog.get(rel)
+        if not isinstance(expected, dict):
+            raise InstallerError(f"Public plugin catalog is missing trusted identity for {rel}")
+        expected_sha = str(expected.get("sha256") or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_sha):
+            raise InstallerError(f"Public plugin catalog has invalid trusted SHA for {rel}")
+
+        packaged_folder = packaged_root.joinpath(*rel_path.parts)
+        if not packaged_folder.is_dir():
+            raise InstallerError(f"Package is missing managed plugin adapter: {rel}")
+        packaged_meta = _verify_schema2_plugin_folder(packaged_folder)
+        for key in ("name", "version", "entrypoint", "sha256"):
+            if str(packaged_meta.get(key) or "") != str(expected.get(key) or ""):
+                raise InstallerError(
+                    f"Packaged plugin {rel} disagrees with trusted catalog field {key}: "
+                    f"{packaged_meta.get(key)!r} != {expected.get(key)!r}"
+                )
+
+        destination = target.joinpath(*rel_path.parts)
+        if destination.is_dir():
+            try:
+                installed_sha = _schema2_plugin_src_hash(destination)
+            except Exception as exc:
+                installed_sha = ""
+                log(f"Managed plugin {rel} cannot be hashed ({exc}); repair required.")
+
+            if installed_sha == expected_sha:
+                metadata_changed = _copy_plugin_metadata(packaged_folder, destination)
+                verified += 1
+                if metadata_changed:
+                    log(f"Managed plugin {rel}: src SHA verified and untouched; refreshed metadata: {', '.join(metadata_changed)}.")
+                else:
+                    log(f"Managed plugin {rel}: src SHA and metadata already verified; no write required.")
+                continue
+
+            log(
+                f"Managed plugin {rel}: src SHA mismatch "
+                f"({installed_sha or 'missing/unreadable'} != {expected_sha}); repairing Norm src first."
+            )
+            _replace_plugin_src(packaged_folder, destination)
+            repaired_sha = _schema2_plugin_src_hash(destination)
+            if repaired_sha == expected_sha:
+                _copy_plugin_metadata(packaged_folder, destination)
+                repaired += 1
+                log(f"Managed plugin {rel}: repaired from packaged Norm src and re-verified.")
+                continue
+
+            # A verified packaged tree should normally make this impossible. Public source is
+            # the second independent repair path before declaring the install broken.
+            log(
+                f"WARNING: packaged repair for {rel} still hashed {repaired_sha}; "
+                "trying the pinned public source."
+            )
+            root = get_public_root()
+            if root is None:
+                raise InstallerError(
+                    f"Managed plugin {rel} still fails SHA after packaged src repair and public source "
+                    f"is unavailable: {public_error}"
+                )
+            public_folder = root.joinpath(*rel_path.parts)
+            public_meta = _verify_schema2_plugin_folder(public_folder)
+            for key in ("name", "version", "entrypoint", "sha256"):
+                if str(public_meta.get(key) or "") != str(expected.get(key) or ""):
+                    raise InstallerError(
+                        f"Public plugin {rel} disagrees with trusted catalog field {key}: "
+                        f"{public_meta.get(key)!r} != {expected.get(key)!r}"
+                    )
+            _replace_plugin_src(public_folder, destination)
+            final_sha = _schema2_plugin_src_hash(destination)
+            if final_sha != expected_sha:
+                raise InstallerError(
+                    f"Managed plugin {rel} SHA still mismatches after public repair: "
+                    f"expected {expected_sha}, got {final_sha}"
+                )
+            _copy_plugin_metadata(public_folder, destination)
+            public_repairs += 1
+            repaired += 1
+            log(f"Managed plugin {rel}: repaired from pinned public source and re-verified.")
+            continue
+
+        # Fresh/missing plugin: public source is preferred, packaged source is an offline fallback.
+        chosen = packaged_folder
+        source_label = "verified packaged fallback"
+        root = get_public_root()
+        if root is not None:
+            public_folder = root.joinpath(*rel_path.parts)
+            if public_folder.is_dir():
+                public_meta = _verify_schema2_plugin_folder(public_folder)
+                if all(str(public_meta.get(key) or "") == str(expected.get(key) or "") for key in ("name", "version", "entrypoint", "sha256")):
+                    chosen = public_folder
+                    source_label = "pinned public source"
+                else:
+                    warnings.append(f"Public copy of {rel} did not match trusted identity; using packaged fallback")
+        else:
+            fallback_installs += 1
+            warnings.append(f"Public source unavailable for missing optional plugin {rel}; using packaged fallback: {public_error}")
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(chosen, destination)
+        actual = _schema2_plugin_src_hash(destination)
+        if actual != expected_sha:
+            shutil.rmtree(destination, ignore_errors=True)
+            raise InstallerError(
+                f"Fresh plugin install failed SHA for {rel}: expected {expected_sha}, got {actual}"
+            )
+        _copy_plugin_metadata(chosen, destination)
+        installed += 1
+        log(f"Installed missing managed plugin {rel} from {source_label}; src SHA verified.")
+
+    log(
+        "Managed plugin reconciliation: "
+        f"{verified} already verified, {repaired} repaired, {installed} installed, "
+        f"{public_repairs} public repair(s), {fallback_installs} packaged fallback install(s)."
+    )
 
 def _validate_bundled_weasyprint(
     target: Path,
@@ -469,7 +755,13 @@ def _snapshot_existing_config(target: Path, log: LogFn) -> Path | None:
         candidate = target / "backups" / f"installer-config-{stamp}-{suffix}"
         suffix += 1
     shutil.copytree(config_dir, candidate)
-    log(f"Snapshotted existing config for rollback: {candidate}")
+    snapshots = sorted(
+        (p for p in (target / "backups").glob("installer-config-*") if p.is_dir()),
+        key=lambda p: (p.stat().st_mtime_ns, p.name), reverse=True,
+    )
+    for stale in snapshots[12:]:
+        shutil.rmtree(stale, ignore_errors=True)
+    log(f"Snapshotted existing config for rollback: {candidate} (retaining newest 12 installer snapshots)")
     return candidate
 
 
@@ -992,6 +1284,14 @@ def install_norm(
                 dst_subtree = target.joinpath(*PurePosixPath(rel).parts)
                 substats = _sync_tree_contents(src_subtree, dst_subtree, protected=set(), log=log)
                 log(f"Managed persistent subtree {rel}: {substats}")
+        _reconcile_public_plugins(
+            target,
+            extracted_root,
+            staged_info.manifest,
+            temp,
+            log=log,
+            warnings=warnings,
+        )
         log(
             "Sync summary: "
             f"{stats['added']} added, {stats['updated']} updated, "
@@ -1259,6 +1559,18 @@ DEFAULT_IMPRINT: dict[str, Any] = {
         "redis_host": "loopback",
         "redis_port": 6379,
     },
+    "plugin_settings": {
+        "model_provider": {
+            "enabled": False, "chat_base_url": "", "primary_model": "", "secondary_model": "",
+            "embedding_base_url": "", "embedding_model": "", "timeout_seconds": 180,
+        },
+        "jan": {"enabled": False, "scheme": "http", "host": "", "port": 1337, "model": "primary"},
+        "vane": {"enabled": False, "scheme": "http", "host": "", "port": 7789},
+        "opencode": {
+            "enabled": False, "scheme": "http", "host": "", "port": 4096, "username": "opencode",
+            "provider_id": "norm-shared", "model": "primary", "fallback_model": "secondary",
+        },
+    },
     "postgres": {
         "user": "norm",
         "database": "norm",
@@ -1396,6 +1708,16 @@ def _coerce_port(value: Any, label: str) -> int:
     return port
 
 
+def _coerce_positive_int(value: Any, label: str, minimum: int = 1, maximum: int = 2147483647) -> int:
+    try:
+        number = int(str(value).strip())
+    except (TypeError, ValueError) as exc:
+        raise InstallerError(f"{label} must be an integer.") from exc
+    if number < minimum or number > maximum:
+        raise InstallerError(f"{label} must be between {minimum} and {maximum}.")
+    return number
+
+
 def _bool_text(value: Any) -> str:
     return "true" if bool(value) else "false"
 
@@ -1441,6 +1763,11 @@ def _update_env_file(path: Path, updates: dict[str, str], *, require_password: b
         "NORM_STOCKS_DB",
         "NORM_ROTOR5_SECRET",
         "NORM_ROTOR5_PREVIOUS_SECRETS",
+        "NORM_MODEL_PROVIDER_API_KEY",
+        "NORM_EMBEDDING_API_KEY",
+        "NORM_JAN_API_KEY",
+        "NORM_VANE_TOKEN",
+        "NORM_OPENCODE_PASSWORD",
     ]
     lines: list[str] = [
         "# Norm local secrets. This file is not part of the source package or imprint.",
@@ -1459,6 +1786,43 @@ def _update_env_file(path: Path, updates: dict[str, str], *, require_password: b
         os.chmod(path, 0o600)
     except OSError:
         pass
+
+
+def _write_plugin_settings_ini(target: Path, plugin_settings: dict[str, Any], log: LogFn) -> None:
+    """Persist installer-edited plugin values separately from core settings.ini.
+
+    The runtime plugin reconciler remains authoritative for schema/defaults. The installer
+    updates only declared remote/model sections and preserves unrelated plugin sections.
+    """
+    path = target / "config" / "plugins.ini"
+    parser = configparser.ConfigParser(interpolation=None)
+    if path.is_file():
+        parser.read(path, encoding="utf-8-sig")
+    for section in ("model_provider", "jan", "vane", "opencode"):
+        values = plugin_settings.get(section) or {}
+        if not isinstance(values, dict):
+            continue
+        if not parser.has_section(section):
+            parser.add_section(section)
+        for key, value in values.items():
+            if isinstance(value, bool):
+                text = "true" if value else "false"
+            else:
+                text = str(value)
+            parser.set(section, str(key), text)
+    # If this is a completely unconfigured fresh install, leave plugins.ini creation to
+    # PluginManager.refresh(); that preserves pre-0.53.20 behavior until Norm actually starts.
+    any_enabled = any(bool((plugin_settings.get(section) or {}).get("enabled")) for section in ("model_provider", "jan", "vane", "opencode"))
+    if not path.is_file() and not any_enabled:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(path.name + ".installer-writing")
+    with temp.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write("# Norm plugin settings. Plugin manifests define defaults/schema; runtime refresh reconciles this file.\n")
+        handle.write("# Secrets remain in the configured Norm secrets file.\n\n")
+        parser.write(handle, space_around_delimiters=True)
+    os.replace(temp, path)
+    log(f"Applied plugin settings to {path}; runtime hot-refresh will fill defaults and prune dangling keys/sections.")
 
 
 def _apply_imprint(
@@ -1489,6 +1853,8 @@ def _apply_imprint(
     _set_ini_value(settings_path, "network", "require_tailscale", _bool_text(network["require_tailscale"]))
     for key in ("ollama_port", "norm_port", "activity_port", "postgres_port", "redis_port"):
         _set_ini_value(settings_path, "network", key, str(_coerce_port(network[key], f"network.{key}")))
+
+    _write_plugin_settings_ini(target, data.get("plugin_settings", {}), log)
 
     ssh = data["ssh"]
     _set_ini_value(settings_path, "ssh", "enabled", _bool_text(ssh["enabled"]))
@@ -1539,7 +1905,7 @@ def _apply_imprint(
         "NORM_STOCKS_DB": str(pg.get("stocks_database") or "stocks_api"),
     }
     for key, value in (secret_values or {}).items():
-        if key in {"NORM_POSTGRES_PASSWORD", "NORM_ROTOR5_SECRET", "NORM_ROTOR5_PREVIOUS_SECRETS"}:
+        if key in {"NORM_POSTGRES_PASSWORD", "NORM_ROTOR5_SECRET", "NORM_ROTOR5_PREVIOUS_SECRETS", "NORM_MODEL_PROVIDER_API_KEY", "NORM_EMBEDDING_API_KEY", "NORM_JAN_API_KEY", "NORM_VANE_TOKEN", "NORM_OPENCODE_PASSWORD"}:
             updates[key] = str(value)
 
     secrets_path = _resolve_secrets_path(settings_path)
@@ -1863,6 +2229,34 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
     ssh_port_var = tk.StringVar(value=str(nested_get(imprint, "ssh.port", 22)))
     ssh_identity_var = tk.StringVar(value=str(nested_get(imprint, "ssh.identity_file", "norm_remote_ed25519")))
 
+    model_enabled_var = tk.BooleanVar(value=bool(nested_get(imprint, "plugin_settings.model_provider.enabled", False)))
+    model_chat_url_var = tk.StringVar(value=str(nested_get(imprint, "plugin_settings.model_provider.chat_base_url", "")))
+    model_primary_var = tk.StringVar(value=str(nested_get(imprint, "plugin_settings.model_provider.primary_model", "")))
+    model_secondary_var = tk.StringVar(value=str(nested_get(imprint, "plugin_settings.model_provider.secondary_model", "")))
+    model_embed_url_var = tk.StringVar(value=str(nested_get(imprint, "plugin_settings.model_provider.embedding_base_url", "")))
+    model_embed_var = tk.StringVar(value=str(nested_get(imprint, "plugin_settings.model_provider.embedding_model", "")))
+    model_timeout_var = tk.StringVar(value=str(nested_get(imprint, "plugin_settings.model_provider.timeout_seconds", 180)))
+    model_api_key_var = tk.StringVar(value="")
+    embed_api_key_var = tk.StringVar(value="")
+
+    jan_enabled_var = tk.BooleanVar(value=bool(nested_get(imprint, "plugin_settings.jan.enabled", False)))
+    jan_host_var = tk.StringVar(value=str(nested_get(imprint, "plugin_settings.jan.host", "")))
+    jan_port_var = tk.StringVar(value=str(nested_get(imprint, "plugin_settings.jan.port", 1337)))
+    jan_model_var = tk.StringVar(value=str(nested_get(imprint, "plugin_settings.jan.model", "primary")))
+    jan_api_key_var = tk.StringVar(value="")
+    vane_enabled_var = tk.BooleanVar(value=bool(nested_get(imprint, "plugin_settings.vane.enabled", False)))
+    vane_host_var = tk.StringVar(value=str(nested_get(imprint, "plugin_settings.vane.host", "")))
+    vane_port_var = tk.StringVar(value=str(nested_get(imprint, "plugin_settings.vane.port", 7789)))
+    vane_token_var = tk.StringVar(value="")
+    opencode_enabled_var = tk.BooleanVar(value=bool(nested_get(imprint, "plugin_settings.opencode.enabled", False)))
+    opencode_host_var = tk.StringVar(value=str(nested_get(imprint, "plugin_settings.opencode.host", "")))
+    opencode_port_var = tk.StringVar(value=str(nested_get(imprint, "plugin_settings.opencode.port", 4096)))
+    opencode_username_var = tk.StringVar(value=str(nested_get(imprint, "plugin_settings.opencode.username", "opencode")))
+    opencode_provider_var = tk.StringVar(value=str(nested_get(imprint, "plugin_settings.opencode.provider_id", "norm-shared")))
+    opencode_model_var = tk.StringVar(value=str(nested_get(imprint, "plugin_settings.opencode.model", "primary")))
+    opencode_fallback_var = tk.StringVar(value=str(nested_get(imprint, "plugin_settings.opencode.fallback_model", "secondary")))
+    opencode_password_var = tk.StringVar(value="")
+
     selected_source: Path | None = initial_source.resolve() if initial_source else None
     selected_info: PackageInfo | None = None
     busy = False
@@ -1992,9 +2386,11 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
     network_tab = ttk.Frame(notebook, padding=12)
     db_tab = ttk.Frame(notebook, padding=12)
     runtime_tab = ttk.Frame(notebook, padding=12)
+    agents_tab = ttk.Frame(notebook, padding=12)
     notebook.add(network_tab, text="Network & services")
     notebook.add(db_tab, text="Database & SSH")
     notebook.add(runtime_tab, text="Paths & safety")
+    notebook.add(agents_tab, text="Remote agents")
 
     def mark_entered(key: str) -> None:
         label = origin_labels.get(key)
@@ -2017,7 +2413,7 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
         entry.bind("<KeyRelease>", lambda _event, k=key: mark_entered(k))
         return entry
 
-    for tab in (network_tab, db_tab, runtime_tab):
+    for tab in (network_tab, db_tab, runtime_tab, agents_tab):
         tab.columnconfigure(1, weight=1)
 
     add_entry(network_tab, 0, "Machine name", machine_var, "network.current_machine")
@@ -2108,6 +2504,56 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
         wraplength=760,
     ).grid(row=9, column=0, columnspan=3, sticky="w", pady=(10, 0))
 
+    shared_box = ttk.LabelFrame(agents_tab, text="Shared model provider", padding=8)
+    shared_box.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+    shared_box.columnconfigure(1, weight=1)
+    ttk.Checkbutton(shared_box, text="Enable shared model provider", variable=model_enabled_var, command=lambda: mark_entered("plugin_settings.model_provider.enabled")).grid(row=0,column=1,sticky="w",pady=(0,4))
+    add_entry(shared_box, 1, "Chat API base URL", model_chat_url_var, "plugin_settings.model_provider.chat_base_url", width=48)
+    add_entry(shared_box, 2, "Primary model", model_primary_var, "plugin_settings.model_provider.primary_model", width=48)
+    add_entry(shared_box, 3, "Secondary model (optional)", model_secondary_var, "plugin_settings.model_provider.secondary_model", width=48)
+    add_entry(shared_box, 4, "Embedding API base URL", model_embed_url_var, "plugin_settings.model_provider.embedding_base_url", width=48)
+    add_entry(shared_box, 5, "Embedding model", model_embed_var, "plugin_settings.model_provider.embedding_model", width=48)
+    add_entry(shared_box, 6, "Timeout seconds", model_timeout_var, "plugin_settings.model_provider.timeout_seconds", width=12)
+    ttk.Label(shared_box, text="Chat API key (optional)").grid(row=7, column=0, sticky="w", padx=(0,8), pady=4)
+    ttk.Entry(shared_box, textvariable=model_api_key_var, show="•").grid(row=7, column=1, sticky="ew", pady=4)
+    ttk.Label(shared_box, text="[secret]", width=11).grid(row=7, column=2, sticky="w", padx=(8,0))
+    ttk.Label(shared_box, text="Embedding API key (optional)").grid(row=8, column=0, sticky="w", padx=(0,8), pady=4)
+    ttk.Entry(shared_box, textvariable=embed_api_key_var, show="•").grid(row=8, column=1, sticky="ew", pady=4)
+    ttk.Label(shared_box, text="[secret]", width=11).grid(row=8, column=2, sticky="w", padx=(8,0))
+    ttk.Label(shared_box, text="Leave disabled until the second-PC model service exists; Norm then behaves exactly as before.", wraplength=760).grid(row=9,column=0,columnspan=3,sticky="w",pady=(5,0))
+
+    jan_box = ttk.LabelFrame(agents_tab, text="Jan", padding=8)
+    jan_box.grid(row=1, column=0, sticky="nsew", padx=(0,6), pady=4)
+    ttk.Checkbutton(jan_box, text="Enable", variable=jan_enabled_var, command=lambda: mark_entered("plugin_settings.jan.enabled")).grid(row=0,column=0,sticky="w")
+    ttk.Label(jan_box,text="Host").grid(row=1,column=0,sticky="w"); ttk.Entry(jan_box,textvariable=jan_host_var,width=27).grid(row=1,column=1,sticky="ew")
+    ttk.Label(jan_box,text="Port").grid(row=2,column=0,sticky="w"); ttk.Entry(jan_box,textvariable=jan_port_var,width=9).grid(row=2,column=1,sticky="w")
+    ttk.Label(jan_box,text="Model/role").grid(row=3,column=0,sticky="w"); ttk.Entry(jan_box,textvariable=jan_model_var,width=20).grid(row=3,column=1,sticky="ew")
+    ttk.Label(jan_box,text="API key").grid(row=4,column=0,sticky="w"); ttk.Entry(jan_box,textvariable=jan_api_key_var,show="•").grid(row=4,column=1,sticky="ew")
+    jan_box.columnconfigure(1,weight=1)
+
+    vane_box = ttk.LabelFrame(agents_tab, text="Vane", padding=8)
+    vane_box.grid(row=1, column=1, sticky="nsew", padx=6, pady=4)
+    ttk.Checkbutton(vane_box, text="Enable", variable=vane_enabled_var, command=lambda: mark_entered("plugin_settings.vane.enabled")).grid(row=0,column=0,sticky="w")
+    ttk.Label(vane_box,text="Host").grid(row=1,column=0,sticky="w"); ttk.Entry(vane_box,textvariable=vane_host_var,width=27).grid(row=1,column=1,sticky="ew")
+    ttk.Label(vane_box,text="Port").grid(row=2,column=0,sticky="w"); ttk.Entry(vane_box,textvariable=vane_port_var,width=9).grid(row=2,column=1,sticky="w")
+    ttk.Label(vane_box,text="Bearer token").grid(row=3,column=0,sticky="w"); ttk.Entry(vane_box,textvariable=vane_token_var,show="•").grid(row=3,column=1,sticky="ew")
+    ttk.Label(vane_box,text="Uses shared embedding endpoint/model.",wraplength=240).grid(row=4,column=0,columnspan=2,sticky="w",pady=(4,0))
+    vane_box.columnconfigure(1,weight=1)
+
+    oc_box = ttk.LabelFrame(agents_tab, text="OpenCode", padding=8)
+    oc_box.grid(row=1, column=2, sticky="nsew", padx=(6,0), pady=4)
+    ttk.Checkbutton(oc_box, text="Enable", variable=opencode_enabled_var, command=lambda: mark_entered("plugin_settings.opencode.enabled")).grid(row=0,column=0,sticky="w")
+    ttk.Label(oc_box,text="Host").grid(row=1,column=0,sticky="w"); ttk.Entry(oc_box,textvariable=opencode_host_var,width=27).grid(row=1,column=1,sticky="ew")
+    ttk.Label(oc_box,text="Port").grid(row=2,column=0,sticky="w"); ttk.Entry(oc_box,textvariable=opencode_port_var,width=9).grid(row=2,column=1,sticky="w")
+    ttk.Label(oc_box,text="Username").grid(row=3,column=0,sticky="w"); ttk.Entry(oc_box,textvariable=opencode_username_var).grid(row=3,column=1,sticky="ew")
+    ttk.Label(oc_box,text="Password").grid(row=4,column=0,sticky="w"); ttk.Entry(oc_box,textvariable=opencode_password_var,show="•").grid(row=4,column=1,sticky="ew")
+    ttk.Label(oc_box,text="Provider ID").grid(row=5,column=0,sticky="w"); ttk.Entry(oc_box,textvariable=opencode_provider_var).grid(row=5,column=1,sticky="ew")
+    ttk.Label(oc_box,text="Model/role").grid(row=6,column=0,sticky="w"); ttk.Entry(oc_box,textvariable=opencode_model_var).grid(row=6,column=1,sticky="ew")
+    ttk.Label(oc_box,text="Fallback role").grid(row=7,column=0,sticky="w"); ttk.Entry(oc_box,textvariable=opencode_fallback_var).grid(row=7,column=1,sticky="ew")
+    oc_box.columnconfigure(1,weight=1)
+    for c in range(3): agents_tab.columnconfigure(c, weight=1)
+    ttk.Label(agents_tab, text="All endpoints are explicit allowlisted operator settings; disabled/blank integrations do not block Norm installation.", wraplength=820).grid(row=2,column=0,columnspan=3,sticky="w",pady=(8,0))
+
     def split_list(value: str) -> list[str]:
         return [item.strip() for item in value.split(";") if item.strip()]
 
@@ -2138,17 +2584,34 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
             "runtime.storage_context.primary_name": storage_primary_name_var,
             "runtime.storage_context.primary_root": storage_primary_root_var,
             "runtime.storage_context.backup_name": storage_backup_name_var,
+            "plugin_settings.model_provider.chat_base_url": model_chat_url_var, "plugin_settings.model_provider.primary_model": model_primary_var,
+            "plugin_settings.model_provider.secondary_model": model_secondary_var, "plugin_settings.model_provider.embedding_base_url": model_embed_url_var,
+            "plugin_settings.model_provider.embedding_model": model_embed_var, "plugin_settings.model_provider.timeout_seconds": model_timeout_var,
+            "plugin_settings.jan.host": jan_host_var, "plugin_settings.jan.port": jan_port_var, "plugin_settings.jan.model": jan_model_var,
+            "plugin_settings.vane.host": vane_host_var, "plugin_settings.vane.port": vane_port_var,
+            "plugin_settings.opencode.host": opencode_host_var, "plugin_settings.opencode.port": opencode_port_var,
+            "plugin_settings.opencode.username": opencode_username_var, "plugin_settings.opencode.provider_id": opencode_provider_var,
+            "plugin_settings.opencode.model": opencode_model_var, "plugin_settings.opencode.fallback_model": opencode_fallback_var,
         }
         for dotted, var in scalar_vars.items():
             var.set(str(envtools.nested_get(resolved, dotted, "")))
         require_tailscale_var.set(bool(envtools.nested_get(resolved, "network.require_tailscale", False)))
         ssh_enabled_var.set(bool(envtools.nested_get(resolved, "ssh.enabled", False)))
+        model_enabled_var.set(bool(envtools.nested_get(resolved, "plugin_settings.model_provider.enabled", False)))
+        jan_enabled_var.set(bool(envtools.nested_get(resolved, "plugin_settings.jan.enabled", False)))
+        vane_enabled_var.set(bool(envtools.nested_get(resolved, "plugin_settings.vane.enabled", False)))
+        opencode_enabled_var.set(bool(envtools.nested_get(resolved, "plugin_settings.opencode.enabled", False)))
         allowed_roots_var.set(";".join(str(x) for x in (envtools.nested_get(resolved, "runtime.allowed_roots", []) or [])))
         never_probe_patterns_var.set(";".join(str(x) for x in (envtools.nested_get(resolved, "runtime.network_map.never_probe_name_patterns", []) or [])))
         never_probe_cidrs_var.set(";".join(str(x) for x in (envtools.nested_get(resolved, "runtime.network_map.never_probe_cidrs", []) or [])))
         pg_password_var.set(secrets.get("NORM_POSTGRES_PASSWORD", ""))
         rotor_secret_var.set(secrets.get("NORM_ROTOR5_SECRET", ""))
         rotor_previous_var.set(secrets.get("NORM_ROTOR5_PREVIOUS_SECRETS", ""))
+        model_api_key_var.set(secrets.get("NORM_MODEL_PROVIDER_API_KEY", ""))
+        embed_api_key_var.set(secrets.get("NORM_EMBEDDING_API_KEY", ""))
+        jan_api_key_var.set(secrets.get("NORM_JAN_API_KEY", ""))
+        vane_token_var.set(secrets.get("NORM_VANE_TOKEN", ""))
+        opencode_password_var.set(secrets.get("NORM_OPENCODE_PASSWORD", ""))
         pg_password_badge.configure(text="[current secret]" if pg_password_var.get() else "[blank]")
         rotor_secret_badge.configure(text="[current secret]" if rotor_secret_var.get() else "[blank]")
         rotor_previous_badge.configure(text="[current secret]" if rotor_previous_var.get() else "[blank]")
@@ -2188,6 +2651,22 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
                 "redis_host": redis_host_var.get().strip(),
                 "redis_port": _coerce_port(redis_port_var.get(), "Redis port"),
             },
+            "plugin_settings": {
+                "model_provider": {
+                    "enabled": bool(model_enabled_var.get()),
+                    "chat_base_url": model_chat_url_var.get().strip(), "primary_model": model_primary_var.get().strip(),
+                    "secondary_model": model_secondary_var.get().strip(), "embedding_base_url": model_embed_url_var.get().strip(),
+                    "embedding_model": model_embed_var.get().strip(),
+                    "timeout_seconds": _coerce_positive_int(model_timeout_var.get(), "Model timeout seconds", 1, 900),
+                },
+                "jan": {"enabled": bool(jan_enabled_var.get()), "scheme": "http", "host": jan_host_var.get().strip(), "port": _coerce_port(jan_port_var.get(), "Jan port"), "model": jan_model_var.get().strip() or "primary"},
+                "vane": {"enabled": bool(vane_enabled_var.get()), "scheme": "http", "host": vane_host_var.get().strip(), "port": _coerce_port(vane_port_var.get(), "Vane port")},
+                "opencode": {
+                    "enabled": bool(opencode_enabled_var.get()), "scheme": "http", "host": opencode_host_var.get().strip(), "port": _coerce_port(opencode_port_var.get(), "OpenCode port"),
+                    "username": opencode_username_var.get().strip() or "opencode", "provider_id": opencode_provider_var.get().strip() or "norm-shared",
+                    "model": opencode_model_var.get().strip() or "primary", "fallback_model": opencode_fallback_var.get().strip() or "secondary",
+                },
+            },
             "postgres": {
                 "user": pg_user_var.get().strip(),
                 "database": pg_db_var.get().strip(),
@@ -2221,6 +2700,13 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
         for key in ("user", "database", "schema", "stocks_database"):
             if not data["postgres"][key]:
                 raise InstallerError(f"PostgreSQL {key.replace('_', ' ')} is required.")
+        plugin_cfg = data.get("plugin_settings", {})
+        if (plugin_cfg.get("model_provider") or {}).get("enabled") and not str((plugin_cfg.get("model_provider") or {}).get("chat_base_url") or "").strip():
+            raise InstallerError("Shared model provider is enabled but Chat API base URL is blank.")
+        for name in ("jan", "vane", "opencode"):
+            section = plugin_cfg.get(name) or {}
+            if section.get("enabled") and not str(section.get("host") or "").strip():
+                raise InstallerError(f"{name.title()} is enabled but its host is blank.")
         return validate_imprint(data)
 
     def save_imprint_clicked() -> None:
@@ -2243,6 +2729,11 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
                 "NORM_POSTGRES_PASSWORD": pg_password_var.get(),
                 "NORM_ROTOR5_SECRET": rotor_secret_var.get(),
                 "NORM_ROTOR5_PREVIOUS_SECRETS": rotor_previous_var.get(),
+                "NORM_MODEL_PROVIDER_API_KEY": model_api_key_var.get(),
+                "NORM_EMBEDDING_API_KEY": embed_api_key_var.get(),
+                "NORM_JAN_API_KEY": jan_api_key_var.get(),
+                "NORM_VANE_TOKEN": vane_token_var.get(),
+                "NORM_OPENCODE_PASSWORD": opencode_password_var.get(),
             }
             target = Path(target_var.get().strip()).expanduser()
             candidates: list[Path] = []
@@ -2406,6 +2897,11 @@ def launch_gui(initial_source: Path | None = None, imprint_path: Path | None = N
             "NORM_POSTGRES_PASSWORD": pg_password_var.get(),
             "NORM_ROTOR5_SECRET": rotor_secret_var.get(),
             "NORM_ROTOR5_PREVIOUS_SECRETS": rotor_previous_var.get(),
+            "NORM_MODEL_PROVIDER_API_KEY": model_api_key_var.get(),
+            "NORM_EMBEDDING_API_KEY": embed_api_key_var.get(),
+            "NORM_JAN_API_KEY": jan_api_key_var.get(),
+            "NORM_VANE_TOKEN": vane_token_var.get(),
+            "NORM_OPENCODE_PASSWORD": opencode_password_var.get(),
         }
 
         return InstallOptions(

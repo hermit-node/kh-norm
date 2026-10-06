@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "name": "opencode",
+  "version": "1.0.0",
+  "date": "2026-10-05",
+  "entrypoint": "src/main.py",
+  "description": "Remote OpenCode session/task adapter using an operator-configured Tailscale endpoint and shared model provider.",
+  "capabilities": [
+    "network",
+    "remote-agent",
+    "coding",
+    "filesystem-remote"
+  ],
+  "sha256": "0f3f1aca23d2ff8acfd6b5cdb809984da283c5c49151635548108e8f62f7c5cd"
+}

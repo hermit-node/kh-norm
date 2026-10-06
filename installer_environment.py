@@ -16,6 +16,14 @@ FIELD_PATHS = (
     "network.ollama_host", "network.ollama_port", "network.norm_host", "network.norm_port",
     "network.activity_host", "network.activity_port", "network.postgres_host", "network.postgres_port",
     "network.redis_host", "network.redis_port",
+    "plugin_settings.model_provider.enabled", "plugin_settings.model_provider.chat_base_url",
+    "plugin_settings.model_provider.primary_model", "plugin_settings.model_provider.secondary_model",
+    "plugin_settings.model_provider.embedding_base_url", "plugin_settings.model_provider.embedding_model",
+    "plugin_settings.model_provider.timeout_seconds",
+    "plugin_settings.jan.enabled", "plugin_settings.jan.host", "plugin_settings.jan.port", "plugin_settings.jan.model",
+    "plugin_settings.vane.enabled", "plugin_settings.vane.host", "plugin_settings.vane.port",
+    "plugin_settings.opencode.enabled", "plugin_settings.opencode.host", "plugin_settings.opencode.port",
+    "plugin_settings.opencode.username", "plugin_settings.opencode.provider_id", "plugin_settings.opencode.model", "plugin_settings.opencode.fallback_model",
     "postgres.user", "postgres.database", "postgres.schema", "postgres.stocks_database",
     "ssh.enabled", "ssh.user", "ssh.remote_host", "ssh.docker_host", "ssh.port", "ssh.identity_file",
     "runtime.allowed_roots", "runtime.storage_context.primary_name",
@@ -114,6 +122,42 @@ def read_installed_environment(target: Path) -> tuple[dict[str, Any], dict[str, 
     ini("network.require_tailscale", "network", "require_tailscale", "bool")
     for key in ("ollama_port", "norm_port", "activity_port", "postgres_port", "redis_port"):
         ini(f"network.{key}", "network", key, "int")
+    # One-time compatibility read for Installer 1.6.9 / Norm 0.53.20 experimental sections.
+    for key in ("chat_base_url", "primary_model", "secondary_model", "embedding_base_url", "embedding_model"):
+        ini(f"plugin_settings.model_provider.{key}", "model_provider", key)
+    ini("plugin_settings.model_provider.timeout_seconds", "model_provider", "timeout_seconds", "int")
+    legacy_remote_map = {
+        "jan_enabled": ("jan", "enabled", "bool"), "jan_host": ("jan", "host", "str"), "jan_port": ("jan", "port", "int"), "jan_model": ("jan", "model", "str"),
+        "vane_enabled": ("vane", "enabled", "bool"), "vane_host": ("vane", "host", "str"), "vane_port": ("vane", "port", "int"),
+        "opencode_enabled": ("opencode", "enabled", "bool"), "opencode_host": ("opencode", "host", "str"), "opencode_port": ("opencode", "port", "int"),
+        "opencode_username": ("opencode", "username", "str"), "opencode_provider_id": ("opencode", "provider_id", "str"),
+        "opencode_model": ("opencode", "model", "str"), "opencode_fallback_model": ("opencode", "fallback_model", "str"),
+    }
+    for old_key, (section, key, kind) in legacy_remote_map.items():
+        ini(f"plugin_settings.{section}.{key}", "remote_agents", old_key, kind)
+
+    plugin_ini = target / "config" / "plugins.ini"
+    if plugin_ini.is_file():
+        plugin_parser = configparser.ConfigParser(interpolation=None)
+        plugin_parser.read(plugin_ini, encoding="utf-8-sig")
+        def pini(section: str, key: str, kind: str = "str") -> None:
+            if not plugin_parser.has_option(section, key):
+                return
+            raw = plugin_parser.get(section, key, fallback="")
+            dotted = f"plugin_settings.{section}.{key}"
+            if kind == "bool": current[dotted] = plugin_parser.getboolean(section, key, fallback=False)
+            elif kind == "int":
+                try: current[dotted] = int(raw.strip())
+                except ValueError: pass
+            else: current[dotted] = raw.strip()
+        for key in ("enabled",): pini("model_provider", key, "bool")
+        for key in ("chat_base_url", "primary_model", "secondary_model", "embedding_base_url", "embedding_model"): pini("model_provider", key)
+        pini("model_provider", "timeout_seconds", "int")
+        for section in ("jan", "vane", "opencode"):
+            pini(section, "enabled", "bool"); pini(section, "host"); pini(section, "port", "int")
+        pini("jan", "model")
+        for key in ("username", "provider_id", "model", "fallback_model"): pini("opencode", key)
+
     ini("ssh.enabled", "ssh", "enabled", "bool")
     ini("ssh.user", "ssh", "ca8d_user")
     ini("ssh.remote_host", "ssh", "ca8d_host")
@@ -140,7 +184,7 @@ def read_installed_environment(target: Path) -> tuple[dict[str, Any], dict[str, 
             value = env_values.get(env_key, "").strip()
             if value:
                 current[f"postgres.{key}"] = value
-    for key in ("NORM_POSTGRES_PASSWORD", "NORM_ROTOR5_SECRET", "NORM_ROTOR5_PREVIOUS_SECRETS"):
+    for key in ("NORM_POSTGRES_PASSWORD", "NORM_ROTOR5_SECRET", "NORM_ROTOR5_PREVIOUS_SECRETS", "NORM_MODEL_PROVIDER_API_KEY", "NORM_EMBEDDING_API_KEY", "NORM_JAN_API_KEY", "NORM_VANE_TOKEN", "NORM_OPENCODE_PASSWORD"):
         if key in env_values:
             secrets[key] = env_values[key]
 
@@ -273,6 +317,30 @@ def _postgres_probe(host: str, port: int, user: str, password: str, database: st
     return "partial", "TCP reachable; no usable Python found for auth test"
 
 
+def _json_probe(url: str, timeout: float = 2.5, headers: dict[str, str] | None = None) -> tuple[str, str]:
+    try:
+        req = urllib.request.Request(url, headers=headers or {})
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            raw = response.read(4096)
+            return "ok", f"HTTP {response.status}" + (" JSON" if raw.lstrip().startswith((b"{", b"[")) else "")
+    except urllib.error.HTTPError as exc:
+        return "partial", f"HTTP endpoint reachable ({exc.code})"
+    except Exception as exc:
+        return "error", str(exc)
+
+
+def _auth_bearer(value: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {value}"} if str(value or "").strip() else {}
+
+
+def _auth_basic(user: str, password: str) -> dict[str, str]:
+    if not password:
+        return {}
+    import base64
+    token = base64.b64encode(f"{user}:{password}".encode()).decode()
+    return {"Authorization": f"Basic {token}"}
+
+
 def test_environment_connections(data: dict[str, Any], secrets: dict[str, str], python_candidates: list[Path]) -> list[tuple[str, str, str]]:
     network = data["network"]
     machine, domain = str(network["current_machine"]), str(network["current_domain"])
@@ -290,5 +358,26 @@ def test_environment_connections(data: dict[str, Any], secrets: dict[str, str], 
     pg = data["postgres"]
     status, detail = _postgres_probe(host("postgres_host"), int(network["postgres_port"]), str(pg["user"]), str(secrets.get("NORM_POSTGRES_PASSWORD", "")), str(pg["database"]), python_candidates)
     results.append(("PostgreSQL", status, detail))
+
+    ps = data.get("plugin_settings", {})
+    mp = ps.get("model_provider", {})
+    if mp.get("enabled"):
+        for label, base_key, secret_key in (("Shared chat models", "chat_base_url", "NORM_MODEL_PROVIDER_API_KEY"), ("Embedding models", "embedding_base_url", "NORM_EMBEDDING_API_KEY")):
+            base = str(mp.get(base_key) or "").rstrip("/")
+            if base:
+                status, detail = _json_probe(base + "/models", headers=_auth_bearer(secrets.get(secret_key, "")))
+                results.append((label, status, detail))
+    jan = ps.get("jan", {})
+    if jan.get("enabled"):
+        status, detail = _json_probe(f"http://{jan.get('host')}:{int(jan.get('port',1337))}/v1/models", headers=_auth_bearer(secrets.get("NORM_JAN_API_KEY", "")))
+        results.append(("Jan", status, detail))
+    vane = ps.get("vane", {})
+    if vane.get("enabled"):
+        status, detail = _json_probe(f"http://{vane.get('host')}:{int(vane.get('port',7789))}/health", headers=_auth_bearer(secrets.get("NORM_VANE_TOKEN", "")))
+        results.append(("Vane", status, detail))
+    oc = ps.get("opencode", {})
+    if oc.get("enabled"):
+        status, detail = _json_probe(f"http://{oc.get('host')}:{int(oc.get('port',4096))}/global/health", headers=_auth_basic(str(oc.get("username") or "opencode"), secrets.get("NORM_OPENCODE_PASSWORD", "")))
+        results.append(("OpenCode", status, detail))
     return results
 

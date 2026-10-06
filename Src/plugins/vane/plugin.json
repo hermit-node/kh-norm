@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "name": "vane",
+  "version": "1.0.0",
+  "date": "2026-10-05",
+  "entrypoint": "src/main.py",
+  "description": "Remote Vane hybrid-retrieval adapter using an operator-configured Tailscale bridge and shared embedding model.",
+  "capabilities": [
+    "network",
+    "remote-agent",
+    "retrieval",
+    "vector-search",
+    "bm25"
+  ],
+  "sha256": "8d58b7c99548250bf787a4140b6d96f35e065affde5ab84c4104fcf4c5bbf2d5"
+}

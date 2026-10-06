@@ -36,3 +36,11 @@ dist/
 .idea/
 .DS_Store
 Thumbs.db
+
+!Norm-Installer.spec
+
+!Norm-0.53.20-portable-source.zip
+
+# Backup plugin source is part of the release.
+!Src/plugins/backup/
+!Src/plugins/backup/**

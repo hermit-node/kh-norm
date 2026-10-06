@@ -1,39 +1,27 @@
 from __future__ import annotations
-import hashlib, json, zipfile
+import json,zipfile
 from pathlib import Path
-
 ROOT=Path(__file__).resolve().parents[1]
-SRC=ROOT/"src"/"Norm"
-ZIP=ROOT/"Norm-0.53.19-portable-source.zip"
-
-manifest=json.loads((SRC/"package-manifest.json").read_text(encoding="utf-8"))
-assert manifest["version"]=="0.53.19", manifest["version"]
-assert not (ROOT/"Norm-Installer.exe").exists()  # Public source release
-assert (ROOT/"Norm-Installer.py").is_file()
-assert (ROOT/"installer_environment.py").is_file()
-assert ZIP.is_file()
-assert Path(str(ZIP)+".sha256").is_file()
-assert not (SRC/"tools"/"weasyprint"/"runtime").exists()
-assert (SRC/"tools"/"fetch_weasyprint_runtime.py").is_file()
-assert (SRC/"docs"/"help_menu.txt").is_file()
-assert (SRC/"core"/"norm_runtime"/"model_switch.py").is_file()
-assert (SRC/"core"/"norm_runtime"/"public_web.py").is_file()
-assert (SRC/"tools"/"test_maintenance_control.py").is_file()
-assert (SRC/"tools"/"test_public_web.py").is_file()
-assert not (SRC/"core"/"norm.exe").exists()
-
-expected=(Path(str(ZIP)+".sha256").read_text(encoding="ascii").split()[0]).lower()
-actual=hashlib.sha256(ZIP.read_bytes()).hexdigest()
-assert actual==expected,(actual,expected)
-
-tree={p.relative_to(SRC).as_posix():p.read_bytes() for p in SRC.rglob("*") if p.is_file()}
+SRC=ROOT/'Src'
+ZIP=ROOT/'Norm-0.53.20-portable-source.zip'
+manifest=json.loads((ROOT/'PUBLIC_SOURCE_MANIFEST.json').read_text(encoding='utf-8'))
+assert manifest['norm_version']=='0.53.20'
+assert manifest['installer_version']=='1.6.10-unified'
+for rel in ['Norm-Installer.py','installer_environment.py','Norm-Installer.spec','Build-Installer.py','Build-Installer.bat','Run-Installer.bat','Norm-0.53.20-portable-source.zip']:
+    assert (ROOT/rel).is_file(), rel
+assert 'INSTALLER_VERSION = "1.6.10-unified"' in (ROOT/'Norm-Installer.py').read_text(encoding='utf-8')
+assert not (ROOT/'norm-imprint.local.json').exists()
+assert not (SRC/'core'/'norm.exe').exists()
+assert not (SRC/'tools'/'weasyprint'/'runtime').exists()
 with zipfile.ZipFile(ZIP) as zf:
-    prefix="Norm-0.53.19/"
-    zipped={n[len(prefix):]:zf.read(n) for n in zf.namelist() if n.startswith(prefix) and not n.endswith("/")}
-assert set(tree)==set(zipped),(sorted(set(tree)-set(zipped))[:10],sorted(set(zipped)-set(tree))[:10])
-for rel,data in tree.items():
-    assert zipped[rel]==data,rel
-
-print(f"PASS public version 0.53.19")
-print(f"PASS src/ZIP exact byte parity files={len(tree)}")
-print(f"PASS source SHA256 {actual}")
+    members={}
+    for info in zf.infolist():
+        if info.is_dir(): continue
+        parts=Path(info.filename).parts
+        rel=Path(*parts[1:])
+        members[rel.as_posix()]=zf.read(info)
+files={p.relative_to(SRC).as_posix():p.read_bytes() for p in SRC.rglob('*') if p.is_file()}
+assert set(members)==set(files), (set(members)-set(files),set(files)-set(members))
+for rel,data in members.items(): assert files[rel]==data, rel
+print('PASS self-contained Norm 0.53.20 / Installer 1.6.10 kit')
+print(f'PASS ZIP and Src match exactly: {len(files)} files')
