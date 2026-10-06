@@ -2,7 +2,7 @@
   "schema_version": 2,
   "name": "voice_profile",
   "version": "0.3.0",
-  "date": "2026-10-02",
+  "date": "2026-10-04",
   "entrypoint": "src/main.py",
   "description": "Build, inspect, activate, and retrieve from AI voice profiles derived from PDF/text corpora.",
   "capabilities": [
@@ -12,5 +12,5 @@
     "source-grounded corpus retrieval",
     "active conversation voice conditioning"
   ],
-  "sha256": "b3ca8ce1afa6da64dc6d5edd2ad19a607ab21b4c08343981bc260c84f8e3c99e"
+  "sha256": "390b889f39d8b2d182fad5efc7ec8559c0faa1be53517018806f300ef2648a5e"
 }

@@ -34,12 +34,12 @@ DEFAULT_CONFIG = {
     "targets": [
         {
             "name": "NORM-HOST",
-            "host": "localhost.example.invalid",
-            "aliases": ["localhost"],
+            "host": "norm-host.example.invalid",
+            "aliases": ["norm-host"],
             "probes": [
                 {"kind": "tcp", "port": 22, "timeout_seconds": 1.5},
-                {"kind": "http", "url": "http://localhost.example.invalid:12543/health", "timeout_seconds": 2.0},
-                {"kind": "http", "url": "http://localhost.example.invalid:8766/health", "timeout_seconds": 2.0},
+                {"kind": "http", "url": "http://norm-host.example.invalid:12543/health", "timeout_seconds": 2.0},
+                {"kind": "http", "url": "http://norm-host.example.invalid:8766/health", "timeout_seconds": 2.0},
             ],
         },
         {
@@ -378,7 +378,7 @@ def _probe_http(url: str, timeout_seconds: float, config: dict[str, Any]) -> dic
             "GET",
             path,
             headers={
-                "User-Agent": "Norm-Network-Map/0.53.14",
+                "User-Agent": "Norm-Network-Map/0.53.16",
                 "Host": host_header,
                 "Connection": "close",
             },

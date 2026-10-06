@@ -11,8 +11,20 @@ secrets/
 *.pfx
 *.p12
 
-# Installer/build output
+# Runtime/user state
+state/
+logs/
+workspace/
+temp/
+backups/
+*.dump
+*.sql
+
+# Generated release/build output
 Norm-Installer.exe
+Norm-*.zip
+Norm-*.zip.sha256
+SHA256SUMS.txt
 build/
 dist/
 *.spec
@@ -20,6 +32,9 @@ dist/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Reproducible third-party binary runtime
+src/Norm/tools/weasyprint/runtime/
 
 # Editor/OS
 .vscode/

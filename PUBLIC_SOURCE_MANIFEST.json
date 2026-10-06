@@ -1,0 +1,21 @@
+{
+  "name": "kh-norm public source",
+  "norm_version": "0.53.16",
+  "installer_version": "1.6.7",
+  "repository": "hermit-node/kh-norm",
+  "omitted_from_git": [
+    "generated Norm-Installer.exe",
+    "generated release/source ZIPs",
+    "tools/weasyprint/runtime frozen third-party binary tree",
+    "runtime state/logs/workspace/temp",
+    "SSH/private secrets/local imprints",
+    "Python caches/build output"
+  ],
+  "weasyprint_runtime": {
+    "version": "70.0",
+    "pango_verified": "1.58.2",
+    "url": "https://github.com/Kozea/WeasyPrint/releases/download/v70.0/weasyprint-windows-onedir.zip",
+    "sha256": "ab1151f210b4e6bb7aa7a79e91a67e8ddb760094c107bfda55241b6aaefe7d53",
+    "fetch_helper": "src/Norm/tools/fetch_weasyprint_runtime.py"
+  }
+}

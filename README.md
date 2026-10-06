@@ -1,106 +1,53 @@
 # Norm
 
-A persistent, self-hosted AI agent runtime that can remember context, use controlled tools, carry work across sessions, and recover interrupted tasks.
+A persistent, self-hosted Windows AI-agent runtime built around local Ollama inference, PostgreSQL durable state, Redis live coordination, controlled tools, resumable work, and hot-loaded Python plugins.
 
-Norm is built to do more than answer a prompt. A user request can become bounded work backed by PostgreSQL durable state, Redis live coordination, local Ollama models, and hot-loaded Python tools.
+Current public source: Norm 0.53.16 / Installer 1.6.7.
 
-## 0.53.14: N1/N2 checkpoint 1
+## Current architecture
 
-Norm now starts two logical agent roles while keeping ordinary conversation transparent:
+N2 performs normal reasoning and work. N1 gates model-requested tools, verified-result reuse/check-in, and repeated reasoning/tool loops. PostgreSQL is the durable authority; Redis is the live coordination/evidence layer.
 
-```text
-USER -> N1 -> N2
-             |
-             | proposes tool + needed fact/target
-             v
-            N1 gate
-          /    |     \
- existing   execute   stop/reset loop
- answer      tool
-   |           |
-   +------> raw result -> N2
+## Memory maintenance
 
-N2 response -> N1 -> USER
-```
+Norm separates three operations.
 
-At this checkpoint, N2 remains the working/reasoning path. N1 does not rewrite normal user input or N2's user-facing answer. N1 intervenes at model-requested tool boundaries and when repeated reasoning/tool turns indicate a rabbit hole.
+- /memory-condense: recent-only, default 14-day window, validating every compact record it produces.
+- /memory-condense -deep: manual bounded older-history compaction/validation without hierarchical merging.
+- /memory-condense -full: sweeps the complete date-ordered historical archive.
 
-For information tools, N2 states what information it needs and proposes the real tool/arguments. N1 checks the live validation pool, reuses an existing sufficiently current observation when appropriate, or invokes the tool and forwards the raw tool result to N2 unchanged. Fresh observations are recorded by N1 rather than by N2.
+Full-mode defaults in config/runtime.json are:
 
-## What Norm does
+    deep_history_full_batch_rows = 200
+    deep_history_full_samples_per_batch = 12
+    deep_history_full_merge_max_records = 6
 
-- **Persistent memory and task state** in PostgreSQL.
-- **Live queues and validation evidence** in Redis.
-- **Local inference** through Ollama.
-- **N1/N2 separation of authority**: N2 reasons and works; N1 controls model-requested tool execution and loop intervention.
-- **Recoverable long-running tasks** with bounded steps and checkpoints.
-- **Hot-loaded Python plugins** with source identity verification and last-known-good fallback.
-- **Bounded file/PDF workflows** for large sources.
-- **Operator controls** for queueing, suppression/resume, backup, status, shutdown, and maintenance.
+The 200-row size is a QA grouping, not a pass limit. Every 200 dated compact rows contributes up to 12 isolated reconstruction samples. Each replay gets up to 4,800 output tokens per continuation segment and up to four segments, then is discarded.
 
-## Quick start
+After all QA batches pass, one hierarchical merge level examines chronological neighboring windows of up to six compact rows. Unrelated neighbors remain separate. Related/redundant subsets can reduce to 1..N replacement rows. Every constituent represented by an actual merge must reconstruct successfully from the replacement before superseded originals are deleted.
 
-Norm currently targets Windows. Keep the installer and portable source package together:
+Scheduled maintenance alternates successful regular -> full -> regular -> full passes. Interrupted scheduled work resumes the same mode.
 
-```text
-Norm-Installer.py
-installer_environment.py
-Norm-0.53.14-portable-source.zip
-Norm-0.53.14-portable-source.zip.sha256
-norm-imprint.example.json
-```
+## WeasyPrint and Pango
 
-Run the installer script with Python, or build/use the Windows installer executable. Existing installations are updated in place; persistent runtime state is not part of the public source archive.
+The release installer bundles the official WeasyPrint 70.0 Windows onedir runtime, verified with Pango 1.58.2.
 
-## Architecture
+Git intentionally does not track that frozen third-party runtime. Upstream license/source metadata is retained under src/Norm/tools/weasyprint and the repo includes:
 
-```text
-                         USER
-                          |
-                          v
-                         N1
-                ingress / tool gate / loop guard
-                          |
-                          v
-                         N2
-                   reasoning / worker
-                          |
-                    tool proposal
-                          |
-                          v
-                         N1
-                reuse evidence or execute
-                          |
-             +------------+------------+
-             |            |            |
-         PostgreSQL      Redis      native/plugins
-       durable state   live state       tools
-                          |
-                         N2
-                          |
-                         N1
-                          |
-                         USER
-```
+    python src/Norm/tools/fetch_weasyprint_runtime.py
 
-## Configuration and privacy
-
-The public repository contains generic configuration only. Machine-specific deployment topology should be kept in ignored local configuration/imprint files. Passwords, tokens, SSH private keys, OAuth material, runtime databases, logs, and full-state backups must not be committed.
-
-The portable source package deliberately excludes `.venv`, generated executables, runtime state, secrets, SSH material, logs, and user workspace content.
+The helper downloads the official archive, verifies SHA-256, and reconstructs src/Norm/tools/weasyprint/runtime. That directory is gitignored.
 
 ## Repository layout
 
-```text
-src/Norm/       Norm runtime source and bundled plugins
-Norm-Installer.py
-installer_environment.py
-Norm-0.53.14-portable-source.zip
-Norm-0.53.14-portable-source.zip.sha256
-```
+    src/Norm/                       runtime source, docs, plugins and tests
+    Norm-Installer.py               readable installer source
+    installer_environment.py        installer environment helper
+    norm-imprint.example.json       generic topology/config example
+    tools/public_release_guard.py   publication scanner
+    tools/build_source_package.py   portable-source build helper
+    tests/test_public_release.py    public-boundary regression
 
-More detailed runtime documentation lives under `src/Norm/docs/`.
+Generated installer executables, release/source ZIPs, local native runtime files, runtime state, secrets, SSH material, logs, workspaces, local imprints and build caches are intentionally excluded from Git.
 
-## Status
-
-Norm is under active development. Version 0.53.14 is the first N1/N2 tool-gating checkpoint; both logical roles may still target the same configured model/endpoint until separate hosts/models are assigned.
+Detailed current runtime documentation lives under src/Norm/docs. Historical shipped changes live only in src/Norm/docs/RELEASE_NOTES.md.

@@ -176,8 +176,7 @@ def runtime_config() -> dict:
             "candidate_threads": 4,
             "recent_messages": 4,
             "background_context_chars": 4000,
-            "deep_history_enabled": False,
-        },
+            },
         "maintenance": {
             "redis_reconcile_enabled": True,
             "redis_reconcile_seconds": 300,

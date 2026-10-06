@@ -15,7 +15,7 @@ def _queue():
 
 
 def _allowed(path: str) -> Path:
-    policy = load_file_access_policy(_root())
+    policy = load_file_access_policy(_root(), capability="soft_delete")
     return authorize_path(path, policy.write_roots, access="write", hardlock=policy.enforce_write_directories)
 
 

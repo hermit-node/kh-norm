@@ -1,3 +1,26 @@
+# Release Notes
+
+## 0.53.16 — 2026-10-04 — Maintenance reliability, hierarchical memory condensation, complete console teardown, and bundled WeasyPrint
+
+- Deep-history reconstruction is isolated per sampled compact memory. Each replay gets up to **4,800 output tokens per continuation segment × 4 segments**; no neighboring compact memory, previous replay, or tool call can help the sample pass. Replay text is disposable and is not persisted as memory.
+- Failed compact-memory validation may repair only that record from its own authoritative task source, then re-run the isolated reconstruction. The repaired record is the one persisted; a failed retry preserves trusted/raw state.
+- /memory-condense is explicitly recent-only, using live-configurable memory.regular_memory_window_days (default **14 days**). Manual force means “run now,” not “scan all history,” and recent mode does not globally prune old conversation history.
+- Scheduled memory maintenance now alternates successful **regular -> full -> regular -> full** passes on memory.scheduled_memory_interval_days (default **7 days**). Failed/interrupted scheduled work resumes the same recorded mode; alternation advances only after success. Automatic deep scheduling was removed.
+- Added manual /memory-condense -deep for bounded older raw-history compaction/validation without hierarchical merging.
+- Scheduled and manual /memory-condense -full sweep the complete date-ordered historical archive. Validation is partitioned into compact-row batches via deep_history_full_batch_rows (default **200**) and samples deep_history_full_samples_per_batch (default **12**) isolated rows from each batch. After QA passes, one hierarchical merge level considers chronologically neighboring windows of up to deep_history_full_merge_max_records (default **6**). A window may remain unchanged or reduce to 1..N validated replacement rows; repeated full passes can therefore progressively condense prior merged outputs.
+- Within each neighboring merge window, full mode may leave unrelated rows separate or consolidate genuinely related/redundant subsets into **1..N** surviving records instead of forcing N-to-1. Every source memory must appear exactly once in the proposed partition; singletons stay unchanged; actual merged groups retain full provenance.
+- Merged records must preserve reconstructable task/request, meaningful steps or itinerary, tools used, results/current state, artifact pointers, efficiency/failure lessons, reusable constraints/fixes, and concise improvement notes. Each constituent is replay-tested from the merged record alone. A failed merge falls back to its original constituent compact memories.
+- Background-condensation checkpoints use unique PID/UUID temp files, flush + fsync, six bounded Windows atomic-replace retries, and a final durable in-place rewrite fallback for persistent destination-sharing denial.
+- /stop-all now signals exact detached Norm operator-console hosts after the SOS snapshot is verified. Non-prompt operator windows auto-close after about **5 seconds**; Norm Prompt remains about **10 seconds**; Enter or Ctrl+C closes a countdown immediately. Generic python.exe processes are never mass-killed.
+- Bundled the official **WeasyPrint 70.0** Windows onedir runtime under tools\weasyprint, including the UCRT64 native stack with **Pango 1.58.2**. No target-machine MSYS2/Pango compilation is required.
+- Installer **1.6.7-unified** validates the bundled WeasyPrint runtime with --info and a real HTML-to-PDF render before installation reports success.
+- Current-state documentation was reconciled against 0.53.16 source/config. README.md, CURRENT_STATUS.md, DEVELOPMENT_NOTES.md, MAINTENANCE_VERIFICATION.md, FUTURE_IMPLEMENTATION_NOTES.md, and SOURCE_PACKAGE.md contain current state/current contracts/current evidence/active backlog only; RELEASE_NOTES.md remains the sole maintained historical ledger.
+## 0.53.15 — 2026-10-04 — Canonical path-policy and internal state root
+- Added one canonical `state_root` setting under `[paths]`; weekly condensation checkpoints, deletion trash/file backups, voice-profile state, GUI fallback state, emergency snapshots, and full-backup state now resolve through it instead of separately spelling `runtime_root/state`.
+- Added `@state` plus `internal_directories` to the central file-access policy. `@state` is internal-only by default and is not exposed to N2/native/plugin file tools.
+- Core file tools and built-in file plugins now share the same `authorize_path()` boundary. Outside-root access is always rejected; the enforcement flags now only select normal-vs-HARDLOCK messaging.
+- Added `[file_access_overrides]` additive per-capability roots such as `file_read.read_add = @state` without widening every tool.
+
 ## 0.53.14 — 2026-10-04 — N1/N2 tool-gate checkpoint 1
 
 - Added a two-role runtime boundary without changing user-facing routing yet: N1 is a gatekeeper/supervisor and N2 remains the existing reasoning/worker path. User input and N2 answers continue through the current conversation flow without N1 rewriting them.
@@ -56,7 +79,7 @@
 
 ## Coverage note
 
-The retained project history documents the formal release line from **0.51.0 through 0.53.9**, plus the reconstructed 0.53.11 baseline and the current 0.53.14 release. No standalone 0.53.0 or 0.53.10 release artifact/section was found in the retained source history, so this file does not invent changes for those version numbers. Same-version hotfixes remain under the version they actually modified.
+The retained project history documents the formal release line from **0.51.0 through 0.53.9**, plus the reconstructed 0.53.11 baseline and the current 0.53.15 release. No standalone 0.53.0 or 0.53.10 release artifact/section was found in the retained source history, so this file does not invent changes for those version numbers. Same-version hotfixes remain under the version they actually modified.
 
 ## 0.53.12 — 2026-10-02 — voice profile, startup compatibility, and operator-console recovery
 
@@ -240,10 +263,10 @@ This file is the concise, version-by-version record of **implemented and promote
 
 Rules:
 - Add an entry for every promoted version or promoted letter revision.
-- List shipped behavior/configuration/architecture changes, migration notes, and release verification that materially define that version.
-- Do not use this file for unfinished designs or backlog items; those belong in `FUTURE_IMPLEMENTATION_NOTES.md`.
-- Do not use it as the live-state authority; current facts belong in `CURRENT_STATUS.md`.
-- Detailed incidents, experiments, lessons, and superseded implementation paths remain in `DEVELOPMENT_NOTES.md`.
+- List shipped behavior, configuration, architecture changes, migration notes, and release verification that materially define that version.
+- Keep unfinished designs and backlog items in `FUTURE_IMPLEMENTATION_NOTES.md`.
+- Keep current runtime facts in `README.md` / `CURRENT_STATUS.md` and current engineering contracts in `DEVELOPMENT_NOTES.md`.
+- Historical incidents or superseded implementation details belong here only when they materially explain a shipped release.
 - Internal staging labels that were never promoted are not separate releases here.
 
 ## 0.52.3 — 2026-09-27 — Windows service signal isolation
@@ -303,7 +326,7 @@ Rules:
 - Replaced the old `[ports]` settings model with `[network]`, including `current_machine`, `current_domain`, per-service host selectors, ports, and `require_tailscale`.
 - Central runtime resolution now derives Redis, prompt/deletion/console queues, PostgreSQL, `stocks_api`, Norm HTTP, activity/control, and Ollama endpoints from the settings resolver instead of duplicating live network values in `runtime.json`.
 - Moved environment-specific PostgreSQL database/user/password values to the configured external `.env` file; runtime JSON no longer carries the connection string.
-- PostgreSQL runtime and `stocks_api` use `localhost.example.invalid:25434`; Redis authority uses `localhost.example.invalid:6379`; Norm HTTP/activity bind to NORM-HOST’s Tailscale address; Ollama intentionally remains loopback-only.
+- PostgreSQL runtime and `stocks_api` use `norm-host.example.invalid:25434`; Redis authority uses `norm-host.example.invalid:6379`; Norm HTTP/activity bind to NORM-HOST’s Tailscale address; Ollama intentionally remains loopback-only.
 - Added Tailscale Serve TCP forwarding for Redis so Memurai remains bound to `127.0.0.1:6379` while Norm reaches it only through the tailnet authority path.
 - Added a pre-tool-call authority gate: each native Norm tool call must successfully reach/PING the configured Tailscale Redis authority endpoint before execution proceeds.
 - Promoted live executable SHA-256: `0EE7EA56B866F0DC6CC3B54C04A4549A97F76DC4C9CCD968CD13D6D7137CC671`; `norm.exe --version` reports `0.51.4`.
@@ -340,7 +363,7 @@ Rules:
 
 ## 0.51.1 — 2026-09-20 — Runtime/workspace split and reproducible backup
 
-- Moved the runtime to `C:\Norm` while keeping the model-editable workspace at `C:\Users\NORM-HOST\Documents\Norm`; startup validates that the two roots do not overlap.
+- Moved the runtime to `C:\Norm` while keeping the model-editable workspace at `%USERPROFILE%\Documents\Norm`; startup validates that the two roots do not overlap.
 - Normal and recovery-child tools receive the configured workspace plus approved external roots, while the runtime tree itself is not model-writable.
 - Added `/backup-zip` with PostgreSQL `norm_runtime`, workspace, runtime, manifest, and restore helpers while excluding disposable build/cache output.
 - Removed the large rebuildable `.venv` from backups and added pinned Python/CUDA-Torch/dependency rebuild settings and documentation.
@@ -360,3 +383,4 @@ Rules:
 ## Earlier development baseline — 2026-09-13 through 2026-09-19
 
 Norm was already under active development before formal `0.51.x` release naming. That work established the PostgreSQL/Redis coordinator model, step-aware planning/verification, cancellation safety, temporary thinking persistence, targeted PostgreSQL pruning, shell evidence capture, busy-state reporting, `/status-context`, and the first GUI/operator shell. Detailed chronology remains in `DEVELOPMENT_NOTES.md`; these pre-version milestones are not presented as invented releases.
+

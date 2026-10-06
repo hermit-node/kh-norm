@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT / "core"
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
-from norm_runtime.settings import load_ports
-STATE_DIR = ROOT / "state"
+from norm_runtime.settings import load_ports, load_path_settings
+STATE_DIR = load_path_settings(ROOT)["state_root"]
 FALLBACK_LOG = STATE_DIR / "norm_gui_history_fallback.jsonl"
 SETTINGS_FILE = ROOT / "config" / "settings.ini"
 _MUTEX_HANDLES = []
