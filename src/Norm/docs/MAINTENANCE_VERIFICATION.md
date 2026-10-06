@@ -1,6 +1,6 @@
 # Norm maintenance verification
 
-Current package under verification: **Norm 0.53.18 / Installer 1.6.8-unified**.
+Current package under verification: **Norm 0.53.19 / Installer 1.6.8-unified**.
 
 This file records current package evidence only.
 
@@ -16,6 +16,7 @@ PASS: current maintenance/runtime/operator source compiles with Python py_compil
 - core\norm_runtime\activity_stream.py
 - core\norm_runtime\ollama_client.py
 - core\norm_runtime\model_switch.py
+- core\norm_runtime\public_web.py
 - core\norm_runtime\rich_console.py
 - tools\norm_gui_common.py
 - tools\norm_gui_prompt.py
@@ -23,6 +24,7 @@ PASS: current maintenance/runtime/operator source compiles with Python py_compil
 - tools\test_maintenance_control.py
 - tools\test_maintenance_reliability.py
 - tools\test_model_switch.py
+- tools\test_public_web.py
 
 ## Session model-switch / help regression
 
@@ -41,6 +43,34 @@ The regression set verifies:
 - runtime startup is hardwired to MODEL_NAME = norm rather than restoring a configured/session alternate.
 
 Source inspection additionally verifies startup switches are blocked, tracked work is checked before and after candidate probes, every distinct live Ollama endpoint is probed, all live clients are committed together, and commit failure restores prior model pointers.
+
+## Public-web regression and live smoke
+
+PASS: python tools\test_public_web.py.
+
+Current result: **10 tests passed**.
+
+The regression set verifies:
+
+- public HTTPS URLs are accepted while localhost, loopback, RFC1918/private, link-local/metadata, Tailscale CGNAT, *.ts.net, URL credentials, non-web schemes, and non-80/443 ports are rejected;
+- private DNS answers are rejected before fetch;
+- readable HTML extraction removes script/nav/footer noise while preserving title, description, article text, and links;
+- Bing News publisher redirect URLs are decoded;
+- reader fallback rejects token/signature/auth-looking query parameters;
+- reader Markdown parsing preserves article metadata/text while dropping standalone image Markdown;
+- web tool schemas are advertised only when public web is enabled;
+- web_search and web_fetch remain mandatory verification-pool information tools;
+- runtime.json enables/configures the public-web capability.
+
+PASS: live FileToolExecutor smoke on the Windows test host.
+
+Observed behavior:
+
+- web_search(mode=news) returned Bing News RSS results with direct publisher URLs;
+- web_search(mode=web) returned Bing RSS results with snippets;
+- direct web_fetch of a publisher anti-bot shell returned status 202 and zero readable chars;
+- configured reader fallback then returned the same publisher article as readable Markdown with title/published metadata and about 6.9K characters of article text;
+- final tool result reported reader_used=true, reader_service=r.jina.ai, network_scope=public_web_only, and external_content_trust=untrusted.
 
 ## Maintenance control / tight-summary regression
 

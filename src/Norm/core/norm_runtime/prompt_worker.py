@@ -1646,6 +1646,8 @@ class PromptWorker:
             temp_root=str(path_cfg["temp_root"]),
             workspace_root=str(workspace_root),
             task_storage_config=dict(self._runtime_config().get("task_storage", {})),
+            public_web_enabled=bool((tools.get("public_web") or {}).get("enabled", False)),
+            public_web_config=dict(tools.get("public_web", {})),
             connection_config={
                 "postgres": self._runtime_config().get("postgres", {}),
                 "redis": self._runtime_config().get("redis", {}),

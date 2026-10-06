@@ -288,6 +288,8 @@ def build_conversation_service(
             temp_root=str(temp_root),
             workspace_root=str(workspace_root),
             task_storage_config=dict(config.get("task_storage", {})),
+            public_web_enabled=bool((tools_cfg.get("public_web") or {}).get("enabled", False)),
+            public_web_config=dict(tools_cfg.get("public_web", {})),
             postgres_pool=pg_pool,
             connection_config={
                 "redis": config.get("redis", {}),

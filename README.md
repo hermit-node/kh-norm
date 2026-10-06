@@ -2,7 +2,7 @@
 
 Norm is a persistent, self-hosted Windows AI-agent runtime built around local Ollama inference, PostgreSQL durable state, Redis live coordination, controlled tools, resumable work, and hot-loaded Python plugins.
 
-Current public release: Norm 0.53.18 / Installer 1.6.8-unified.
+Current public release: Norm 0.53.19 / Installer 1.6.8-unified.
 
 ## Install / update
 
@@ -21,8 +21,8 @@ No MSYS2/Pango compilation is required on the target.
     Norm-Installer.py
     installer_environment.py
     norm-imprint.example.json
-    Norm-0.53.18-portable-source.zip
-    Norm-0.53.18-portable-source.zip.sha256
+    Norm-0.53.19-portable-source.zip
+    Norm-0.53.19-portable-source.zip.sha256
     SHA256SUMS.txt
 
     src/
@@ -31,7 +31,7 @@ No MSYS2/Pango compilation is required on the target.
     tools/public_release_guard.py
     tests/test_public_release.py
 
-The portable-source ZIP and src/Norm are byte-verified representations of the same source payload. The ZIP simply adds the Norm-0.53.18/ archive prefix required by the installer.
+The portable-source ZIP and src/Norm are byte-verified representations of the same source payload. The ZIP simply adds the Norm-0.53.19/ archive prefix required by the installer.
 
 ## Local/private state
 
@@ -48,6 +48,12 @@ Scheduled regular maintenance is intentionally a tight working-memory synthesis 
 /resume-task maintenance explicitly resumes a suppressed or requires_attention maintenance checkpoint.
 
 A deterministic model output-budget failure parks scheduled maintenance instead of automatically retrying forever.
+
+## Public web
+
+Norm can search the public web/news and read page/article text through native web_search and web_fetch tools. General search and news discovery use structured Bing RSS. Fetch is direct-first, with a configurable reader fallback for anti-bot/JavaScript shells.
+
+Public-web access does not open the private network: localhost, private/link-local/non-global addresses, Tailscale 100.64.0.0/10, *.ts.net, unsafe redirects, URL credentials, non-HTTP(S) schemes, and non-80/443 ports remain blocked. Web content is explicitly untrusted external evidence and stays inside the normal N1/Redis verification workflow.
 
 ## Models
 

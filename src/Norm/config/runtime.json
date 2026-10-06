@@ -76,6 +76,18 @@
       "probe_timeout_seconds": 2.0,
       "status_cache_seconds": 30.0
     },
+    "public_web": {
+      "enabled": true,
+      "timeout_seconds": 20,
+      "search_max_results": 10,
+      "fetch_max_chars": 30000,
+      "max_download_bytes": 5242880,
+      "reader_fallback_enabled": true,
+      "reader_service_url": "https://r.jina.ai/",
+      "reader_min_chars": 400,
+      "reader_timeout_seconds": 30,
+      "reader_max_download_bytes": 5242880
+    },
     "shell_enabled": true,
     "shell_executable": "powershell.exe",
     "shell_timeout_seconds": 180,

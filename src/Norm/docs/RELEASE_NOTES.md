@@ -1,5 +1,16 @@
 # Release Notes
 
+## 0.53.19 — 2026-10-05 — Public web/news search and readable page extraction
+
+- Added native web_search and web_fetch tools and enabled them through tools.public_web. Both normal conversation tools and worker/slice tools use the same configuration and remain behind N1 plus mandatory Redis verification preflight/check-in.
+- web_search supports general web and news discovery through structured Bing RSS endpoints. News redirect metadata is decoded to direct publisher URLs when available.
+- web_fetch performs direct public HTTP(S) fetch first, extracts readable HTML/plain text into bounded character chunks, returns title/metadata/links/continuation offsets, and exposes fetch provenance.
+- Added a configurable reader fallback for pages that return anti-bot/JavaScript shells or too little readable text. The default reader is r.jina.ai; it is invoked only after the original URL passes public-network validation. URLs with token/auth/secret/signature-like query keys are never sent to the reader proxy.
+- Public-web SSRF controls reject URL credentials, non-HTTP(S) schemes, ports other than 80/443, localhost/private/loopback/link-local/reserved/non-global destinations, Tailscale 100.64.0.0/10, *.ts.net/private-style hostnames, and unsafe redirects.
+- Search/fetch results are explicitly marked external_content_trust=untrusted and network_scope=public_web_only. Web page content is evidence/data and must never be interpreted as operator/system instructions.
+- Added tools\test_public_web.py. Ten regressions pass, plus a live FileToolExecutor smoke verified web search, news search, direct page extraction, anti-bot detection, and reader fallback to approximately 6.9K characters of article text.
+- Installer remains 1.6.8; this release changes Norm source/runtime behavior only.
+
 ## 0.53.18 — 2026-10-05 — Tight weekly working memory, controllable maintenance, and public runtime bootstrap
 
 - Regular scheduled background condensation is now explicitly a tight working-memory synthesis layer rather than a rewritten history. The default 14,000-character input slice targets about 1,800 characters per distilled slice and about 6,000 characters for the final snapshot; repeated project updates collapse into current state plus durable decisions, unresolved obligations, and reusable lessons while transient examples/levels/shorthand, routine successful checks, smoke narration, superseded state, and source-by-source restatement are discarded.
