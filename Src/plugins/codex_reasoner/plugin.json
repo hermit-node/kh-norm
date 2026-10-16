@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "name": "codex_reasoner",
+  "version": "0.1.0",
+  "date": "2026-10-06",
+  "entrypoint": "src/main.py",
+  "description": "Read-only Codex CLI reasoning specialist; returns structured advice while Norm remains the sole execution agent.",
+  "capabilities": [
+    "reasoning",
+    "architecture",
+    "debugging",
+    "decision-support",
+    "codex-cli"
+  ],
+  "sha256": "c75036c75c0ccfeb09e062081c53089da2ce25119c0212426666618db3d8d886",
+  "settings": {
+    "codex_reasoner": {
+      "enabled": true,
+      "executable": "codex",
+      "model": "",
+      "timeout_seconds": 1800,
+      "max_input_chars": 60000,
+      "reasoning_effort": "high"
+    }
+  }
+}

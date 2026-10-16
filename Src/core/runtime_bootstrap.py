@@ -20,6 +20,7 @@ from norm_runtime.file_access_policy import load_file_access_policy
 from norm_runtime.ollama_client import OllamaClient
 from norm_runtime.model_runtime_policy import agent_model_client_kwargs, agent_persistent_instructions
 from norm_runtime.settings import load_ports, load_path_settings, load_plugin_settings, load_network_settings, load_postgres_settings, resolve_network_host, load_secrets
+from norm_runtime.profile_runtime import load_profiles, render_agent_profile_context
 from norm_runtime.conversation_service import ConversationService
 
 
@@ -105,6 +106,11 @@ def load_config(root: Path) -> dict[str, Any]:
     }
     config = _expand_runtime_values(config, substitutions)
     config["_paths"] = {name: str(path) for name, path in path_cfg.items()}
+    profiles = load_profiles(root)
+    config["_profiles"] = profiles
+    config["_profile_context"] = {
+        role: render_agent_profile_context(root, profiles, role) for role in ("n1", "n2")
+    }
     tools_cfg = config.setdefault("tools", {})
     tools_cfg["blocked_write_staging_root"] = str(path_cfg["temp_root"] / "blocked-writes")
     tools_cfg["image_output_root"] = str(path_cfg["workspace_root"] / "images" / "analysis")

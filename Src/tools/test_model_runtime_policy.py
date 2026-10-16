@@ -73,12 +73,22 @@ def test_runtime_json_owns_context_and_agent_instructions():
     n1 = agent_persistent_instructions(config, "n1")
     n2 = agent_persistent_instructions(config, "n2")
     assert n1 and n2 and n1 != n2
-    assert "gatekeeper" in n1[0].lower()
-    assert "front-point ai coordinator" in n2[0].lower()
+    shared = list(config.get("persistent_instructions") or [])
+    assert n1[:len(shared)] == shared
+    assert n2[:len(shared)] == shared
+    assert any("gatekeeper" in item.lower() for item in n1)
+    assert any("front-point ai coordinator" in item.lower() for item in n2)
     assert effective_context_length(config, "n2", "norm:latest") == 180000
     assert effective_context_length(config, "n2", "granite4.2:30b") == 65536
     assert agent_model_client_kwargs(config, "n1")["system_instructions"] == n1
     assert agent_model_client_kwargs(config, "n2")["system_instructions"] == n2
+
+
+def test_profile_context_is_appended_to_agent_system_instructions():
+    config = json.loads((ROOT / "config" / "runtime.json").read_text(encoding="utf-8"))
+    config["_profile_context"] = {"n1": "N1 PROFILE", "n2": "N2 PROFILE"}
+    assert agent_model_client_kwargs(config, "n1")["system_instructions"][-1] == "N1 PROFILE"
+    assert agent_model_client_kwargs(config, "n2")["system_instructions"][-1] == "N2 PROFILE"
 
 
 def test_context_authority_not_duplicated_in_legacy_files():

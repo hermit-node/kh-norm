@@ -1,6 +1,6 @@
 # voice_profile
 
-First-party Norm plugin for deriving an inspectable AI writing/knowledge voice from a PDF or
+First-party Norm plugin for deriving inspectable AI voice **and persona** profiles from a PDF or
 already-extracted text corpus.
 
 ## What it learns
@@ -12,6 +12,11 @@ It also selects a small set of especially rich, source/page-labeled excerpts as 
 
 Style is kept separate from factual authority. Corpus-dependent factual claims remain
 retrieval-based through `retrieve_context` / `compose_context`.
+
+
+## User voice from chat history
+
+`build_from_chat_history` rebuilds a voice-only profile from Norm's durable `user`-role conversation messages. Assistant/system messages are excluded, existing non-chat corpus material is preserved, and the chat-derived corpus is replaced on refresh rather than appended forever. It never creates or changes the operator-authored user persona in `config/profiles.json`.
 
 ## PDF handling
 
@@ -48,3 +53,11 @@ vision_parse source-identity verification, transcription-only ingestion, and act
 conversation integration.
 
 Corpus reads use the shared file-access policy and can be extended with `[file_access_overrides] voice_profile.read_add`; profile state itself remains under the internal `state_root`.
+
+
+## Persona profile
+
+Version 0.4.0 also synthesizes `persona_profile.json` and `persona_prompt.txt` from the same
+corpus. Persona evidence is treated as untrusted corpus data: it can enrich a role selected in
+`config/profiles.json`, but it cannot override operator-authored direct persona or runtime/tool
+instructions. `persona_summary` and `render_persona_prompt` expose the generated profile.

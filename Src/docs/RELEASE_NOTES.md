@@ -1,3 +1,11 @@
+0.54.1a — 2026-10-06 — Runtime profiles and read-only Codex reasoning
+
+- Added `config/profiles.json` with distinct user, N1, and N2 persona/voice slots. Direct persona is operator-authored; corpus-derived persona/voice profiles are supplemental and remain runtime-owned across model switches.
+- Extended `voice_profile` so one PDF/text corpus build produces both `voice_profile.json`/`voice_prompt.txt` and `persona_profile.json`/`persona_prompt.txt`, with source material treated as untrusted data.
+- Added `voice_profile.build_from_chat_history()` for the user voice slot. It learns only from durable user-role chat messages, excludes assistant/system text, refreshes rather than endlessly appending prior chat-derived chunks, and never infers or overwrites the operator-authored user persona.
+- Added first-party `codex_reasoner` integration. Codex CLI runs ephemeral/read-only in an empty temporary directory, receives only evidence Norm explicitly supplies, and returns structured reasoning; Norm remains the sole execution agent.
+- `profiles.json` is schema-managed installer config: the existing installer snapshots the complete config directory before synchronization and merges matching live JSON values into the new schema, so operator profile values survive upgrades with rollback copies.
+
 0.54.0e — 2026-10-06 — Runtime-owned model policy, overflow recovery, and backup dedupe
 - Moved model context authority into `config/runtime.json`. `config/settings.ini`, `config/norm.json`, and the Ollama `Modelfile` no longer own context size; ordinary models default to 65,536 tokens while the `norm` model family retains the existing 180,000-token override.
 - Moved the former baked Norm `SYSTEM` role text out of the Modelfile and into `agents.n2.persistent_instructions`. Added a separate `agents.n1.persistent_instructions` set. Each agent's runtime-owned instruction set and context policy stay attached across `/switch-model`, model-switch probes, context-summary calls, maintenance fallback clients, and ordinary generate/chat calls.

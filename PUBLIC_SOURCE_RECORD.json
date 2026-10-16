@@ -1,12 +1,12 @@
 {
-  "version": "0.54.0e",
+  "version": "0.54.1a",
   "variant": "",
-  "tag": "v0.54.0e",
-  "source_archive_sha256": "e45dc876e1036024badab5a7e787b9c24a652b2f24b913478adb6c36499a0896",
-  "source_archive": "0.54.0e--release--e45dc876e103.zip",
+  "tag": "v0.54.1a",
+  "source_archive_sha256": "2c6c4852ebc5dd715e59aa64687db820623a8628ee6b574ccc9b314916d86b74",
+  "source_archive": "0.54.1a--release--2c6c4852ebc5.zip",
   "quality": "static/CLI PASS, historical",
   "known_issues": [],
-  "published_source_files": 163,
+  "published_source_files": 170,
   "omitted_paths": [
     "config/network-map.json",
     "config/settings.ini",

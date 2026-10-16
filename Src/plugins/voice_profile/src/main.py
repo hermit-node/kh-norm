@@ -5,6 +5,20 @@ from typing import Literal
 from . import _engine
 
 
+def build_from_chat_history(
+    profile_name: str = "user",
+    project_id: str = "",
+    message_limit: int = 1000,
+    max_chars: int = 500000,
+    use_model: bool = True,
+    anchor_count: int = 6,
+) -> dict:
+    """Build/refresh a voice-only profile from stored user-role Norm chat messages."""
+    return _engine.build_from_chat_history(
+        profile_name, project_id, message_limit, max_chars, use_model, anchor_count
+    )
+
+
 def build_from_pdf_folder(
     profile_name: str,
     folder: str,
@@ -12,10 +26,11 @@ def build_from_pdf_folder(
     recursive: bool = True,
     use_model: bool = True,
     anchor_count: int = 6,
+    build_persona: bool = True,
 ) -> dict:
     """Build or extend a voice profile from PDFs using Norm's existing vision_parse plugin."""
     return _engine.build_from_pdf_folder(
-        profile_name, folder, extraction_mode, recursive, use_model, anchor_count
+        profile_name, folder, extraction_mode, recursive, use_model, anchor_count, build_persona
     )
 
 
@@ -42,9 +57,10 @@ def build_profile(
     profile_name: str,
     use_model: bool = True,
     anchor_count: int = 6,
+    build_persona: bool = True,
 ) -> dict:
     """Analyze accumulated corpus text and persist an inspectable voice profile."""
-    return _engine.build_profile(profile_name, use_model, anchor_count)
+    return _engine.build_profile(profile_name, use_model, anchor_count, build_persona)
 
 
 def profile_summary(profile_name: str) -> dict:
@@ -60,6 +76,16 @@ def list_profiles() -> dict:
 def render_voice_prompt(profile_name: str, anchor_count: int = 4) -> dict:
     """Render the style-only voice prompt with bounded, source-labeled rich excerpts."""
     return _engine.render_voice_prompt(profile_name, anchor_count)
+
+
+def persona_summary(profile_name: str) -> dict:
+    """Return the corpus-derived persona synthesis for a built profile."""
+    return _engine.persona_summary(profile_name)
+
+
+def render_persona_prompt(profile_name: str) -> dict:
+    """Render the bounded inferred-persona prompt used by profiles.json."""
+    return _engine.render_persona_prompt(profile_name)
 
 
 def retrieve_context(

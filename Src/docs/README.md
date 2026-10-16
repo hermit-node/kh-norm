@@ -2,9 +2,13 @@
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.54.0e / Installer 1.6.11-unified** package only. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.54.1a / Installer 1.6.12-unified** package only. Version history belongs only in RELEASE_NOTES.md.
 
-### Runtime-owned model policy (0.54.0e)
+### Runtime profiles and Codex reasoning (0.54.1a)
+
+`config/profiles.json` owns operator/user/N1/N2 persona and voice assignments. Direct persona is operator-authored; inferred persona/voice artifacts come from `voice_profile` and remain subordinate to runtime/tool rules. The `codex_reasoner` plugin can call Codex CLI for ephemeral read-only reasoning while Norm retains all execution/mutation responsibility.
+
+### Runtime-owned model policy (0.54.1a)
 
 Model context size and agent-persistent instructions are owned by `config/runtime.json`, not by `settings.ini`, `config/norm.json`, or the Ollama Modelfile. N1 and N2 have separate persistent-instruction sets that follow their runtime clients across model switches. Context overflow is routed into bounded oversize decomposition instead of identical retry.
 

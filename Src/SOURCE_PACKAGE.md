@@ -1,6 +1,6 @@
-# Norm 0.54.0e portable source package
+# Norm 0.54.1a portable source package
 
-This directory is the portable source payload for **Norm 0.54.0e**.
+This directory is the portable source payload for **Norm 0.54.1a**.
 
 The portable source package excludes generated or machine-private material such as .venv, compiled core\norm.exe, build output, Python caches, secrets, and private runtime state.
 

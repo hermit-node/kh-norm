@@ -1,18 +1,20 @@
 {
   "schema_version": 2,
   "name": "voice_profile",
-  "version": "0.3.0",
-  "date": "2026-10-04",
+  "version": "0.4.0",
+  "date": "2026-10-06",
   "entrypoint": "src/main.py",
-  "description": "Build, inspect, activate, and retrieve from AI voice profiles derived from PDF/text corpora.",
+  "description": "Build, inspect, activate, and retrieve AI voice and persona profiles derived from PDF/text corpora.",
   "capabilities": [
     "PDF corpus voice profiling",
     "rich style-anchor selection",
     "tone structure vocabulary analysis",
     "source-grounded corpus retrieval",
-    "active conversation voice conditioning"
+    "active conversation voice conditioning",
+    "corpus persona profiling",
+    "runtime persona conditioning"
   ],
-  "sha256": "390b889f39d8b2d182fad5efc7ec8559c0faa1be53517018806f300ef2648a5e",
+  "sha256": "3bbf525f2110092b36a8f649c7e48a570d27582a6a94b40f68e48aa137fbc00e",
   "settings": {
     "voice_profile": {
       "enabled": true
