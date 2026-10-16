@@ -55,6 +55,19 @@ class PromptJob:
     chain_uuid: str = ''
     previous_node_id: str = ''
     next_node_id: str = ''
+    original_user_prompt: str = ''
+
+    def __post_init__(self) -> None:
+        """Normalize original user intent from legacy metadata without inventing it."""
+        if not isinstance(self.metadata, dict):
+            raise ValueError("PromptJob.metadata must be a dictionary")
+        stored = str(self.metadata.get("original_user_prompt") or "")
+        explicit = str(self.original_user_prompt or "")
+        if explicit and stored and explicit != stored:
+            raise ValueError("PromptJob original user prompt disagrees with metadata")
+        self.original_user_prompt = explicit or stored
+        if self.original_user_prompt:
+            self.metadata["original_user_prompt"] = self.original_user_prompt
 
 
 class RedisPromptQueue:
@@ -105,6 +118,16 @@ class RedisPromptQueue:
     # Enqueue
     # ------------------------------------------------------------------
     def _job_to_fields(self, job: PromptJob) -> Dict[str, str]:
+        # The first-class field and the legacy metadata view must agree on
+        # every Redis handoff, even if another worker changed metadata in-place.
+        metadata_prompt = str((job.metadata or {}).get("original_user_prompt") or "")
+        explicit_prompt = str(job.original_user_prompt or "")
+        if metadata_prompt and explicit_prompt and metadata_prompt != explicit_prompt:
+            raise ValueError("Conflicting original user prompts at Redis boundary")
+        resolved_prompt = metadata_prompt or explicit_prompt
+        if resolved_prompt:
+            job.original_user_prompt = resolved_prompt
+            job.metadata["original_user_prompt"] = resolved_prompt
         d = asdict(job)
         d['request_type'] = normalize_request_type(job.request_type)
         d["metadata"] = json.dumps(d["metadata"])
@@ -741,6 +764,7 @@ class RedisPromptQueue:
             attempt=int(fields.get("attempt", 0)),
             created_at=float(fields.get("created_at", 0.0)),
             metadata=metadata,
+            original_user_prompt=fields.get("original_user_prompt", ""),
             chain_id=fields.get("chain_id", ""),
             previous_prompt_id=fields.get("previous_prompt_id", ""),
             next_prompt_id=fields.get("next_prompt_id", ""),

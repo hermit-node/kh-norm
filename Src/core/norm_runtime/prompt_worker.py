@@ -2049,11 +2049,11 @@ class PromptWorker:
         max_depth = max(1, int(self._runtime_config().get("worker", {}).get("max_subtask_depth", 4)))
         if depth >= max_depth:
             raise RuntimeError(f"recovery lineage reached maximum depth {max_depth}")
+        self._ensure_original_user_prompt(job)
         source = self.durable.task_plan_snapshot(job.task_id) if hasattr(self.durable, "task_plan_snapshot") else None
         original = str(
-            (source or {}).get("original_request")
-            or (job.metadata or {}).get("original_user_prompt")
-            or (job.metadata or {}).get("task_user_prompt")
+            (job.metadata or {}).get("original_user_prompt")
+            or (source or {}).get("original_request")
             or ""
         ).strip()
         if not original:
@@ -2648,7 +2648,7 @@ class PromptWorker:
             depends_on=tuple(batch_ids),
         ))
         steps.append(TaskStep("final-verify", "Verify merged child result", "Independently verify the merged child result.", f"Merged child result satisfies parent step and contains exactly {count} valid items.", depends_on=(merge_id,)))
-        original_user_prompt = str((job.metadata or {}).get("original_user_prompt") or job.prompt).strip()
+        original_user_prompt = self._ensure_original_user_prompt(job)
         task_user_prompt = str((job.metadata or {}).get("task_user_prompt") or original_user_prompt).strip()
         plan = TaskPlan(
             task_id=child_id, title=f"Child decomposition for {job.task_id}/{job.step_id}", steps=tuple(steps),
@@ -2733,7 +2733,7 @@ class PromptWorker:
             TaskStep("work", title, instruction, verify, depends_on=("verify-plan",)),
             TaskStep("final-verify", "Verify runtime child result", "Independently verify the child result.", verify, depends_on=("work",)),
         )
-        original_user_prompt = str((parent_job.metadata or {}).get("original_user_prompt") or parent_job.prompt).strip()
+        original_user_prompt = self._ensure_original_user_prompt(parent_job)
         task_user_prompt = str((parent_job.metadata or {}).get("task_user_prompt") or original_user_prompt).strip()
         plan = TaskPlan(
             task_id=child_id, title=title, steps=steps, original_request=task_user_prompt,
@@ -3867,6 +3867,61 @@ class PromptWorker:
 
         return {"ok": False, "tool": name, "error": "unknown verification-pool tool"}
 
+    def _ensure_original_user_prompt(self, job: PromptJob) -> str:
+        """Restore authoritative user intent before an internal execution handoff.
+
+        For child/recovery jobs root task history outranks a locally inherited
+        generated step. Never fabricate a user message from internal instructions.
+        """
+        metadata = dict(job.metadata or {})
+        known = str(metadata.get("original_user_prompt") or
+                    getattr(job, "original_user_prompt", "") or "").strip()
+        if metadata.get("original_prompt_source") == "durable_root" and known:
+            return known
+        durable = getattr(self, "durable", None)
+        canonical = ""
+        is_child = bool(metadata.get("parent_task_id") or metadata.get("recovery_parent_task_id"))
+        if durable is not None and hasattr(durable, "root_task_id") and hasattr(durable, "task_plan_snapshot"):
+            try:
+                root_id = str(durable.root_task_id(job.task_id) or "")
+                if root_id:
+                    is_child = is_child or root_id != job.task_id
+                    if is_child or not known:
+                        root_plan = durable.task_plan_snapshot(root_id)
+                        canonical = str((root_plan or {}).get("original_request") or "").strip()
+            except Exception:
+                if not known:
+                    raise VerifierProtocolError(
+                        "Cannot recover missing original user prompt from durable root task."
+                    )
+                logging.exception("Root prompt lookup failed; using existing original user prompt")
+        if not (canonical or known):
+            origin = str(metadata.get("prompt_origin") or "")
+            if normalize_request_type(job.request_type) == "prompt" and origin in {
+                "user_prompt", "prompt_interface", "gui_prompt", "ssh_prompt"
+            }:
+                canonical = str(job.prompt or "").strip()
+        resolved = canonical or known
+        if not resolved:
+            raise VerifierProtocolError(
+                f"Task {job.task_id}/{job.step_id} has no authoritative original user prompt; "
+                "retain the durable checkpoint and recover the root user turn, "
+                "not an invented internal step."
+            )
+        if canonical and known and canonical != known:
+            logging.warning(
+                "Corrected original user prompt from immutable root task task=%s step=%s",
+                job.task_id, job.step_id
+            )
+        metadata["original_user_prompt"] = resolved
+        if canonical:
+            metadata["original_prompt_source"] = "durable_root"
+        if not metadata.get("task_user_prompt") and not is_child:
+            metadata["task_user_prompt"] = resolved
+        job.metadata = metadata
+        job.original_user_prompt = resolved
+        return resolved
+
     @staticmethod
     def _tool_slice_initial_messages(job: PromptJob) -> list[dict]:
         """Keep the human's request as a genuine user-role message on every slice.
@@ -3976,6 +4031,7 @@ class PromptWorker:
         # Retain the original operator request in its genuine Ollama user role
         # during every execution slice. The system phase contract below—not
         # deleting the user's words—prevents internal steps from replanning.
+        self._ensure_original_user_prompt(job)
         messages: list[dict] = self._tool_slice_initial_messages(job)
         pending_verification: dict[str, str] = {}
         evidence: list[dict] = []

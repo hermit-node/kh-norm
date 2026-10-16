@@ -1,3 +1,23 @@
+## Norm 0.55.8r10a - original prompt handoff preservation (2026-10-10)
+
+- Source-only hotfix after r10. Original r10 archive remains untouched.
+- TaskPlan, TaskStep, StepResult and PromptJob already are dataclasses.
+- Adds a dedicated PromptJob.original_user_prompt field. Existing metadata and
+  legacy Redis records remain compatible. Serialization retains both views and
+  rejects conflicting prompt values before enqueuing.
+- Resolves the immutable root-task original_request from PostgreSQL when a child
+  inherits missing or misleading original prompt metadata. Preserves the current
+  scoped task assignment separately.
+- Applies restoration before tool-model slices, child creation, and recovery
+  handoff construction. Never uses a generated internal instruction as a user
+  message when the original root prompt is unavailable.
+- If neither existing nor durable root context contains an authentic prompt,
+  fails explicitly with a recoverable missing-context error; cannot fabricate
+  a lost user message.
+- No new task controller, queue, database, or architectural rewrite.
+- This hotfix is regression-tested with mocks; full live N1/N2/Redis/Postgres
+  crash/restart and installer integration still require deployment testing.
+
 ## Norm 0.55.8r10 - portable-source recovery and live plugin preservation (2026-10-10)
 
 - Based on intact r9 N2-restored portable ZIP. No live C:\Norm code was overwritten.

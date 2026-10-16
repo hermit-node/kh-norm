@@ -1,3 +1,7 @@
+# Norm 0.55.8r10a original-prompt handoff hotfix
+
+Includes explicit PromptJob.original_user_prompt and durable-root restoration before N2 execution and delegation. Built from the r10 portable source staging tree, preserving the same live-derived PDF/web plugin fixes. See release notes.
+
 # Norm 0.55.8r10 portable source - recovery contract integration
 
 Built from the verified r9 source, not the live installation. Adds the r10 objects boundary, retained live web import fixes, unchanged PDF reader source, failed-task console controls and verifier-confirmed automatic injection retirement. The live C:\Norm installation is unchanged. See `docs/RELEASE_NOTES.md` for scope and validation limitations.

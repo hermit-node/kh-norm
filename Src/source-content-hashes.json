@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "release": "0.55.8r10",
+  "release": "0.55.8r10a",
   "baseline": "Norm-0.55.8r9-N2-restored-portable-source.zip",
   "file_count": 295,
   "hash_algorithm": "SHA-256",
@@ -14,8 +14,8 @@
       "sha256": "c7a6f010965fab61d8d3fc7e50fcb119814a9f06f2be45329d8e07367323a416"
     },
     "_build_release.py": {
-      "bytes": 3059,
-      "sha256": "a16953241d5d2d14add5c74fa21d61d7d6df2f9fc87819972c8cccdf3fc46700"
+      "bytes": 3061,
+      "sha256": "cef779e4eaf45c03895ce0d6daa3ba9d5c0ad92881790e306aaf03dcee27093e"
     },
     "config/plugins.ini": {
       "bytes": 1706,
@@ -186,12 +186,12 @@
       "sha256": "d1dae1c5e8effd069264d611de993b656dc78da190cfa8171949cb29f7284110"
     },
     "core/norm_runtime/prompt_queue.py": {
-      "bytes": 34187,
-      "sha256": "0e0e1f98670a1d4dc6a74569e2f921ef95b66d0e535e28c484070f18fe864cbf"
+      "bytes": 35666,
+      "sha256": "b2c39070add4e948be4998d75a72f4305661c130f6e7ba1b223f30ac7097bd32"
     },
     "core/norm_runtime/prompt_worker.py": {
-      "bytes": 321880,
-      "sha256": "9f598527f2f25b01be0b5d707dd415eb99ee9a4e0e05d8cc5cbaf19e0787ae34"
+      "bytes": 324712,
+      "sha256": "ff75e2895d5ff7f45a5b4ba89e70ec3ed2f2822cc344929d1349992a54d606a4"
     },
     "core/norm_runtime/protocol.py": {
       "bytes": 13746,
@@ -282,8 +282,8 @@
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
     },
     "docs/RELEASE_NOTES.md": {
-      "bytes": 119423,
-      "sha256": "9fea7f2c2b4e5679726c099073d3f27e4e62acb0ea05ba6112bf1fba7cebb8fc"
+      "bytes": 120663,
+      "sha256": "393568bf9292cb903e2930fb9acddb0e412b4e1670a0bc465848336b351b1d05"
     },
     "docs/VOICE_OPERATOR_COMMANDS_PATCH.md": {
       "bytes": 1796,
@@ -330,8 +330,8 @@
       "sha256": "814cf6e096ac167f56bbb47c98287818949ec13c65843574b3a733698c91f982"
     },
     "package-manifest.json": {
-      "bytes": 25832,
-      "sha256": "2e0b0a29707c0d3d242befe6b29d47a836f784696367853a9d894afe219fc5f9"
+      "bytes": 25833,
+      "sha256": "6f38468f5002e64974bcd33cfd6053640f1e8c4f0fd7c1c6af17f04ef27100ed"
     },
     "plugins/backup/help.txt": {
       "bytes": 327,
@@ -826,8 +826,8 @@
       "sha256": "5c6db61fa30f1b1bd21c8d0d4e4d67f79d7705b03afb999f926f25c7c1dd911b"
     },
     "README.md": {
-      "bytes": 19575,
-      "sha256": "7583ed14daffb7a310ecca8d38b6c4023ad7df38c13f2857fe7ab9f01ca8110f"
+      "bytes": 19863,
+      "sha256": "76f3a99aefd6fa65532b5533aea4d6dee2aab03ef39a84030c9d6d5e1b0a4773"
     },
     "Run-Norm.bat": {
       "bytes": 3806,
@@ -838,8 +838,8 @@
       "sha256": "cf9930fc55eb69537d91ebcc6dd7f6984206b51b506d34671dc66a93b5a9a3b2"
     },
     "SOURCE_PACKAGE.md": {
-      "bytes": 19439,
-      "sha256": "77741d6e6b1d71e126ae66c7cce984814f38b9a821dfbe4d7c248fbe49df29d7"
+      "bytes": 19727,
+      "sha256": "78be3f1e590aca34c3e031499f2e6df285edbfd795f7c11720d51e0f8e191e17"
     },
     "tools/7zip/7z.dll": {
       "bytes": 1906688,
@@ -1102,8 +1102,8 @@
       "sha256": "da659fa0a5930c39cfb7ac00087cbb6a2bf8d8fabcfeb18ef5a9149931645281"
     },
     "tools/test_r10_contract_integration.py": {
-      "bytes": 5731,
-      "sha256": "3320fdd91f5073e8be204c15f0a09baf09f2f033f58c3fc93303284ad4fe7572"
+      "bytes": 9180,
+      "sha256": "347ca1ef8c18d2c0fdb045a5e8bd3418c43b4b9594e08bec1acb840a05783814"
     },
     "tools/test_recovery_r9.py": {
       "bytes": 5822,

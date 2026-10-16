@@ -23,6 +23,70 @@ class R10Contracts(unittest.TestCase):
             instruction="Assess surviving work",criterion="Return recovery JSON",
             original_prompt="Create requested PDF",parent_task_id="root-1",analysis=data)
 
+    @staticmethod
+    def _job(metadata=None):
+        from norm_runtime.prompt_queue import PromptJob
+        return PromptJob(
+            message_id="job-01",task_id="child-01",step_id="work",
+            prompt="GENERATED INSTRUCTION ONLY",project_id="default",
+            context="",attempt=0,created_at=1.0,
+            metadata=metadata or {},chain_id="chain-01",
+            previous_prompt_id="",next_prompt_id="",chain_index=0,
+            recovery_attempted=False,request_type="step")
+
+    def test_child_restores_root_prompt_not_generated_instruction(self):
+        worker=PromptWorker.__new__(PromptWorker)
+        durable=Mock()
+        durable.root_task_id.return_value="root-01"
+        durable.task_plan_snapshot.return_value={
+            "original_request":"Create a PDF from the supplied research."}
+        worker.durable=durable
+        job=self._job({"original_user_prompt":"GENERATED INSTRUCTION ONLY",
+                       "parent_task_id":"root-01","task_user_prompt":"Inspect the PDF"})
+        self.assertEqual(worker._ensure_original_user_prompt(job),
+                         "Create a PDF from the supplied research.")
+        self.assertEqual(job.original_user_prompt,
+                         "Create a PDF from the supplied research.")
+        self.assertEqual(job.metadata["task_user_prompt"],"Inspect the PDF")
+        self.assertEqual(job.metadata["original_prompt_source"],"durable_root")
+
+    def test_missing_original_fails_without_substituting_generated_step(self):
+        worker=PromptWorker.__new__(PromptWorker)
+        worker.durable=None
+        job=self._job({"parent_task_id":"root-01"})
+        with self.assertRaisesRegex(RuntimeError,"no authoritative original user prompt"):
+            worker._ensure_original_user_prompt(job)
+        self.assertFalse(job.original_user_prompt)
+
+    def test_redis_roundtrip_carries_explicit_prompt(self):
+        from norm_runtime.prompt_queue import RedisPromptQueue
+        job=self._job({"original_user_prompt":"Actual original user request"})
+        queue=RedisPromptQueue.__new__(RedisPromptQueue)
+        fields=queue._job_to_fields(job)
+        self.assertEqual(fields["original_user_prompt"],"Actual original user request")
+        restored=queue._fields_to_job("redis-id",fields)
+        self.assertEqual(restored.original_user_prompt,"Actual original user request")
+        self.assertEqual(restored.metadata["original_user_prompt"],
+                         "Actual original user request")
+
+    def test_legacy_redis_metadata_restores_explicit_field(self):
+        from norm_runtime.prompt_queue import RedisPromptQueue
+        import dataclasses
+        queue=RedisPromptQueue.__new__(RedisPromptQueue)
+        job=self._job({"original_user_prompt":"Original user turn"})
+        fields=queue._job_to_fields(job)
+        fields.pop("original_user_prompt",None)
+        restored=queue._fields_to_job("redis-id",fields)
+        self.assertEqual(restored.original_user_prompt,"Original user turn")
+
+    def test_conflicting_prompt_rejected_before_redis_enqueue(self):
+        from norm_runtime.prompt_queue import RedisPromptQueue
+        job=self._job({"original_user_prompt":"One user request"})
+        job.metadata["original_user_prompt"]="A conflicting request"
+        queue=RedisPromptQueue.__new__(RedisPromptQueue)
+        with self.assertRaisesRegex(ValueError,"Conflicting original user prompts"):
+            queue._job_to_fields(job)
+
     def test_analysis_kind_and_identity(self):
         self.assertEqual(json.loads(self.validate(GOOD)),GOOD)
 
