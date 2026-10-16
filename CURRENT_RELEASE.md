@@ -1,6 +1,6 @@
-# Norm 0.54.2i
+# Norm 0.54.3 - Nabler
 
-Original archive SHA-256: cb6bcc0c1e7550232bfde71d0530f5ac7329f119636398edb04ecd293848f456
+Original archive SHA-256: 48b51dafbca57b3dc2d2429483d7c896504db80631728ca903efbe3feb0acc0c
 
 Historical assessment: static/CLI PASS, historical
 
@@ -8,6 +8,6 @@ Omitted private paths: config/network-map.json, config/plugins.ini, config/setti
 
 Sanitized paths: core/norm_main.py, core/norm_runtime/aiohttp_host.py
 
-Historical caveats: 
+Historical caveats: Four substantially different source-code fingerprints with the same manifest version. Nabler, OCR, lesson plugin and runway must remain separately identified.
 
 Public source snapshot is not identical to the original ZIP or guaranteed installable.

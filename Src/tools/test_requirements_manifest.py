@@ -24,7 +24,7 @@ def main() -> int:
     direct = {
         "pytest", "redis", "psycopg", "psycopg-pool", "aiohttp", "pillow",
         "cryptography", "pymupdf", "numpy", "opencv-python", "kornia",
-        "prompt-toolkit", "rich", "tzdata",
+        "prompt-toolkit", "rich", "tzdata", "tabulate",
     }
     missing_core = sorted(direct - core)
     missing_lock = sorted(direct - lock)

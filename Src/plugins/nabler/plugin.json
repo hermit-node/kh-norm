@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "name": "Nabler",
+  "version": "0.2.0",
+  "date": "2026-10-07",
+  "entrypoint": "src/main.py",
+  "description": "Single-call verified-result tables and checklists; trusted local Python callback and multiline script rows.",
+  "capabilities": [
+    "Data-only one-call native reporting",
+    "Deferred Python callable/lambda verification rows",
+    "Trusted multiline inline Python verification blocks",
+    "Markdown, terminal, plain and checklist formatting"
+  ],
+  "sha256": "c3d95afdbf73cc4b8f65eb7c1fd8900e36c524078bca9fec21804625683f5473",
+  "settings": {
+    "nabler": {
+      "enabled": true
+    }
+  }
+}

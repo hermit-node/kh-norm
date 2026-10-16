@@ -1158,7 +1158,7 @@ class PromptWorker:
             "step": "Execute only this bounded task step and return a durable result for later steps.",
             "task": "Execute the scheduled task work for this node; do not claim unscheduled work was completed.",
             "maintenance": "Perform only the bounded maintenance operation and report observed before/after state.",
-            "conclusion": "Synthesize prior task results into the direct final candidate; do not redo completed work unless verification requires it.",
+            "conclusion": "Synthesize prior task results into the direct final candidate; do not redo completed work unless verification requires it. For multi-item results or checklists, prefer the Nabler render_report native tool when available; collect verified results first, format once, and do not treat rendering as verification.",
             "final_verification": "Validate the final-candidate envelope and verify completion without redoing completed acquisition or mutation work.",
         }
         metadata = job.metadata or {}

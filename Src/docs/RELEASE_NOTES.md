@@ -1,3 +1,11 @@
+0.54.3 — 2026-10-07 — Nabler structured conclusion and verification reporting
+
+- Added built-in schema-2 `plugins/nabler` v0.2.0 with verified source SHA-256 and native data-only `render_report` tool for single-call tables/checklists. The native tool never executes arbitrary source supplied in its arguments.
+- Merged the two experimental Python authoring paths into one plugin: deferred lambda/callable checks and trusted local multiline `Table.add_row(script=..., context=...)` blocks. Inline script code executes once per row on rendering, requires assigning `result`, and is not a sandbox. The duplicate `nabler_inline` plugin is not packaged.
+- Added `tabulate==0.9.0` to direct and locked dependencies, plugin auto-discovery/manifest registration, default N2 conclusion preference, and source-level conclusion directive.
+- Included Nabler regression tests and standalone-script `.pth` registration helper. Existing user installations require preservation/migration of their config; this source release does not rewrite an already-running installation.
+- Left the pinned 0.54.2g managed optional-plugin recovery package unchanged. SSE client source and unrelated Norm 0.54.2i behavior remain unchanged.
+
 0.54.2i — 2026-10-07 — Progress-leased task budgets, resumable failures, and real compact headroom resume
 
 - Kept existing per-turn tool behavior and task-round accounting. N1 now reviews durable forward progress at round 96 and may grant 36 additional rounds per review, repeatedly, up to an absolute 384-round cap. Dense useful tool-call turns are allowed; churn does not earn another lease.

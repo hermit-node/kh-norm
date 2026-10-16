@@ -1,8 +1,14 @@
-# Norm 0.54.2i portable source package
+# Norm 0.54.3 portable source package
 
-This directory is the portable source payload for **Norm 0.54.2i**.
+This directory is the portable source payload for **Norm 0.54.3**, derived from the user-supplied 0.54.2i + SSE source ZIP.
 
 The portable source package excludes generated or machine-private material such as .venv, compiled core\norm.exe, build output, Python caches, secrets, and private runtime state.
+
+## 0.54.3 Nabler structured reporting
+
+- Adds one unified `plugins/nabler` schema-2 plugin with original native tool name and merged inline-script Python authoring API. No redundant `nabler_inline` plugin is shipped.
+- Adds `tabulate==0.9.0` to both source dependency manifests, N2 default preference, conclusion directive, regression tests and source package inventory.
+- Pure source package: contains no compiled executable, no .venv, no installer EXE, no secrets or user-specific local config. The existing managed optional-plugin repair fallback remains pinned to verified 0.54.2g.
 
 ## 0.54.2i progress leases, failed-task controls, and compact continuation
 

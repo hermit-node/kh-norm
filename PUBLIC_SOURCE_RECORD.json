@@ -1,12 +1,14 @@
 {
-  "version": "0.54.2i",
-  "variant": "",
-  "tag": "v0.54.2i",
-  "source_archive_sha256": "cb6bcc0c1e7550232bfde71d0530f5ac7329f119636398edb04ecd293848f456",
-  "source_archive": "0.54.2i--release--cb6bcc0c1e75.zip",
+  "version": "0.54.3",
+  "variant": "Nabler",
+  "tag": "v0.54.3-nabler",
+  "source_archive_sha256": "48b51dafbca57b3dc2d2429483d7c896504db80631728ca903efbe3feb0acc0c",
+  "source_archive": "0.54.3--Nabler--48b51dafbca5.zip",
   "quality": "static/CLI PASS, historical",
-  "known_issues": [],
-  "published_source_files": 181,
+  "known_issues": [
+    "Four substantially different source-code fingerprints with the same manifest version. Nabler, OCR, lesson plugin and runway must remain separately identified."
+  ],
+  "published_source_files": 187,
   "omitted_paths": [
     "config/network-map.json",
     "config/plugins.ini",

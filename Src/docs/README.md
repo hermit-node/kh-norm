@@ -2,7 +2,13 @@
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.54.2i / Installer 2.0.0** package only. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.54.3 portable-source / Installer 2.0.0 baseline** package only. Version history belongs only in RELEASE_NOTES.md.
+
+### Nabler unified table/checklist rendering (0.54.3)
+
+- `plugins/nabler` is a built-in schema-2 plugin for data-only native report rendering via `plugin_nabler__main__render_report`. Call once with observed `rows` to produce a Markdown table/checklist; it does not execute verification code from tool arguments.
+- Local scripts can import `nabler.table` and use direct values, deferred lambdas, or multiline `script=` checks. The latter are trusted local Python only, and must assign `result`. See `plugins/nabler/README.md` for safety and usage.
+- The pinned `tabulate==0.9.0` runtime dependency is installed during normal environment recreation. Run the included regression tests before packaging. The former `nabler_inline` experiment is intentionally not shipped.
 
 ### Adaptive round leases, resumable failed tasks, and compact headroom resume (0.54.2i)
 

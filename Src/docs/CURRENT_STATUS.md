@@ -1,6 +1,12 @@
 # Norm current status
 
-Current package: **Norm 0.54.2i** with **Installer 2.0.0**.
+Current package: **Norm 0.54.3** portable source; source-packaged installer baseline **2.0.0** (not rebuilt).
+
+### Structured conclusion reporting (0.54.3)
+
+- Built-in Nabler v0.2.0 supplies a one-call, data-only native reporting tool for verified checklist/table rows. N2 prefers it for suitable multi-item conclusions, but a rendered PASS is not evidence of executing a check.
+- Python script authors may use deferred lambdas/callables or trusted multiline inline `script=` blocks; native `render_report` ignores executable source fields.
+- Both dependency files pin `tabulate==0.9.0`. Schema-2 SHA-256 protects plugin source; local import registration via `plugins/nabler/install.py` is optional for standalone scripts.
 
 ### Adaptive round leases + compact continuation (0.54.2i)
 
