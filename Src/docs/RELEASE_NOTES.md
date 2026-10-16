@@ -1,3 +1,13 @@
+## Norm 0.55.10r5 — Unified PDF formatting and direct PDF slash shortcuts (2026-10-13)
+
+- Consolidates **text**, **visual**, and **rich-dialogue** export under the existing shared_browser plugin.
+- New direct Norm Prompt shortcuts: /pdf, /pdf-chat, /pdf-dialogue, /pdf-name, /pdf-verify, /pdf-text, /pdf-visual, /pdf-status, /pdf-cleanup.
+- Rich dialogue preserves native vector typography, original image bytes, source code panels, chat bubbles and list formatting while compacting whitespace. Includes date/user bookmarks and an optional original-page appendix.
+- Filename convention `{title} - Rich Dialogue.pdf`; optional human-readable title; source, existing outputs and verification reports are never overwritten.
+- Independent source-to-output comparison, SHA-256 verification sidecar, and dry-run-first cleanup limited to stale formatter temporary files.
+- Standalone Python command: `python tools/shared_browser/rich_dialogue_pdf.py "original.pdf" --title "topic"`.
+- Existing browser tools, JSONL archive/text exporter, Qt visual exporter, settings, plugins and runtime state preserved. No installer or runtime executable compilation in this source release.
+
 ## Norm 0.55.10r4 — restore the actual 2026-10-11 Qt Focus workspace (2026-10-12)
 
 - The user-selected authoritative workspace is N_Workspace/NormWorkspace-Qt-Focus, not fonts-v3, Geometry-v4 or Triad-v5. Original app.py from NormWorkspace-Qt-Focus-source.zip (18:29, Oct 11) is preserved byte-identical as tools/workspace/qt_focus_original_source.py, with original icon and user-saved Qt Focus layout/active-role preferences.

@@ -137,3 +137,23 @@ Context injection lifecycle (0.55.1):
   /injection-restore ID [--task ID]
     Reactivate an instruction. Its original record is preserved.
 Only the independent accepted step verifier may auto-retire an eligible instruction.
+
+PDF format shortcuts (Norm Prompt; execute locally, not queued)
+  /pdf
+      List supported PDF modes. Details: /help shared-browser.
+  /pdf-chat "SOURCE.pdf" [--name "TITLE"] [--output "PATH"] [--include-original]
+      Rich dialogue with preserved vector text, code panels, images, and bookmarks.
+  /pdf-dialogue "SOURCE.pdf"
+      Alias for /pdf-chat.
+  /pdf-name "SOURCE.pdf"
+      Preview user-turn text/date context for naming.
+  /pdf-verify "SOURCE.pdf" "DIALOGUE.pdf"
+      Independently compare text, image hashes, bookmarks and report checksums.
+  /pdf-text "ARCHIVE NAME"
+      Existing ReportLab PDF from loaded-chat JSONL archive.
+  /pdf-visual ["TITLE"]
+      Existing Qt-browser scroll/capture PDF (asynchronous).
+  /pdf-status
+      Show active visual-PDF progress.
+  /pdf-cleanup ["FOLDER"] [--older-hours 24] [--execute]
+      Preview stale converter partial files; --execute explicitly removes only those.

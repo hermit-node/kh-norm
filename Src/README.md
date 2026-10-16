@@ -1,3 +1,13 @@
+## Norm 0.55.10r5 — One PDF plugin, three formats, direct shortcuts
+
+The existing Shared Browser plugin now owns text, visual and rich-dialogue PDFs.
+Use `/pdf` in Norm Prompt to list shortcuts, `/pdf-chat "original.pdf" --name "Topic"`
+for a source-faithful bookmarked dialogue, or `/pdf-visual` to capture the open tab.
+`/pdf-name`, `/pdf-verify`, `/pdf-text`, `/pdf-status`, and dry-run `/pdf-cleanup`
+are also available. Direct commands run locally without N2 queuing.
+Original source documents and previously saved exports are never overwritten.
+This is a source-only update of the uploaded 0.55.10r4 package.
+
 ## Norm 0.55.10r4 — Qt Focus restored as the default
 
 The default workspace is **the original October 11 NormWorkspace-Qt-Focus**, written in PySide6 and using Win32 to host real terminal HWNDs. The original app.py is preserved as tools/workspace/qt_focus_original_source.py; the modified production source is tools/workspace/app.py.

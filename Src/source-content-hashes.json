@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "release": "0.55.10r4",
-  "baseline": "Norm-0.55.10r3-portable-source.zip",
-  "file_count": 381,
+  "release": "0.55.10r5",
+  "baseline": "Norm-0.55.10r4-portable-source.zip",
+  "file_count": 385,
   "hash_algorithm": "sha256",
   "files": {
     ".gitattributes": {
@@ -22,8 +22,8 @@
       "sha256": "e774f5ea91a76af90b32d07d967a17a1e2741a3e99c67ee944536cb548e6a432"
     },
     "README.md": {
-      "bytes": 30413,
-      "sha256": "22ea94948bf8f4e10eacda3d1350fc0b31d08ee39540b8a1f938ad513e4c51bb"
+      "bytes": 31031,
+      "sha256": "ebd9e3842b718aab5d501981eb035ea48dbfcf3248c3c1184672004c15bab790"
     },
     "Run-Norm.bat": {
       "bytes": 4655,
@@ -313,6 +313,10 @@
       "bytes": 8797,
       "sha256": "fb25f7701cdbe72edb307cb9e548208c80ff06b99c8f2646357191619a9b2924"
     },
+    "docs/PDF_DIALOGUE_FORMAT_R5.md": {
+      "bytes": 2688,
+      "sha256": "49148a713fbc4c5569fc0d4aac62d0853b33e59e3bec09f81d4afb8bd7161695"
+    },
     "docs/PDF_READER_GRAYSCALE_COVERAGE.md": {
       "bytes": 2084,
       "sha256": "d7156c56cae494ec40d4eaa1f79ebef08a6cb31aee1d79b0f8b73859df611d4b"
@@ -322,8 +326,8 @@
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
     },
     "docs/RELEASE_NOTES.md": {
-      "bytes": 155142,
-      "sha256": "b76e8823d046e1ce287a7f4fca6de82b1c9afe5c0dbec3a478971cfcdea8d74e"
+      "bytes": 156314,
+      "sha256": "919afd35fd46ee7313ec6865cea9d86eb5778fafb9067080c6222f854bf0cf84"
     },
     "docs/SHARED_BROWSER.md": {
       "bytes": 6642,
@@ -338,8 +342,8 @@
       "sha256": "f4b85523c45c9bacbb98e1b565bfa7cfceae721f52100adc2280ebd117a34743"
     },
     "docs/help_full.txt": {
-      "bytes": 5942,
-      "sha256": "02b9367b9d55c41a9e761b04eb33ddf7e80e7ac1609dee78ed00a890d4ded720"
+      "bytes": 6868,
+      "sha256": "123f5fb5b5bd3a8efeb5c714d43964af9198f6495dd497e833b57cc41550b116"
     },
     "docs/help_menu.txt": {
       "bytes": 1735,
@@ -386,8 +390,8 @@
       "sha256": "814cf6e096ac167f56bbb47c98287818949ec13c65843574b3a733698c91f982"
     },
     "package-manifest.json": {
-      "bytes": 37587,
-      "sha256": "209b6818d426e07287d9aca5c8215f4d44d2fdf9c404d15bace9fdb22da1be8f"
+      "bytes": 38487,
+      "sha256": "7d8268407adfbc6c77dd8a5769d2732f0c0281c9efb9a3d0a7467cf78509c5d8"
     },
     "plugins/README.md": {
       "bytes": 721,
@@ -622,20 +626,20 @@
       "sha256": "d6a48c646920089ca2dacc78c87722287ff62ac487569b64ed2e810586fc1ec7"
     },
     "plugins/shared_browser/README.md": {
-      "bytes": 1778,
-      "sha256": "4ac6521783dd2084aceeaa9fc2562f3f7f29316897c5cfbb9bd55f87169ed1f8"
+      "bytes": 3328,
+      "sha256": "ef302373affac2a1c9a431ba68462417fc5a08d457659db815522f54868bbb08"
     },
     "plugins/shared_browser/help.txt": {
-      "bytes": 1099,
-      "sha256": "d53ecf4b42725fc2119b49af90de3d495a6d5a97b60ec08384096f69136cf801"
+      "bytes": 2763,
+      "sha256": "62b0a3071680c054d84d17eda22d16abe41e461372f53169d723f810bf393450"
     },
     "plugins/shared_browser/plugin.json": {
-      "bytes": 623,
-      "sha256": "62377f099c15723b1c96889fdede12ebc11d2cb4cd0a81a039d584ce5bbfb821"
+      "bytes": 752,
+      "sha256": "f8bcc4e387f7a1ba0c71ccbb07ec7c8edd5cbfaf4faf8b8dfd0df5fc565b4dc4"
     },
     "plugins/shared_browser/src/main.py": {
-      "bytes": 14022,
-      "sha256": "dc1548c19fb9b4359a442d31e2314fadc34f87695ea4ced6e725062c10e54de1"
+      "bytes": 21698,
+      "sha256": "d528adc6545c5344fa1ad1cdf1e260f3287618cec49a5a41436e99cbfd654935"
     },
     "plugins/soft_delete/README.md": {
       "bytes": 1219,
@@ -1014,8 +1018,8 @@
       "sha256": "b79bdd7a02ba5a54049b24d1f1d63247f02dad2c4f756ddfe7ef2e70b8053df7"
     },
     "tools/norm_gui_prompt.py": {
-      "bytes": 48760,
-      "sha256": "033f7c2d9aa65079b1e48537a4cda976a468eae4d0dd6602133ce8c7b3f92b8b"
+      "bytes": 48900,
+      "sha256": "623d42d93572943fc72d6f8e8222886465b6b58b3107925078917e91b7dd7cfb"
     },
     "tools/norm_gui_reply.py": {
       "bytes": 4723,
@@ -1028,6 +1032,10 @@
     "tools/norm_network_map.py": {
       "bytes": 23973,
       "sha256": "6c3ff29ab7e016ed538cf2bb82d0b0e432d5bdf3cf05956f3678aeb2ab03b1fd"
+    },
+    "tools/norm_pdf_commands.py": {
+      "bytes": 5823,
+      "sha256": "8dc3f4aa1097d0841f40fb019b5d44eef234eb0978362c7302d9ba4a42c18dce"
     },
     "tools/norm_plugin_help.py": {
       "bytes": 2048,
@@ -1084,6 +1092,10 @@
     "tools/shared_browser/hybrid_ocr_pdf.py": {
       "bytes": 9285,
       "sha256": "a5a074ad6f6cb8b2c04bf2bc6f48f200287f9c55835e53b92bdcb6a17f2c3a4f"
+    },
+    "tools/shared_browser/rich_dialogue_pdf.py": {
+      "bytes": 14184,
+      "sha256": "c0fa268ff096802d16724a47d588da9155da97b27f71817479cc06b635719a5f"
     },
     "tools/shared_browser/speaker_pdf.py": {
       "bytes": 6202,
@@ -1316,6 +1328,10 @@
     "tools/test_pdf_ink_coverage.py": {
       "bytes": 7107,
       "sha256": "429611c2fe107e2ee9b46d8d6c941c301a3b6da3976e8646bd99b527e86f7c3d"
+    },
+    "tools/test_pdf_slash_and_dialogue_r5.py": {
+      "bytes": 7024,
+      "sha256": "58a363f2b89674dc221b52ccf8a65cc674ca7c2c9c10f00de195d23bfcd8f625"
     },
     "tools/test_plan_self_review_0556.py": {
       "bytes": 9893,
