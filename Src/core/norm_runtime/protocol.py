@@ -220,8 +220,9 @@ def step_verification_schema() -> dict[str, Any]:
             "evidence_supported": {"type": "boolean"},
             "issues": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 600}},
             "repair_scope": {"type": "string", "enum": ["none", "response", "requirements", "evidence"]},
+            "fulfilled_injection_ids": {"type": "array", "maxItems": 32, "items": {"type": "integer", "minimum": 1}},
         },
-        "required": ["schema_version", "kind", "verdict", "requirements_complete", "evidence_supported", "issues", "repair_scope"],
+        "required": ["schema_version", "kind", "verdict", "requirements_complete", "evidence_supported", "issues", "repair_scope", "fulfilled_injection_ids"],
         "additionalProperties": False,
     }
 
@@ -253,7 +254,10 @@ def validate_step_verification(value: dict[str, Any]) -> dict[str, Any]:
         "evidence_supported": bool(value.get("evidence_supported")),
         "issues": issues,
         "repair_scope": repair_scope,
+        "fulfilled_injection_ids": sorted(set(int(i) for i in (value.get("fulfilled_injection_ids") or []) if isinstance(i, int) and not isinstance(i, bool) and i > 0))[:32],
     }
+    if verdict != "accept" and result["fulfilled_injection_ids"]:
+        raise ValueError("a rejected step cannot retire context injections")
     if verdict == "accept":
         if issues or repair_scope != "none" or not result["requirements_complete"] or not result["evidence_supported"]:
             raise ValueError("accept step verdict must be complete, supported, issue-free, and repair_scope=none")

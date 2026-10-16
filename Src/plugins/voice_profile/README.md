@@ -74,3 +74,14 @@ and updated active SHA.
 ## PDF extraction policy
 
 `extraction_mode="auto"` delegates directly to `vision_parse(mode="hybrid")`. The shared PDF reader owns grayscale pixel-coverage assessment and vision fallback; the voice-profile module does not make independent text-length/quality decisions. Explicit `text`, `vision`, and `hybrid` are forwarded unchanged.
+
+## 0.4.2 distinctive voice and testing
+
+The model-based synthesizer now asks for distinctive regional/sociolect/idiomatic
+constructions rather than polishing them into generic professional descriptions.
+Operator-authored `state/voice_profiles/NAME/style_override.txt` takes precedence
+over generic synthesis language, survives corpus rebuilds, and is included in the
+compiled active prompt (and SHA). `/voice-tune` manages this override, while
+`/voice-test` (operator-only, not a model-facing tool) compares an unconditioned local model response to one with the
+selected profile. Direct conversation and queued N2 worker steps consume the same
+hash-verified active prompt. Neither route trains model weights.

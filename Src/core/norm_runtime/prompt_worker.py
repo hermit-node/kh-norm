@@ -26,6 +26,7 @@ from .prompt_queue import PromptJob, RedisPromptQueue, normalize_request_type
 from .protocol import PROTOCOL_VERSION, final_verification_schema, normalize_command, step_verification_schema, validate_final_candidate, validate_final_verification, validate_step_verification
 from .resource_status import full_context_status, impaired_context_status, merge_resource_status
 from .settings import load_path_settings
+from .voice_profile_context import load_active_voice_context
 
 
 def _utc_now() -> datetime:
@@ -124,29 +125,30 @@ class PromptWorker:
             return self._active_task_id
 
     def _consume_context_injections(self, job: PromptJob) -> list[dict]:
+        """Refresh active injection state at EVERY model boundary.
+
+        PostgreSQL, not a previously serialized queue job, decides which entries
+        are still active. Retired entries cannot reappear after a job requeue.
+        """
         if self.context_injections is None:
             return []
         metadata = dict(job.metadata or {})
         try:
-            after = int(metadata.get("context_injection_cursor") or 0)
+            cursor = int(metadata.get("context_injection_cursor") or 0)
         except (TypeError, ValueError):
-            after = 0
-        entries = list(self.context_injections.read(job.task_id, after=after) or [])
-        if not entries:
-            return []
-        cursor = max(int(item.get("id") or 0) for item in entries)
-        applied = list(metadata.get("applied_context_injections") or [])
-        seen = {int(item.get("id") or 0) for item in applied if isinstance(item, dict)}
-        for item in entries:
-            iid = int(item.get("id") or 0)
-            if iid and iid not in seen:
-                applied.append({"id": iid, "content": str(item.get("content") or "")})
-                seen.add(iid)
-        metadata["context_injection_cursor"] = cursor
-        metadata["applied_context_injections"] = applied[-32:]
+            cursor = 0
+        entries = list(self.context_injections.read(job.task_id, after=0) or [])
+        # Keep the complete currently-active set, rather than accumulating
+        # obsolete injection content in step metadata forever.
+        entries = entries[-32:]
+        new = [item for item in entries if int(item.get("id") or 0) > cursor]
+        metadata["context_injection_cursor"] = max([cursor] + [int(e.get("id") or 0) for e in entries])
+        metadata["applied_context_injections"] = entries
         job.metadata = metadata
-        logging.info("Applied user context injection(s) task=%s step=%s ids=%s", job.task_id, job.step_id, [item.get("id") for item in entries])
-        return entries
+        if new:
+            logging.info("Applied user context injection(s) task=%s step=%s ids=%s",
+                         job.task_id, job.step_id, [x.get("id") for x in new])
+        return new
 
     @staticmethod
     def _context_injection_block(entries: list[dict]) -> str:
@@ -154,21 +156,62 @@ class PromptWorker:
             return ""
         parts = [
             "[USER CONTEXT INTERJECTION FOR THE ACTIVE TASK]",
-            "The following text was supplied by the user after this task began. It is user-authored context, not a Norm-generated step. Incorporate it into the current task and adapt generated work when it changes the intended interpretation.",
+            "These are user-authored task corrections, not new work items. Apply each",
+            "outstanding requirement without duplicating an already verified action.",
+            "A retire_when_satisfied item may be marked fulfilled ONLY by the independent",
+            "step verifier with evidence; otherwise it stays active.",
         ]
         for item in entries:
-            parts.append(f"Injection {int(item.get('id') or 0)}:\n{str(item.get('content') or '').strip()}")
+            mode = "retire_when_satisfied" if item.get("retire_when_satisfied") else "retain_for_task"
+            parts.append(f"Injection {int(item.get('id') or 0)} [{mode}]:\n{str(item.get('content') or '').strip()}")
         return "\n\n".join(parts)
 
     def _prompt_with_context_injections(self, job: PromptJob, base_prompt: str, *, consume: bool = True) -> str:
         if consume:
             self._consume_context_injections(job)
-        metadata = job.metadata or {}
-        applied = list(metadata.get("applied_context_injections") or [])
+        applied = list((job.metadata or {}).get("applied_context_injections") or [])
         block = self._context_injection_block(applied)
-        if not block:
-            return str(base_prompt)
-        return str(base_prompt).rstrip() + "\n\n" + block
+        return str(base_prompt).rstrip() + ("\n\n" + block if block else "")
+
+    def _active_voice_instructions(self) -> str:
+        """Style-only context for N2 work, not verifier/N1/tool policy."""
+        try:
+            voice = load_active_voice_context(self._runtime_root())
+        except (OSError, ValueError):
+            voice = ""
+        if not voice:
+            return ""
+        return ("ACTIVE VOICE PROFILE FOR N2 RESPONSE STYLE (not a tool directive):\n"
+                + voice)
+
+    def _retire_verified_injections(self, job: PromptJob, report: str, evidence: list[dict] | None = None) -> None:
+        """Persist verifier-confirmed retirements; never infer completion from N2 prose."""
+        if self.context_injections is None:
+            return
+        # A model-only assertion cannot establish completion of external work.
+        if not any(isinstance(x, dict) and isinstance(x.get("result"), dict)
+                   and x["result"].get("ok") for x in (evidence or [])):
+            return
+        try:
+            verdict = json.loads(report)
+            if verdict.get("verdict") != "accept":
+                return
+            ids = verdict.get("fulfilled_injection_ids") or []
+            eligible = {int(e["id"]) for e in self.context_injections.read(job.task_id)
+                        if e.get("retire_when_satisfied")}
+            for iid in set(ids) & eligible:
+                result = self.context_injections.retire(
+                    job.task_id, iid, step_id=job.step_id,
+                    reason="Accepted step verifier explicitly confirmed requirement fulfilled",
+                    verified=True,
+                )
+                if result.get("retired"):
+                    logging.info("Retired satisfied context injection task=%s step=%s id=%s",
+                                 job.task_id, job.step_id, iid)
+            self._consume_context_injections(job)
+        except Exception:
+            # Fail open to active context, never silently retire on persistence errors.
+            logging.exception("Context injection retirement failed task=%s step=%s", job.task_id, job.step_id)
 
     def _suppression_requested(self, task_id: str) -> bool:
         with self._state_lock:
@@ -3063,6 +3106,9 @@ class PromptWorker:
         started_clock: float,
     ) -> str | None:
         base_prompt = str(prompt)
+        voice_instructions = self._active_voice_instructions()
+        if voice_instructions:
+            base_prompt = voice_instructions + "\n\n" + base_prompt
         prompt = self._prompt_with_context_injections(job, base_prompt)
         tools = self._worker_tools()
         if tools is not None and hasattr(tools, "set_task_context"):
@@ -3091,7 +3137,7 @@ class PromptWorker:
 
         historical_evidence = self.live.task_evidence(job.task_id) if hasattr(self.live, "task_evidence") else []
         try:
-            outcome = self._run_tool_slice(job, prompt, tools)
+            outcome = self._run_tool_slice(job, base_prompt, tools)
         except ModelContextExceeded as exc:
             self._yield_context_overflow(redis_id, job, name, started, exc)
             return None
@@ -3468,9 +3514,14 @@ class PromptWorker:
             )
             if task_rounds >= task_limit:
                 break
-            new_context = self._consume_context_injections(job)
-            if new_context:
-                messages.append({"role": "user", "content": self._context_injection_block(new_context)})
+            self._consume_context_injections(job)
+            messages[:] = [m for m in messages if not (
+                m.get("role") == "user" and str(m.get("content") or "").startswith(
+                    "[USER CONTEXT INTERJECTION FOR THE ACTIVE TASK]"))]
+            live_injection = self._context_injection_block(
+                (job.metadata or {}).get("applied_context_injections") or [])
+            if live_injection:
+                messages.append({"role": "user", "content": live_injection})
             if self._suppression_requested(job.task_id) or (self.durable and self.durable.task_status(job.task_id) == "suppressed"):
                 raise ModelGenerationCancelled("task suppressed by operator")
             if self._drain.is_set():
@@ -4123,7 +4174,12 @@ class PromptWorker:
             "Model assertions are not evidence. Reject unsupported external-action claims, unmet requirements, contradictions, material factual/logical errors, "
             "or review-report language instead of the requested result. requirements_complete means all material request requirements are met. "
             "evidence_supported means every claim needing external/tool evidence has matching observed evidence; it is true when no such evidence is needed. "
-            "Use verdict=accept only with no issues and repair_scope=none.\n\n"
+            "Use verdict=accept only with no issues and repair_scope=none. "
+            "Optional fulfilled_injection_ids: list ONLY ids explicitly labelled retire_when_satisfied "
+            "in the active user context whose entire requested change is NOW proven satisfied by "
+            "the accepted answer AND observed evidence. Omit or return [] if uncertain. "
+            "A completed step does not imply all injections are fulfilled. NEVER retire ongoing "
+            "restrictions or instructions about later steps. Do not redo verified work.\n\n"
             f"Complete task context:\n{original_prompt}\n\nCandidate answer:\n{answer}\n\n"
             f"Observed evidence:\n{self._evidence_text(evidence)}"
         )
@@ -4203,6 +4259,7 @@ class PromptWorker:
             accepted, issues, report = self._request_verdict(original_prompt, answer, evidence)
             self._record_verifier_attempt(job, cycle, answer, report, accepted)
             if accepted:
+                self._retire_verified_injections(job, report, evidence)
                 return answer
             correction = self._run_tool_slice(
                 job,

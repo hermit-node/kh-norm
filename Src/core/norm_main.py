@@ -950,7 +950,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             return {"status": "unavailable", "scheduled": False, "reason": "worker is still initializing"}
         return worker_obj.request_memory_condense(full=bool(full), deep=bool(deep))
 
-    def request_inject_context(task_id: str | None, content: str, request_id: str) -> dict:
+    def request_inject_context(task_id: str | None, content: str, request_id: str, retire_when_satisfied: bool = False) -> dict:
         worker_obj = resources.get("worker")
         injections = resources.get("context_injections")
         prompt_queue_obj = resources.get("prompt_queue")
@@ -967,9 +967,26 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
                 target = str(running[0].get("task_id") or "").strip()
         if not target:
             raise ValueError("No active task is available for context injection")
-        result = injections.save(target, content, request_id)
+        result = injections.save(target, content, request_id, retire_when_satisfied=bool(retire_when_satisfied))
         logging.info("Context injection saved task=%s injection_id=%s", result.get("task_id"), result.get("injection_id"))
         return result
+
+    def request_injection_control(task_id: str | None, action: str, injection_id: int = 0) -> dict:
+        worker_obj = resources.get("worker")
+        injections = resources.get("context_injections")
+        if worker_obj is None or injections is None:
+            raise ValueError("Context injection service is still initializing")
+        target = str(task_id or worker_obj.active_task_id() or "").strip()
+        if not target:
+            raise ValueError("Specify --task TASK_ID when there is no active task")
+        action = str(action).lower().strip()
+        if action == "list":
+            return injections.list(target)
+        if action == "retire":
+            return injections.retire(target, injection_id, reason="operator", verified=False)
+        if action == "restore":
+            return injections.restore(target, injection_id)
+        raise ValueError("Unknown injection operation")
 
     activity_cfg = config.get("activity", {})
     activity_host = resolve_bind_host(str(activity_cfg.get("host", "127.0.0.1")))
@@ -1025,6 +1042,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             memory_condense=request_memory_condense,
             switch_model=request_model_switch,
             inject_context=request_inject_context,
+            injection_control=request_injection_control,
             busy_status=request_busy_status,
             context_status=request_context_status,
             health_status=request_activity_health,

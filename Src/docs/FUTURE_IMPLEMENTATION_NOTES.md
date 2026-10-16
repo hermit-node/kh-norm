@@ -49,3 +49,13 @@ Move the chart-axis calibration contract into deterministic machine checks where
 ## Lower-privilege high-impact capability broker
 
 Evaluate a separate low-privilege broker for high-impact filesystem, shell, and database actions while preserving the current N1/N2 boundary.
+
+
+## 0.55.1 follow-up verification (2026-10-08)
+
+- Context injection lifecycle is implemented in source, but run a live PostgreSQL migration and a queued task with an injection that is verifiably completed mid-task. Confirm only the flagged injection retires and later steps do not repeat its work; preserve older persistent injections.
+- Voice N2 conditioning was wired in source; compare one fresh queued worker answer before/after `/voice-tune Cockney --preset cockney` and `/voice-activate Cockney`. `/voice-test` measures local model response variation but not actual queued-path delivery.
+- A deterministic, general-purpose operation-idempotence guard at the action boundary (beyond injection retirement) remains open. N1 reuse/verification and prompt admonitions do not fully guarantee duplicate mutations are blocked.
+- Lesson-model plugin still does not train/promote model weights; installer Windows end-to-end, OCR Tesseract binary management and remote-app authentication remain separate verification or security tasks.
+
+- Audit installer 2.0.0 against this actual source manifest. It intentionally does not contain the former `build_script` field or `tools/build_norm.py`; legacy 1.6.x installers requiring them are not known-compatible.

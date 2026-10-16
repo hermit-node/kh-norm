@@ -109,3 +109,18 @@ Runtime control
       GUI alias for graceful Norm shutdown.
   /shutdown now
       GUI alias for immediate Norm shutdown.
+
+
+Context injection lifecycle (0.55.1):
+  /inject-context [--task ID] [--once|--keep] TEXT
+    Opens a retirement checkbox unless --once (retire on verified completion) or
+    --keep (persist until task conclusion) is supplied. Legacy injections retain
+    their original behavior.
+  /injections [--task ID] [--manage]
+    Lists active, satisfied, and manually superseded injections.
+    --manage opens checkboxes to retire any currently active entries manually.
+  /injection-retire ID [--task ID]
+    Manually retire an instruction from current and future worker turns.
+  /injection-restore ID [--task ID]
+    Reactivate an instruction. Its original record is preserved.
+Only the independent accepted step verifier may auto-retire an eligible instruction.

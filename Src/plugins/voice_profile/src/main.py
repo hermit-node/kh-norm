@@ -130,3 +130,13 @@ def active_profile() -> dict:
 def clear_profile(profile_name: str, confirm: bool = False) -> dict:
     """Delete one inactive profile only when confirm=true."""
     return _engine.clear_profile(profile_name, confirm)
+
+
+def _operator_tune_voice(profile_name: str, text: str = "", preset: str = "", clear: bool = False) -> dict:
+    """Persist an operator-authored voice emphasis; survives corpus rebuilds."""
+    return _engine.tune_voice(profile_name, text=text, preset=preset, clear=clear)
+
+
+def _operator_test_voice(profile_name: str, query: str, anchor_count: int = 3) -> dict:
+    """Compare base and voice-conditioned local model replies side by side."""
+    return _engine.test_voice(profile_name, query, anchor_count)

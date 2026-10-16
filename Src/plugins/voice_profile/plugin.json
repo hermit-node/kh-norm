@@ -1,10 +1,10 @@
 {
   "schema_version": 2,
   "name": "voice_profile",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "date": "2026-10-08",
   "entrypoint": "src/main.py",
-  "description": "Build, inspect, activate, and retrieve AI voice and persona profiles derived from PDF/text corpora.",
+  "description": "Profile voices with operator style overrides, A/B tests and queued N2 conditioning",
   "capabilities": [
     "PDF corpus voice profiling",
     "rich style-anchor selection",
@@ -12,9 +12,11 @@
     "source-grounded corpus retrieval",
     "active conversation voice conditioning",
     "corpus persona profiling",
-    "runtime persona conditioning"
+    "runtime persona conditioning",
+    "operator style override and A/B testing",
+    "queued N2 worker style conditioning"
   ],
-  "sha256": "f4507ab5a8a55de0aa81d417e08e6e79bbb7888bc1df48bb4b9c0663022b0d57",
+  "sha256": "24a116a307e90758c9bfd3e5662a218559b1d9c54e5161790bc1fa556bde991a",
   "settings": {
     "voice_profile": {
       "enabled": true

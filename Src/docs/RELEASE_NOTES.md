@@ -1,3 +1,12 @@
+## 0.55.1 — 2026-10-08 — Verified context-injection retirement and stronger voice controls
+
+- Added PostgreSQL migration for `task_context_injections` statuses, operator retirement flag, and audit metadata. Existing rows retain legacy behavior; new `/inject-context` entries expose a checked default checkbox or explicit `--once`/`--keep` flags. `/injections`, `/injection-retire` and `/injection-restore` manage current-task lifecycle directly.
+- A completed step can auto-retire a specified injection only when the independent structured verifier accepts it, explicitly reports that injection ID fulfilled, and successful tool evidence exists. Worker prompts consult live active injection state at each call and stop replaying retired text, including during resumed jobs. The PostgreSQL audit record is preserved.
+- Loaded the hash-validated active voice prompt into queued N2 worker generation. This is separate from direct conversation conditioning; N1 tool gatekeeping and verification do not become style-conditioned.
+- Upgraded voice_profile to 0.4.2: distinctive dialect/sociolect synthesis instructions, a separate `style_override.txt` preserved through corpus rebuilds, `/voice-tune NAME --preset cockney`, and `/voice-test NAME "QUESTION"` for neutral versus conditioned local Ollama comparisons. No model weights change.
+- Preserved cumulative 0.55.0 lesson-model/code-memory, OCR/vision, installer catalog, help/slash command and runway changes. No installer redesign or code-memory weight training was introduced.
+- Pending: Windows/PostgreSQL/Ollama live integration, general duplicate-mutation guard not limited to context injections, lesson-model weight promotion, and standalone Tesseract executable installation.
+
 ## 0.55.0 — 2026-10-08 — Cumulative source release with lesson model, voice and OCR/vision tools
 
 - Promoted the combined 0.54.3 source-patch line to package version 0.55.0; preserved historical 0.54.3 release notes below. Installer baseline remains 2.0.0 and must be built/run separately.

@@ -1,4 +1,4 @@
-Voice Profiler (voice_profile 0.4.1) — direct operator commands
+Voice Profiler (voice_profile 0.4.2) — direct operator commands
 
 These commands execute in Norm Prompt on the local installation. They DO NOT
 enter the Redis/N2 task queue. They are not model decisions. The profile state
@@ -60,3 +60,13 @@ Notes:
   slash controls changes live conversation conditioning, not model weights.
 - Long builds continue only while Norm Prompt is open; don't close that window
   until completion is reported.
+
+
+/voice-tune NAME [--preset cockney | --clear | "STYLE TEXT"]
+    Add/inspect/remove operator-authored style emphasis. Stored separately in
+    style_override.txt, so corpus rebuilding does not erase it.
+    Follow with /voice-activate NAME to refresh the active SHA.
+/voice-test NAME "QUESTION" [--anchors 0..8]
+    Run local Ollama A/B prompt comparison: neutral response vs styled response.
+    This does not change the selected profile or weights and does not test the
+    runtime's queued-worker delivery (which is handled separately in core).

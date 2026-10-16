@@ -94,6 +94,7 @@ def _activity_app(
     context_status: Callable[[], dict] | None,
     inject_context: Callable | None,
     health_status: Callable[[], dict] | None,
+    injection_control: Callable | None = None,
 ):
     def factory(_server: AiohttpThreadServer) -> web.Application:
         app = web.Application(client_max_size=1_048_576)
@@ -209,7 +210,17 @@ def _activity_app(
                             payload.get("task_id"),
                             payload.get("content"),
                             payload.get("request_id"),
+                            payload.get("retire_when_satisfied", False),
                         )
+                    except ValueError as exc:
+                        return web.json_response({"error": str(exc)}, status=400)
+                    return web.json_response(result)
+                if path == "/control/injection-control":
+                    if injection_control is None:
+                        return web.json_response({"error": "Context injection control unavailable"}, status=503)
+                    try:
+                        result = await _call(injection_control,
+                            payload.get("task_id"), payload.get("action"), payload.get("injection_id", 0))
                     except ValueError as exc:
                         return web.json_response({"error": str(exc)}, status=400)
                     return web.json_response(result)
@@ -304,6 +315,7 @@ def _activity_app(
         app.router.add_get("/events", events)
         for route in (
             "/control/inject-context",
+            "/control/injection-control",
             "/control/cancel-ollama",
             "/control/shutdown-ollama",
             "/control/shutdown-norm",
@@ -350,6 +362,7 @@ def start_activity_server(
     busy_status: Callable[[], dict] | None = None,
     context_status: Callable[[], dict] | None = None,
     inject_context: Callable | None = None,
+    injection_control: Callable | None = None,
     health_status: Callable[[], dict] | None = None,
 ):
     server = AiohttpThreadServer(
@@ -375,6 +388,7 @@ def start_activity_server(
             busy_status=busy_status,
             context_status=context_status,
             inject_context=inject_context,
+            injection_control=injection_control,
             health_status=health_status,
         ),
         name="norm-activity-api",

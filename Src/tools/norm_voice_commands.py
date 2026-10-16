@@ -21,7 +21,7 @@ VOICE_COMMANDS = frozenset({
     "/voice-deactivate", "/voice-build", "/voice-build-chat",
     "/voice-rebuild", "/voice-add-text", "/voice-summary",
     "/voice-persona", "/voice-preview", "/voice-persona-preview",
-    "/voice-search", "/voice-compose", "/voice-delete",
+    "/voice-search", "/voice-compose", "/voice-delete", "/voice-tune", "/voice-test",
 })
 
 
@@ -229,6 +229,28 @@ def _action(line: str, root: Path, out: Callable[[str], None]) -> None:
         query = " ".join(args[1:])
         _print_summary(voice.retrieve_context(name, query) if command == "/voice-search"
                        else voice.compose_context(name, query), out)
+    elif command == "/voice-tune":
+        items, flags = _flags(args, supported={"--preset", "--clear"})
+        if not items:
+            raise ValueError('Usage: /voice-tune NAME [--preset cockney | --clear | "STYLE TEXT"]')
+        name = _profile_name(voice, items[0])
+        if flags.get("--preset") and len(items) > 1:
+            raise ValueError("Choose either preset or text")
+        if flags.get("--clear") and len(items) > 1:
+            raise ValueError("Choose either --clear or text")
+        result = voice._operator_tune_voice(name, text=" ".join(items[1:]),
+                                 preset=str(flags.get("--preset") or ""),
+                                 clear=bool(flags.get("--clear")))
+        _print_summary(result, out)
+        if result.get("changed"):
+            out(f"Run /voice-activate {name} to refresh the live prompt. No corpus rebuild needed.")
+    elif command == "/voice-test":
+        items, flags = _flags(args, supported={"--anchors"})
+        if len(items) < 2:
+            raise ValueError('Usage: /voice-test NAME "QUESTION" [--anchors 0..8]')
+        result = voice._operator_test_voice(_profile_name(voice, items[0]), " ".join(items[1:]),
+                                  anchor_count=_integer(flags, "--anchors", 3, 0, 8))
+        _print_summary(result, out)
     elif command == "/voice-delete":
         items, flags = _flags(args, supported={"--confirm"})
         if len(items) != 1 or not flags.get("--confirm"):
@@ -244,11 +266,11 @@ def run_voice_command(line: str, root: Path, out: Callable[[str], None] = print)
     if command not in VOICE_COMMANDS:
         return False
     if _BUILD_LOCK.locked() and command in {
-        "/voice-activate", "/voice-deactivate", "/voice-delete", "/voice-add-text"
+        "/voice-activate", "/voice-deactivate", "/voice-delete", "/voice-add-text", "/voice-tune"
     }:
         out("A voice build is in progress; no profile mutation was attempted. Retry after it finishes.")
         return True
-    if command in {"/voice-build", "/voice-build-chat", "/voice-rebuild"}:
+    if command in {"/voice-build", "/voice-build-chat", "/voice-rebuild", "/voice-test"}:
         if not _BUILD_LOCK.acquire(blocking=False):
             out("A voice build is already running in this console. No duplicate was started.")
             return True

@@ -539,21 +539,113 @@ def main() -> int:
             if lowered == "/inject-context" or lowered.startswith("/inject-context "):
                 body = text[len("/inject-context"):].strip()
                 task_id = None
-                if body.startswith("--task "):
-                    parts = body.split(maxsplit=2)
-                    task_id = parts[1] if len(parts) > 1 else None
-                    body = parts[2] if len(parts) > 2 else ""
+                retirement = None
+                # Optional flags must precede literal instruction content.
+                while body.startswith("--"):
+                    if body.startswith("--task "):
+                        chunks = body.split(maxsplit=2)
+                        if len(chunks) < 2:
+                            print("--task requires a task ID.")
+                            body = ""
+                            break
+                        task_id = chunks[1]
+                        body = chunks[2] if len(chunks) > 2 else ""
+                    elif body == "--once" or body.startswith("--once "):
+                        retirement = True
+                        body = body[len("--once"):].strip()
+                    elif body == "--keep" or body.startswith("--keep "):
+                        retirement = False
+                        body = body[len("--keep"):].strip()
+                    else:
+                        print("Unknown /inject-context option. Use --task ID, --once, or --keep.")
+                        body = ""
+                        break
                 if not body:
                     body = read_multiline()
                 if not body:
                     print("Context injection cancelled.")
                     continue
-                payload = {"task_id": task_id, "content": body, "request_id": str(uuid.uuid4())}
+                if retirement is None:
+                    # A real selectable checkbox (not a model question). The default
+                    # is checked; fallback supports terminals without dialog rendering.
+                    try:
+                        from prompt_toolkit.shortcuts import checkboxlist_dialog
+                        checked = checkboxlist_dialog(
+                            title="Norm context injection",
+                            text="Retire this instruction when a completed step verifies it was fulfilled?",
+                            values=[("retire", "Retire when verified")],
+                            default_values=["retire"],
+                            ok_text="Save", cancel_text="Cancel",
+                        ).run()
+                        if checked is None:
+                            print("Context injection cancelled.")
+                            continue
+                        retirement = "retire" in checked
+                    except (OSError, RuntimeError):
+                        value = read_console_line("Retire when verified? [X] Yes / [ ] No (Y/n)> ").strip().lower()
+                        retirement = value not in {"n", "no", "0", "false"}
+                payload = {"task_id": task_id, "content": body, "request_id": str(uuid.uuid4()),
+                           "retire_when_satisfied": bool(retirement)}
                 try:
                     result = post_json(ep["inject_context"], payload=payload, timeout=10)
-                    print(f"Context {result['injection_id']} saved for {result['task_id']}; applies at the next model-call boundary. No new task created.")
+                    print(f"Context {result['injection_id']} saved for {result['task_id']}; "
+                          f"retire_when_satisfied={bool(retirement)}. No new task created.")
                 except Exception as exc:
                     print(f"Context injection could not be confirmed: {exc}. Request ID: {payload['request_id']}")
+                continue
+            if lowered == "/injections" or lowered.startswith("/injections "):
+                rest = text[len("/injections"):].strip().split()
+                manage = "--manage" in rest
+                rest = [x for x in rest if x != "--manage"]
+                task_id = rest[1] if len(rest) == 2 and rest[0] == "--task" else None
+                if rest and task_id is None:
+                    print("Usage: /injections [--task TASK_ID] [--manage]")
+                    continue
+                try:
+                    result = post_json(ep["injection_control"], {"action": "list", "task_id": task_id}, timeout=10)
+                    entries = result.get("injections", [])
+                    for item in entries:
+                        print(f"{item['id']:>4} [{item['status']:<10}] "
+                              f"retire-on-verified={item['retire_when_satisfied']}: "
+                              f"{str(item['content'])[:125]}")
+                    if not entries:
+                        print("No context injections found for this task.")
+                    if manage:
+                        active = [e for e in entries if e.get("status") == "active"]
+                        if not active:
+                            print("No active instructions to retire.")
+                        else:
+                            from prompt_toolkit.shortcuts import checkboxlist_dialog
+                            checked = checkboxlist_dialog(
+                                title="Retire context instructions",
+                                text="Check only the instructions already incorporated thoroughly. "
+                                     "Their PostgreSQL records will be preserved.",
+                                values=[(str(e['id']), f"#{e['id']}: {str(e['content'])[:105]}") for e in active],
+                                default_values=[], ok_text="Retire selected", cancel_text="Cancel",
+                            ).run()
+                            for iid in checked or []:
+                                changed = post_json(ep["injection_control"], {
+                                    "action": "retire", "task_id": result["task_id"],
+                                    "injection_id": int(iid),
+                                }, timeout=10)
+                                print(f"Injection {iid}: {'retired' if changed.get('retired') else 'unchanged'}")
+                except Exception as exc:
+                    print(f"Context injection listing/management failed: {exc}")
+                continue
+            if lowered.startswith("/injection-retire ") or lowered.startswith("/injection-restore "):
+                parts = text.split()
+                if len(parts) not in {2, 4} or (len(parts) == 4 and parts[2] != "--task"):
+                    print("Usage: /injection-retire ID [--task TASK_ID] (or /injection-restore)")
+                    continue
+                try:
+                    result = post_json(ep["injection_control"], {
+                        "action": "retire" if parts[0].lower() == "/injection-retire" else "restore",
+                        "injection_id": int(parts[1]),
+                        "task_id": parts[3] if len(parts) == 4 else None,
+                    }, timeout=10)
+                    print(json.dumps(result, ensure_ascii=False))
+                except Exception as exc:
+                    print(f"Context injection change failed: {exc}")
                 continue
             if lowered == "/backup":
                 run_backup(full=False)

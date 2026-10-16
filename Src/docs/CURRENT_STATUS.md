@@ -1,6 +1,13 @@
 # Norm current status
 
-Current package: **Norm 0.55.0** portable source; source-packaged installer baseline **2.0.0** (not rebuilt).
+Current package: **Norm 0.55.1** portable source; source-packaged installer baseline **2.0.0** (not rebuilt).
+
+### Changes added in 0.55.1
+
+- Operator checkbox (with `--once`/`--keep` switches) allows task context injections to auto-retire ONLY when a structured accepted verifier marks their specific ID fulfilled and tool evidence exists. PostgreSQL state preserves the original injection; active prompts consult the live DB rather than stale queue metadata. `/injections`, `/injection-retire`, and `/injection-restore` are direct console controls.
+- Queued N2 work now uses the same SHA-validated active voice prompt as direct conversations. This affects subsequent worker steps, not N1 gatekeeper or model weights.
+- `voice_profile` 0.4.2 adds optional durable per-profile `style_override.txt`, `/voice-tune`, and `/voice-test` A/B prompting. The override survives a corpus rebuild but requires `/voice-activate` to refresh the currently active prompt.
+- Regression tests are source-only in this environment. PostgreSQL migration, live Windows console checkbox and local Ollama output have not been end-to-end tested on KHzz.
 
 ### Lesson/code-memory plugin integration (packaged in 0.55.0)
 

@@ -89,6 +89,7 @@ def endpoints() -> dict[str, str]:
         "suppress_task": f"http://{host}:{activity_port}/control/suppress-task",
         "resume_maintenance": f"http://{host}:{activity_port}/control/resume-maintenance",
         "inject_context": f"http://{host}:{activity_port}/control/inject-context",
+        "injection_control": f"http://{host}:{activity_port}/control/injection-control",
         "flush_suppressed": f"http://{host}:{activity_port}/control/flush-suppressed",
         "delete_list": f"http://{host}:{activity_port}/control/delete-list",
         "restore_delete": f"http://{host}:{activity_port}/control/restore-delete",

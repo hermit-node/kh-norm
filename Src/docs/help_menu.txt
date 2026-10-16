@@ -13,7 +13,10 @@ Norm console — quick reference
 /new [name]              Start a new conversation
 /thread-list             List conversation threads
 /thread-resume NAME      Resume a conversation thread
-/inject-context TEXT     Inject context into the current task
+/inject-context TEXT     Add context (checkbox: retire once verified)
+/injections [--manage]   List and checkbox-retire fulfilled injections
+/injection-retire ID      Stop repeating an injection; preserves history
+/injection-restore ID     Reactivate a retired injection
 /suppress-task           Suppress the active/next task
 /resume-task [N]         Resume a suppressed task
 /failed                  Recent failed tasks

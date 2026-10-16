@@ -1,4 +1,8 @@
-# Norm 0.55.0 portable source package
+# Norm 0.55.1 portable source package
+
+## 0.55.1 cumulative injection/voice update
+
+Adds verified injection retirement and operator controls, and N2 voice conditioning and tune/test to 0.55.0. No earlier features removed.
 
 ## 0.55.0 cumulative lesson/code-memory integration
 
@@ -10,7 +14,7 @@
 
 Resource-only busy signals yield for up to 30 seconds; actively tracked Norm work remains a hard gate. Suppressed in-flight ingress is rechecked at HTTP admission, with cancellation tombstones retained through `/flush-suppressed`.
 
-This directory is the portable source payload for **Norm 0.55.0**, derived from the user-supplied 0.54.2i + SSE source ZIP.
+This directory is the portable source payload for **Norm 0.55.1**, derived from the user-supplied 0.54.2i + SSE source ZIP.
 
 The portable source package excludes generated or machine-private material such as .venv, compiled core\norm.exe, build output, Python caches, secrets, and private runtime state.
 
