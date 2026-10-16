@@ -1,7 +1,7 @@
 {
   "package_schema": 1,
   "name": "Norm",
-  "version": "0.55.9r9",
+  "version": "0.55.9r10",
   "package_type": "portable-source",
   "source_dir": "core",
   "entrypoint": "core/norm_main.py",
@@ -499,7 +499,7 @@
     "policy": "retain full generated original and submit shortest complete summary; no bypass of N1/N2 verification",
     "normal_output_child_tasks": "not included; deferred"
   },
-  "release_revision": "r9 Shared Qt Chromium browser + Norm-local Celery venv and owned-worker shutdown",
+  "release_revision": "r10 N2-authored N1-approved recovery; artifact verification; context GC",
   "celery_tool_transport": {
     "transport": "Celery",
     "enabled_setting": "config/settings.ini:[celery].enabled",
@@ -555,5 +555,29 @@
     "startup": "tools/shared_browser/Start Hidden Browser.cmd or Launch Browser.cmd, in user interactive Windows session",
     "shutdown": "Norm owned Celery workers stop on runtime shutdown after step checkpoint",
     "worker_interpreter": "must be under THIS Norm root .venv/Scripts"
+  },
+  "recovery_reconstruction": {
+    "generation": "N2 creates unfinished steps in groups of eight source steps",
+    "review": "N1 approves or corrects N2 plans, up to 3 proposals",
+    "n2_predict_ceiling": 16384,
+    "handoff": "Only unresolved step index, artifact paths and evidence locations",
+    "continuity": "Parent retains full evidence and approved proposal in Redis"
+  },
+  "context_gc": {
+    "redis_model_view_chars": 6500,
+    "next_step_checkpoint_chars": 12000,
+    "n1_distillation_input_chars": 18500,
+    "retention": "Full raw source stays in Redis/PostgreSQL",
+    "original_prompt": "Carried independently verbatim",
+    "previous_step_data": "Only prior step IDs, short names and statuses; no summaries or large previous tool results",
+    "on_demand_lookup": "read_task_record native N1-gated tool; bounded portions of plan, terminal step, context slices and task-local result ledger",
+    "lookup_scope": "current task or runtime-authorized recovery_parent only",
+    "lookup_retention": "N2 receives raw lookup text for one turn, then that tool message is replaced by a receipt; N1 evidence/archive retains record SHA256/target/outcome, not duplicated text",
+    "loop_safety": "N1 denies a third identical lookup in the same task/step; different offset/record is allowed"
+  },
+  "artifact_verification": {
+    "native": "Matching read_file hash after write_file/replace_text preserved",
+    "plugin": "Successful artifact producing return plus independent SHA256 streaming readback",
+    "content": "File integrity does not certify conversation completeness"
   }
 }

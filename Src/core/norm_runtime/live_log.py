@@ -243,6 +243,62 @@ class RedisTaskLog:
                 collected.extend(item for item in items if isinstance(item, dict))
         return collected
 
+    def working_memory_compact(
+        self, task_id: str, *, max_chars: int = 6500, max_events: int = 24,
+    ) -> str:
+        """Bounded model-facing view; leave the authoritative Redis stream alone.
+
+        The original user prompt is supplied separately, verbatim, by the
+        prompt worker. Large plan/evidence/results stay in Redis/PostgreSQL.
+        """
+        max_chars = max(500, min(16000, int(max_chars)))
+        max_events = max(1, min(50, int(max_events)))
+        state = self.state(task_id) or {}
+        keep_state = {
+            k: str(state.get(k) or "")[:240]
+            for k in ("title", "status", "current_step", "last_completed_step",
+                      "step_name", "updated_at")
+            if state.get(k)
+        }
+        events = []
+        used = 0
+        try:
+            recent = self.client.xrevrange(
+                self._stream_key(task_id), count=max_events + 10)
+        except Exception:
+            recent = []
+        for stream_id, fields in recent:
+            kind = str(fields.get("event") or "")
+            if kind in {"heartbeat", "task_started", "plan_materialized"}:
+                continue
+            compact = {
+                "redis_id": str(stream_id)[:80],
+                "event": kind[:70],
+                "step_id": str(fields.get("step_id") or "")[:100],
+                "name": str(fields.get("name") or "")[:150],
+            }
+            for key in ("status", "verification", "error"):
+                if fields.get(key):
+                    compact[key] = str(fields[key])[:350]
+            # Intentionally DO NOT inline large 'summary', 'plan', 'evidence',
+            # raw tool stdout, or model output from the Redis event.
+            render = json.dumps(compact, ensure_ascii=False, default=str)
+            if used + len(render) > max_chars - 800:
+                break
+            events.append(compact)
+            used += len(render)
+            if len(events) >= max_events:
+                break
+        value = {
+            "task_id": task_id,
+            "state": keep_state,
+            "recent_event_index": list(reversed(events)),
+            "historical_results": "Retained losslessly in Redis task stream and PostgreSQL; retrieve specifically when required.",
+            "model_view_only": True,
+        }
+        rendered = json.dumps(value, ensure_ascii=False, default=str)
+        return rendered[:max_chars]
+
     def working_memory(self, task_id: str) -> str:
         state = self.state(task_id)
         events = []

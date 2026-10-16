@@ -1,3 +1,15 @@
+## Norm 0.55.9r10 - Artifact proof, N2/N1 recovery separation, context GC
+
+- Repaired false negatives when a plugin generates a real file without native write_file/read_file. Norm independently reopens successful plugin-returned artifacts, hashes contents, validates PDF header, and detects file changes. Native verification preserved. Invalid files, hash mismatches, and unsuccessful tool results are rejected. Byte integrity does NOT guarantee all ChatGPT messages were captured.
+- Strict native write/read verifier existed in 0.53.22b and throughout 0.54.x including 0.54.3.
+- Fixed r9 recovery crash: N2 now generates ONLY unfinished step proposals in batches of eight, with up to 16,384 output tokens per batch. N1 accepts or requests correction. Parent checks durable/Redis execution status and actual tool returns BEFORE successor creation.
+- Successor receives only a concise index of remaining IDs, artifact paths, hashes and store references. Parent retains complete approved plan and full records. No full checkpoint or ledger copied. Original user prompt remains verbatim.
+- Previous-step context now consists ONLY of step IDs/names/status and references; previous summaries and lookup transcripts are not automatically carried forward. N2 has the N1-gated read_task_record tool for SELECTIVE on-demand inspection of a missing/contradictory record, context slice (one message plus 3.5k window at a time), terminal step result, or Redis result ledger. The requested record must belong to the current task or explicitly linked recovery parent. 
+- N1 retains the lookup request, record digest and result metadata. N2 sees requested text for one model round; then the text is evicted from the active tool transcript and omitted from additional PostgreSQL context-slice archives. Three identical requests in the same task/step are loop-blocked by the existing N1 guard. Changed message index/offset constitutes distinct evidence.
+- Context GC modifies MODEL INPUT ONLY. Normal next-step Redis events are summarized to about 6.5k characters. Continued checkpoint view is bounded at 12k, and N1's distillation input at about 18.5k. Previous 14k prior-checkpoint concatenation removed. Source data, output files, and durable records remain intact.
+- Offline tests include 300k+ character checkpoint and Redis history, plugin PDF authenticity, recovery authorization and N1/N2 boundaries, Celery, and previous core regressions.
+- No changes to running KHzz Norm, live Redis/PostgreSQL, or user task data.
+
 ## Norm 0.55.9r9 - Shared Chromium browser and Celery worker lifecycle
 
 - Adds Norm Shared Browser as an optional, human-revealable PySide6 QtWebEngine window running in the interactive Windows session. Normal mode hidden; showing browser gives human input exclusive control until Return Control to Norm. Cookies, profile, and cache persist across show/hide.

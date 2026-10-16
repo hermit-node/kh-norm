@@ -979,8 +979,8 @@ class PromptWorker:
             if metadata_resume.get("recovery_mode") and not compact_resume:
                 # Recovery begins from a compact handoff; old full history is
                 # durable and available selectively, never bulk-injected again.
-                if self.durable and hasattr(self.durable, "completed_step_context"):
-                    prior = self.durable.completed_step_context(job.task_id, job.step_id, max_chars=9000)
+                if self.durable and hasattr(self.durable,"task_plan_snapshot"):
+                    prior=self._prior_step_index(job)
             elif compact_resume:
                 # A context-headroom checkpoint already asked N1 to distill the full
                 # active execution state into job.context. Re-injecting Redis's entire
@@ -992,17 +992,25 @@ class PromptWorker:
                     job.task_id, job.step_id, len(str(job.context or "")),
                 )
             else:
-                if hasattr(self.live, "working_memory"):
-                    task_memory = self.live.working_memory(job.task_id)
+                if hasattr(self.live, "working_memory_compact"):
+                    task_memory = self.live.working_memory_compact(
+                        job.task_id, max_chars=6500, max_events=24)
+                elif hasattr(self.live, "working_memory"):
+                    # Compatibility with older Redis adapters: never inject
+                    # the entire task event stream into a model continuation.
+                    legacy = str(self.live.working_memory(job.task_id))
+                    task_memory = (legacy if len(legacy) <= 6500 else
+                        json.dumps({"task_id":job.task_id,
+                                    "older_redis_context":"Available through indexed Redis events; omitted from model view."}))
                 # Redis working_memory() serializes {task_id, state, events} even
                 # when no progress events exist. Testing that JSON for an empty
                 # string made the durable *completed prior steps* disappear from
                 # almost every normal resume. These are complementary sources:
                 # Redis contains live events; PostgreSQL contains the verified
                 # results of earlier steps. Read the latter independently.
-                if self.durable and hasattr(self.durable, "completed_step_context"):
+                if self.durable and hasattr(self.durable,"task_plan_snapshot"):
                     try:
-                        prior = self.durable.completed_step_context(job.task_id, job.step_id, max_chars=36000)
+                        prior=self._prior_step_index(job)
                     except psycopg.Error as exc:
                         resource_status = merge_resource_status(
                             resource_status,
@@ -1295,6 +1303,54 @@ class PromptWorker:
             "expected_output": {"type": "answer", "format": "text"},
         }, job.prompt)
 
+    def _prior_step_index(self, job: PromptJob) -> str:
+        """Names/statuses and a lookup pointer, NOT previous summaries/results."""
+        task=str(job.task_id)
+        state=self.durable.task_plan_snapshot(task) if self.durable is not None else None
+        if not isinstance(state,dict):
+            return json.dumps({"task_id":task,
+                "prior_records":"Unavailable; consult read_task_record for precise evidence."})
+        all_steps=state.get("steps") or []
+        prior=[]
+        for row in all_steps:
+            if not isinstance(row,dict):continue
+            sid=str(row.get("id") or "")
+            if sid==job.step_id:break
+            prior.append({"step_id":sid[:100],"status":str(row.get("status") or "")[:40],
+                          "name":str(row.get("name") or "")[:140]})
+            if len(prior)>=100:break
+        return json.dumps({
+            "task_id":task,
+            "prior_step_index":prior,
+            "older_summaries":"Not injected. Use read_task_record for a particular step or archived slice if necessary.",
+            "evidence_locations":["PostgreSQL task_steps/task_context_slices",
+                                  "Redis task result ledger"],
+        },ensure_ascii=False)[:9500]
+
+    def _task_record_tool_result(self, job: PromptJob, arguments: dict) -> dict:
+        from .task_record_lookup import fetch
+        try:
+            return fetch(job, self.durable, self.live, arguments)
+        except Exception as exc:
+            return {"ok":False,"tool":"read_task_record",
+                    "error":f"{type(exc).__name__}: {str(exc)[:300]}"}
+
+    @staticmethod
+    def _evict_lookup_tool_text(messages: list[dict]) -> int:
+        """After N2 CONSUMES a lookup, keep only its identity/hash/outcome."""
+        from .task_record_lookup import receipt
+        count=0
+        for item in messages:
+            if not isinstance(item,dict) or item.get("role")!="tool" or item.get("tool_name")!="read_task_record":
+                continue
+            try:value=json.loads(str(item.get("content") or ""))
+            except (ValueError,TypeError):continue
+            if isinstance(value,dict) and "content" in value:
+                item["content"]=json.dumps({**receipt(value),"context_evicted":True},
+                                           ensure_ascii=False,default=str)
+                count+=1
+        return count
+
     @staticmethod
     def _compact_resume_requested(job: PromptJob) -> bool:
         """Compact only when the *latest* handoff supplied a distilled context.
@@ -1312,6 +1368,28 @@ class PromptWorker:
             bool(metadata.get("manual_failure_resume"))
             and bool(metadata.get("compact_resume_context"))
         )
+
+    @staticmethod
+    def _bounded_model_checkpoint(job: PromptJob, *, max_chars: int = 12000) -> str:
+        """Limit active-model checkpoint exposure; never mutate archive data.
+
+        Prefix preserves checkpoint identity and summary; suffix preserves
+        recent decisions/next action. Exact original prompt and returned tool
+        facts arrive by independent, separately preserved channels.
+        """
+        content = str(job.context or "")
+        max_chars = max(1000, min(16000, int(max_chars)))
+        if len(content) <= max_chars:
+            return content
+        prefix = content[:min(3000, max_chars // 3)]
+        suffix_size = max_chars - len(prefix) - 500
+        suffix = content[-suffix_size:]
+        note = (
+            "\\n[OLDER CHECKPOINT TEXT EXCLUDED FROM ACTIVE CONTEXT; "
+            "authoritative previous step checkpoints/evidence remain "
+            "in durable records; query by task_id/step_id if needed.]\\n"
+        )
+        return (prefix + note + suffix)[:max_chars]
 
     def _typed_prompt(self, job: PromptJob, request_type: str, *, task_memory: str = "", prior: str = "", background: str = "", resource_status: dict | None = None) -> str:
         directives = {
@@ -1387,8 +1465,14 @@ class PromptWorker:
             "context": {
                 "task_working_memory": task_memory,
                 "postgres_prior_steps": prior,
+                "on_demand_history": (
+                    "Prior step summaries, model transcripts and old lookup texts are not injected. "
+                    "When an earlier fact is missing or contradictory, use read_task_record "
+                    "for the specific indexed step or archive slice. N1 tracks lookup requests "
+                    "and blocks unchanged repeats without advancement."
+                ),
                 "background_memory": background,
-                "continuation": job.context,
+                "continuation": self._bounded_model_checkpoint(job),
                 "related_running_work": list((job.metadata or {}).get("related_running_work") or []),
                 "ingrained_task_context": list((job.metadata or {}).get("ingrained_task_context") or []),
                 "dependency_safety": "If required files/structure are unexpectedly absent and related_running_work shows unfinished work intended to create them, do not silently fabricate a parallel foundation; identify the dependency conflict in the step result.",
@@ -1399,26 +1483,8 @@ class PromptWorker:
 
     @staticmethod
     def _artifact_snapshot(evidence: list[dict]) -> list[dict]:
-        writes: dict[str, str] = {}
-        verified: set[tuple[str, str]] = set()
-        for item in evidence:
-            if not isinstance(item, dict):
-                continue
-            tool = str(item.get("tool") or "")
-            result = item.get("result") if isinstance(item.get("result"), dict) else {}
-            if not result.get("ok"):
-                continue
-            path = str(result.get("path") or "")
-            sha = str(result.get("sha256") or "")
-            if (tool in {"write_file", "replace_text"} or result.get("file_mutation")) and path:
-                writes[path] = sha
-                verified = {entry for entry in verified if entry[0] != path}
-            if tool == "read_file" and path and sha and writes.get(path) == sha:
-                verified.add((path, sha))
-        return [
-            {"path": path, "sha256": sha, "verified": (path, sha) in verified}
-            for path, sha in sorted(writes.items())
-        ]
+        from .artifact_verification import snapshot
+        return snapshot(evidence)
 
     @staticmethod
     def _final_artifact_state(candidate: dict) -> bool:
@@ -2144,6 +2210,157 @@ class PromptWorker:
         )
         (self._runtime_root() / "SOS.readme").write_text(body, encoding="utf-8")
 
+    @staticmethod
+    def _compact_recovery_refs(observed: list[dict], max_refs: int = 24) -> list[dict]:
+        """Existing-file/evidence POINTERS for parent-side N2 analysis.
+
+        Never transfer an artifact, raw tool output, image or parent ledger
+        into the successor. Only paths, short IDs and observed file metadata.
+        """
+        refs=[]
+        seen=set()
+        for item in reversed(observed):
+            if not isinstance(item,dict):
+                continue
+            result=item.get("result") if isinstance(item.get("result"),dict) else {}
+            if result.get("ok") is False:
+                continue
+            nested=result.get("result")
+            if isinstance(nested,dict):
+                result=nested
+            path=str(result.get("pdf") or result.get("path")
+                     or result.get("output_path") or "")[:1500]
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            ref={"path":path,"tool":str(item.get("tool") or "")[:120],
+                 "step_id":str(item.get("step_id") or "")[:100],
+                 "sha256":str(result.get("sha256") or "")[:64],
+                 "bytes":result.get("size") or result.get("file_size") or 0}
+            refs.append(redact(ref))
+            if len(refs)>=max_refs:break
+        return list(reversed(refs))
+
+    def _n2_propose_recovery_steps(
+        self, *, original: str, failed_step_id: str, error: str,
+        checkpoint: str, unresolved: list[dict], completed: list[dict],
+        artifact_refs: list[dict], pending: list[dict],
+    ) -> list[dict]:
+        """N2 proposes; N1 approves. Generate in small source-step batches.
+
+        Large existing task histories stay in their archival store, not in a
+        successor's context. N2 receives source step IDs and artifact links.
+        """
+        if self.client is None:
+            raise RuntimeError("N2 unavailable; preserve failed parent")
+        schema={"type":"object","properties":{"steps":{
+            "type":"array","items":{"type":"object","properties":{
+                "name":{"type":"string"},"instruction":{"type":"string"},
+                "verify":{"type":"string"},
+                "source_step_ids":{"type":"array","items":{"type":"string"}}},
+                "required":["name","instruction","verify","source_step_ids"],
+                "additionalProperties":False}}},
+                "required":["steps"],"additionalProperties":False}
+        finished_ids=[str(x["id"]) for x in completed]
+        finished=set(finished_ids)
+        all_missing={str(x["id"]) for x in unresolved}
+        all_steps=[]
+        # Eight source steps per generation keeps answer sizes bounded, but a
+        # genuinely complex step still has a generous N2 output allowance.
+        groups=[unresolved[i:i+8] for i in range(0,len(unresolved),8)]
+        for index,batch in enumerate(groups):
+            batch_ids={str(x["id"]) for x in batch}
+            concise_steps=[{"id":str(x["id"]),
+                            "name":str(x.get("name") or "")[:180],
+                            "description":str(x.get("description") or "")[:1400],
+                            "verify":str(x.get("verify") or "")[:900],
+                            "durable_status":str(x.get("durable_status") or ""),
+                            "redis_execution_status":str(x.get("redis_execution_status") or "")}
+                           for x in batch]
+            correction=""
+            for attempt in range(1,4):
+                payload={
+                    "original_user_request":original,
+                    "failed_step_id":failed_step_id,
+                    "failure_reason":redact(str(error))[:800],
+                    "last_checkpoint_summary":redact(str(checkpoint))[-2400:],
+                    "source_step_batch":concise_steps,
+                    "completed_step_ids":finished_ids,
+                    "artifact_references":artifact_refs[:24],
+                    "pending_dispatches":pending[:24],
+                    "batch_number":index+1,"total_batches":len(groups),
+                    "n1_correction":correction,
+                }
+                prompt=(
+                    "You are N2 reconstructing ONLY the unfinished work of your "
+                    "FAILED PARENT task. Generate a NEW ordered recovery step list "
+                    "from the concise source step records and actual evidence "
+                    "references below. The original task's complete conversation, "
+                    "tool logs, and generated artifacts stay in existing storage; "
+                    "NEVER copy them into your answer. Reference their exact known "
+                    "paths/IDs only. Do not redo corroborated completed steps. "
+                    "Do not infer artifact completeness from file existence. "
+                    "Cover every source_step_batch ID in at least one proposed step "
+                    "and reference no other source step IDs. Keep each instruction "
+                    "under 1800 chars and verification under 500 chars. "
+                    "Write compact strict JSON according to the schema. "
+                    "This is a continuation of the failed parent's work, not a new "
+                    "task or fresh user request.\\n\\n"
+                    +json.dumps(payload,ensure_ascii=False,default=str)
+                )
+                try:
+                    raw=self.client.generate(
+                        prompt,think=False,num_predict=16384,
+                        temperature=0.1,response_format=schema,
+                        emit_stream=False,
+                    )
+                except ModelOutputTruncated as exc:
+                    raise RuntimeError(
+                        f"N2 recovery plan output truncated in batch {index+1}; "
+                        "parent evidence retained, no successor created"
+                    ) from exc
+                parsed=OllamaClient.parse_json(raw)
+                proposed=parsed.get("steps") if isinstance(parsed,dict) else None
+                if not isinstance(proposed,list) or not proposed or len(proposed)>16:
+                    raise RuntimeError("N2 did not return a bounded recovery plan batch")
+                clean=[]
+                covered=set()
+                for item in proposed:
+                    if not isinstance(item,dict):raise RuntimeError("N2 returned invalid step object")
+                    ids=item.get("source_step_ids")
+                    if not isinstance(ids,list) or not ids or any(not isinstance(v,str) or v not in batch_ids for v in ids):
+                        raise RuntimeError("N2 recovery step referenced completed or out-of-scope work")
+                    covered.update(ids)
+                    name=str(item.get("name") or "").strip()
+                    instructions=str(item.get("instruction") or "").strip()
+                    verify=str(item.get("verify") or "").strip()
+                    if not name or not instructions or not verify:
+                        raise RuntimeError("N2 omitted a recovery step field")
+                    clean.append({"name":name[:180],"instruction":instructions[:1800],
+                                  "verify":verify[:500],"source_step_ids":ids})
+                if covered!=batch_ids:
+                    raise RuntimeError("N2 recovery plan did not cover every unresolved source step")
+                review=self.n1_gatekeeper.approve_recovery_steps(
+                    original_request=original,failed_step_id=failed_step_id,
+                    failure=error,completed_step_ids=finished_ids,
+                    unresolved_steps=concise_steps,candidate_steps=clean,
+                    artifact_references=artifact_refs,pending_dispatches=pending,
+                    iteration=attempt,
+                )
+                if review["decision"]=="accept":
+                    all_steps.extend(clean)
+                    break
+                correction=str(review.get("retry_instruction") or "")
+                if attempt==3:
+                    raise RuntimeError("N1 rejected N2 recovery plan after 3 proposals: "+correction[:250])
+            else:
+                raise RuntimeError("Recovery plan not approved")
+        if set(v for step in all_steps for v in step["source_step_ids"]) != all_missing:
+            raise RuntimeError("Recovery approved plan lost unresolved source step coverage")
+        if finished.intersection(v for x in all_steps for v in x["source_step_ids"]):
+            raise RuntimeError("Recovery proposed already completed work")
+        return all_steps
+
     def _reconstruct_parent_before_recovery(
         self, job: PromptJob, *, source: dict, original: str,
         error: str, checkpoint: str,
@@ -2152,12 +2369,12 @@ class PromptWorker:
 
         This is not a successor ledger. Redis's original plan/step execution
         events and independent returned-result ledger are corroborating layers.
-        N1 creates a new list covering every unresolved source step.
+        N2 proposes a new list; N1 approves each compact batch.
         """
         if self.n1_gatekeeper is None or not hasattr(
-            self.n1_gatekeeper, "reconstruct_remaining_recovery_steps"
+            self.n1_gatekeeper, "approve_recovery_steps"
         ):
-            raise RuntimeError("N1 pre-recovery reconstruction unavailable; preserve failed parent")
+            raise RuntimeError("N1 recovery approval unavailable; preserve failed parent")
         if not all(hasattr(self.live, name) for name in
                    ("state", "events", "task_evidence", "result_ledger")):
             raise RuntimeError("Redis reconstruction layers unavailable; preserve failed parent")
@@ -2233,11 +2450,11 @@ class PromptWorker:
                 except Exception:
                     logging.exception("Could not examine Redis pending dispatches task=%s", job.task_id)
                     raise RuntimeError("Pending async state unavailable; cannot safely reconstruct")
-        steps = self.n1_gatekeeper.reconstruct_remaining_recovery_steps(
-            original_request=original, failed_step_id=job.step_id,
-            failure=error, checkpoint=checkpoint,
-            unresolved_steps=unresolved, completed_steps=completed,
-            redis_results=observed, pending_dispatches=pending,
+        refs = self._compact_recovery_refs(observed)
+        steps = self._n2_propose_recovery_steps(
+            original=original, failed_step_id=job.step_id, error=error,
+            checkpoint=checkpoint, unresolved=unresolved, completed=completed,
+            artifact_refs=refs, pending=pending,
         )
         assessment = {
             "parent_task_id": job.task_id,
@@ -2248,6 +2465,9 @@ class PromptWorker:
             "redis_plan_checked": True,
             "new_step_count": len(steps),
             "pending_dispatches": pending,
+            "artifact_references": refs,
+            "generation_author": "N2",
+            "approval_author": "N1",
         }
         return steps, assessment
 
@@ -2334,10 +2554,44 @@ class PromptWorker:
             "context_policy": "This is a new task with approved remaining work; parent ledger stays with the parent.",
         }
         compact = json.dumps(info, ensure_ascii=False)
+        # Store the complete approved proposal as a Redis handoff record
+        # for idempotent retries. The CHILD instead gets only references
+        # and a short, independently useful remaining-work index.
+        handoff_view = {
+            "kind":"recovery_continuation_index",
+            "concluding_from_task_id":job.task_id,
+            "failed_step_id":job.step_id,
+            "failure_reason":redact(str(error))[:450],
+            "completed_source_step_ids":[
+                x["step_id"] for x in prior_index if x["status"]=="completed"
+            ][:80],
+            "remaining_source_step_ids":list(dict.fromkeys(
+                sid for step in approved_steps for sid in step["source_step_ids"]
+            ))[:80],
+            "artifact_references":list((assessment or {}).get("artifact_references") or [])[:15],
+            "evidence_locations":[
+                f"PostgreSQL task_evidence:{job.task_id}",
+                f"Redis result_ledger:{job.task_id}",
+                f"Redis recovery handoff:norm:recovery:handoff:{child_id}",
+            ],
+            "instruction":"Execute only the approved task-step prompt. Obtain older details using the references; do not duplicate or reload the parent transcript.",
+        }
+        child_context = json.dumps(handoff_view,ensure_ascii=False,default=str)
+        if len(child_context)>10000:
+            # Each tool-backed file reference can be long; keep a smaller
+            # reliable index, never arbitrary JSON truncation.
+            handoff_view["artifact_references"]=[
+                {"path":str(x.get("path") or "")[:420],
+                 "sha256":str(x.get("sha256") or "")[:64],
+                 "tool":str(x.get("tool") or "")[:80]}
+                for x in handoff_view["artifact_references"][:8] if isinstance(x,dict)]
+            child_context=json.dumps(handoff_view,ensure_ascii=False,default=str)
+        if len(child_context)>12000:
+            raise RuntimeError("Recovery context index unexpectedly oversized")
         marker = validate_recovery_handoff(
             self._runtime_root(), parent_task_id=job.task_id,
             parent_step_id=job.step_id, successor_task_id=child_id,
-            original_prompt=original, summary=compact)
+            original_prompt=original, summary=child_context)
         if marker != "PASSED_TO:" + child_id:
             raise VerifierProtocolError("Invalid designated recovery handoff")
         work_steps = []
@@ -2444,7 +2698,7 @@ class PromptWorker:
                 jobs.append(PromptJob(
                     message_id=step.node_id, task_id=child_id, step_id=step.id,
                     prompt=step.description, project_id=job.project_id,
-                    context=compact if index == 0 else "",
+                    context=child_context if index == 0 else "",
                     attempt=0, created_at=time(), metadata=meta,
                     chain_id=plan.task_uuid, previous_prompt_id="", next_prompt_id="",
                     chain_index=index, recovery_attempted=False,
@@ -4441,6 +4695,8 @@ class PromptWorker:
             ]
             messages[0]["content"] = "\n\n".join(section for section in system_sections if section)
             native_schemas = tools.schemas()
+            from .task_record_lookup import TOOL_SCHEMA
+            native_schemas.append(TOOL_SCHEMA)
             if self.n1_gatekeeper is not None:
                 native_schemas = self.n1_gatekeeper.instrument_schemas(native_schemas)
             response = self.client.chat_with_tools(
@@ -4450,6 +4706,9 @@ class PromptWorker:
                 temperature=float(metadata.get("temperature", 0.2)),
                 num_predict=output_budget,
             )
+            # Model just consumed the prior lookup. Keep only its hash and
+            # pointer for later rounds, not the retrieved historical text.
+            self._evict_lookup_tool_text(messages)
             step_rounds += 1
             task_rounds = self.queue.add_task_rounds(job.task_id, 1)
             calls = response.get("tool_calls") or []
@@ -4878,13 +5137,19 @@ class PromptWorker:
                                 result = pending_receipt
                                 gate_meta = {"executed": False, "async_pending": True}
                             else:
-                                result = tools.execute(name, arguments)
+                                if name == "read_task_record":
+                                    from .task_record_lookup import receipt
+                                    result = self._task_record_tool_result(job,arguments)
+                                    n1_observation=receipt(result)
+                                else:
+                                    result = tools.execute(name, arguments)
+                                    n1_observation=result
                                 gate_meta = self.n1_gatekeeper.after_tool(
                                     task_id=job.task_id,
                                     step_id=job.step_id,
                                     name=name,
                                     outcome=outcome,
-                                    result=result,
+                                    result=n1_observation,
                                 )
                         else:
                             result = dict(outcome.result or {
@@ -4899,7 +5164,10 @@ class PromptWorker:
                         if outcome.reset_instruction:
                             n1_interventions.append(outcome.reset_instruction)
                     else:
-                        result = tools.execute(name, arguments)
+                        if name == "read_task_record":
+                            result = self._task_record_tool_result(job,arguments)
+                        else:
+                            result = tools.execute(name, arguments)
 
                     if (
                         name == "read_file"
@@ -4950,8 +5218,13 @@ class PromptWorker:
                             active_raw_piece = chunk_piece
 
                 if not result.get("async_pending"):
+                    if name == "read_task_record":
+                        from .task_record_lookup import receipt
+                        observed_result=receipt(result)
+                    else:
+                        observed_result=result
                     evidence_item = redact({"tool": str(name), "arguments": arguments,
-                                            "result": result, "n1_gatekeeper": gate_meta})
+                                            "result": observed_result, "n1_gatekeeper": gate_meta})
                     evidence.append(evidence_item)
                     self._persist_evidence_now(job, [evidence_item])
                 if self._suppression_requested(job.task_id) or (self.durable and self.durable.task_status(job.task_id) == "suppressed"):
@@ -5435,6 +5708,35 @@ class PromptWorker:
             "checkpoint": bool(prompt_tokens and remaining_fraction <= threshold),
         }
 
+    @staticmethod
+    def _bounded_distillation_messages(messages: list[dict], *, max_chars: int = 18500) -> list[dict]:
+        """Bound only N1's input; lossless original already archived in PostgreSQL."""
+        result=[]
+        remaining=max(3000,int(max_chars))
+        for item in list(messages)[-8:]:
+            if not isinstance(item,dict):
+                continue
+            content=str(item.get("content") or "")
+            cap=min(2200,max(0,remaining-200))
+            if cap<250:
+                break
+            if len(content)>cap:
+                # The first part often has the request/tool ID; the tail has
+                # the final observations. Both are locators, NOT a full read.
+                head=content[:min(650,cap//3)]
+                tail=content[-max(0,cap-len(head)-180):]
+                content=(head+"\\n[...raw context archived, content omitted "
+                         f"({len(str(item.get('content') or ''))} chars)...]\\n"+tail)
+            compact={"role":str(item.get("role") or "")[:35],"content":content}
+            if item.get("tool_name"):
+                compact["tool_name"]=str(item["tool_name"])[:100]
+            size=len(json.dumps(compact,ensure_ascii=False,default=str))
+            if size>remaining:
+                break
+            result.append(compact)
+            remaining-=size
+        return result
+
     def _distilled_continuation_checkpoint(
         self,
         job: PromptJob,
@@ -5452,7 +5754,15 @@ class PromptWorker:
         tail_count = max(1, min(32, int(cfg.get("checkpoint_archive_messages", 8))))
         # Save the complete slice losslessly, not merely its last few messages.
         # Only the bounded *model view* is reduced; PostgreSQL remains recoverable.
-        full_slice = list(archived_messages)
+        # Preserve authoritative SOURCE records in their existing stores.
+        # For read_task_record, these messages are transient lookups into
+        # those records. Archive the receipt, not another copy of the raw
+        # retrieved content.
+        full_slice = [
+            dict(item) if isinstance(item,dict) else item
+            for item in archived_messages
+        ]
+        self._evict_lookup_tool_text(full_slice)
         tail = full_slice[-tail_count:]
         archive_reference = ""
         slice_index = 0
@@ -5477,6 +5787,9 @@ class PromptWorker:
                     source_messages = list(archived["messages"])[-tail_count:]
 
         retained = chunk_manager.retained_summary()
+        # The full 300K+ raw slice has already been archived. Never hand it
+        # straight to N1 or a later N2 model call merely for condensation.
+        source_messages = self._bounded_distillation_messages(source_messages)
         checkpoint = ""
         if self.n1_gatekeeper is not None and hasattr(self.n1_gatekeeper, "distill_continuation_checkpoint"):
             try:
@@ -5497,12 +5810,19 @@ class PromptWorker:
             checkpoint = self._continuation_checkpoint(
                 job, prompt, source_messages, reason, step_rounds, task_rounds
             )
-            # A failed distillation must not erase the checkpoint from a prior
-            # slice. Preserve it alongside the observed new material.
+            # Do not concatenate an old checkpoint into the new model view:
+            # it remains in the durable task step / previous context slices.
             if str(job.context or "").strip():
-                checkpoint += "\n\nPRIOR VERIFIED CONTINUATION STATE:\n" + str(job.context)[-14000:]
+                checkpoint += (
+                    "\n\nPrevious continuation remains in the task's durable "
+                    "step checkpoint/archive. Retrieve by task_id/step_id "
+                    "only if a missing detail is needed."
+                )
         if retained and "Retained chunk evidence:" not in checkpoint:
-            checkpoint += "\n\nRetained chunk evidence:\n" + retained
+            checkpoint += "\n\nRetained chunk evidence:\n" + retained[:1600]
+        if len(checkpoint) > 12000:
+            checkpoint = self._bounded_model_checkpoint(
+                type("_Checkpoint", (), {"context": checkpoint})(), max_chars=12000)
         resume_metadata = {
             "chunked_evidence_streams": chunk_manager.snapshot_streams(),
             "context_checkpoint_remaining_fraction": float(headroom.get("remaining_fraction") or 0.0),

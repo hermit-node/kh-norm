@@ -1,3 +1,23 @@
+# Norm 0.55.9r10 ? Recovery and context GC corrections
+
+All r9 shared Chromium browser, Celery/N1 adaptive waits, and safe-shutdown
+changes remain. r10 repairs rigid artifact verification for independently
+verifiable plugin-produced files, assigns recovery generation to N2 and
+approval to N1, and prevents massive Redis task history/older checkpoints
+from being carried into the next model step.
+
+When a following step needs an older detail, N2 can request it via
+read_task_record(scope=current, kind=plan_index/step_result/context_slice/
+result_ledger, step_id=..., slice_index=..., message_index=..., start_char=...).
+The history stays in its original storage, and only the requested bounded
+record window is temporarily presented. N1 retains the lookup receipt and
+blocks repeated identical lookups after a third request. Previous step
+summaries and old lookup transcripts are NOT automatically reinjected.
+
+The original user prompt remains verbatim. Full evidence stays in Redis/
+PostgreSQL, retrievable by reference. Hash-verified PDF file existence
+does not guarantee long-chat export completeness. See RELEASE_NOTES.md.
+
 # Norm 0.55.9r9 - Shared Browser + Norm-local Celery workers
 
 r9 includes the r8 asynchronous N1/Celery check improvements and adds a

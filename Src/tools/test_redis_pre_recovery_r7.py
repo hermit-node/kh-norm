@@ -52,19 +52,24 @@ class Live:
     def step_completed(self,*args):pass
 class Gate:
     def __init__(self):self.seen=None
-    def reconstruct_remaining_recovery_steps(self,**kw):
+    def approve_recovery_steps(self,**kw):
         self.seen=kw
         assert kw["unresolved_steps"][0]["id"]=="step-02"
-        assert kw["completed_steps"][0]["id"]=="step-01"
-        assert kw["redis_results"][0]["result"]["path"]==PATH
-        return [{"name":"Finish report","instruction":f"Use already captured screenshot at {PATH}; do not recapture.","verify":"Report uses observed file metadata","source_step_ids":["step-02"]}]
+        assert "step-01" in kw["completed_step_ids"]
+        assert kw["artifact_references"][0]["path"]==PATH
+        return {"decision":"accept","reason":"N2's proposed remainder is justified","retry_instruction":""}
+class N2:
+    def __init__(self):self.generated=[]
+    def generate(self,prompt,**kw):
+        self.generated.append((prompt,kw))
+        return json.dumps({"steps":[{"name":"Finish report","instruction":f"Use already captured screenshot at {PATH}; do not recapture.","verify":"Report uses observed file metadata","source_step_ids":["step-02"]}]})
 j=PromptJob(message_id="parent-node",task_id="parent",step_id="step-02",
     prompt="Finish report",project_id="default",context="N2 claimed image location unknown",
     created_at=0,attempt=0,metadata={"original_user_prompt":PROMPT,"task_user_prompt":PROMPT},
     chain_id="c",previous_prompt_id="",next_prompt_id="",chain_index=0,
     recovery_attempted=True,request_type="step")
 w=PromptWorker.__new__(PromptWorker)
-w.durable=Durable();w.live=Live();w.queue=Queue();w.n1_gatekeeper=Gate()
+w.durable=Durable();w.live=Live();w.queue=Queue();w.n1_gatekeeper=Gate();w.client=N2()
 w._task_suppressed=lambda _:False
 w._runtime_config=lambda:{"worker":{"max_subtask_depth":4}}
 child=w._handoff_failed_task_to_recovery(j,stage="verifier",error="N2 lost path",checkpoint="missing path claimed")
@@ -75,8 +80,15 @@ assert w.queue.saved[0].task_id==child
 assert w.queue.saved[0].metadata["original_user_prompt"]==PROMPT
 assert PATH in w.queue.saved[0].prompt
 assert "returned_results" not in w.queue.saved[0].context
-assert "ledger" not in w.queue.saved[0].context.lower() or "parent ledger stays with the parent" in w.queue.saved[0].context
+assert len(w.queue.saved[0].context)<12000
+assert "Redis result_ledger:parent" in w.queue.saved[0].context
+assert "returned_results" not in w.queue.saved[0].context
+assert "approved_remaining_steps" not in w.queue.saved[0].context
+assert "N2 claimed image location unknown" not in w.queue.saved[0].context
 assert w.n1_gatekeeper.seen["original_request"]==PROMPT
+assert w.client.generated and "You are N2 reconstructing ONLY" in w.client.generated[0][0]
+assert w.client.generated[0][1]["num_predict"]>6500
+assert w.n1_gatekeeper.seen["candidate_steps"][0]["source_step_ids"]==["step-02"]
 assert w._handoff_failed_task_to_recovery(j,stage="verifier",error="same",checkpoint="same")==child
 assert len(w.queue.saved)==2
 assert "ORIGINAL USER PROMPT: REFERENCE ONLY" in PromptWorker._tool_slice_initial_messages(w.queue.saved[0])[1]["content"]
@@ -110,38 +122,27 @@ assert len(r.events)==1
 print("PASS old Redis evidence recorder feeds both evidence stream and extra reconstruction ledger")
 
 
-# N1 must not drop unresolved work or smuggle completed steps into the successor.
+# N1 approves N2's proposal; deterministic source coverage stays in worker.
 from norm_runtime.n1_gatekeeper import N1Gatekeeper
 from types import SimpleNamespace
 n1=N1Gatekeeper.__new__(N1Gatekeeper)
-n1.enabled=True
-n1.profiles={}
-n1.client=SimpleNamespace(timeout_seconds=120)
-payload={"steps":[{"name":"Finish report","instruction":"Reuse the exact screenshot location",
-                  "verify":"Check observed image metadata",
-                  "source_step_ids":["step-02"]}]}
-n1._review_generate=lambda *args,**kw:json.dumps(payload)
+n1.enabled=True;n1.profiles={};n1.client=SimpleNamespace(timeout_seconds=120)
+out={"decision":"accept","reason":"Valid coverage","retry_instruction":""}
+n1._review_generate=lambda *a,**kw:json.dumps(out)
 args={"original_request":PROMPT,"failed_step_id":"step-02","failure":"lost path",
-      "checkpoint":"path unknown","unresolved_steps":[{"id":"step-02"}],
-      "completed_steps":[{"id":"step-01"}],
-      "redis_results":log.result_ledger("parent"),
-      "pending_dispatches":[]}
-assert n1.reconstruct_remaining_recovery_steps(**args)[0]["source_step_ids"]==["step-02"]
-payload["steps"][0]["source_step_ids"]=["step-01"]
-try:
-    n1.reconstruct_remaining_recovery_steps(**args)
-except RuntimeError as exc:
-    assert "unassigned" in str(exc)
-else:
-    raise AssertionError("N1 recovery guard allowed completed work to return")
-payload["steps"][0]["source_step_ids"]=[]
-try:
-    n1.reconstruct_remaining_recovery_steps(**args)
-except RuntimeError:
-    pass
-else:
-    raise AssertionError("N1 recovery guard permitted no source step coverage")
-print("PASS N1 remaining-work coverage gate rejects omissions and completed-step repetition")
+      "completed_step_ids":["step-01"],
+      "unresolved_steps":[{"id":"step-02"}],
+      "candidate_steps":[{"name":"Finish","instruction":"Use screenshot",
+                          "verify":"Verify report","source_step_ids":["step-02"]}],
+      "artifact_references":[{"path":PATH}],"pending_dispatches":[]}
+assert n1.approve_recovery_steps(**args)["decision"]=="accept"
+out["decision"]="retry";out["retry_instruction"]="Include missing requirement"
+assert n1.approve_recovery_steps(**args)["decision"]=="retry"
+out["retry_instruction"]=""
+try:n1.approve_recovery_steps(**args)
+except RuntimeError as exc:assert "corrective" in str(exc)
+else:raise AssertionError("N1 returned retry with no correction")
+print("PASS N1 reviews proposals without generating steps")
 
 # No successor may be created when the original execution list disagrees.
 mismatch=Live()
@@ -150,7 +151,7 @@ wbad=PromptWorker.__new__(PromptWorker)
 wbad.durable=Durable()
 wbad.live=mismatch
 wbad.queue=Queue()
-wbad.n1_gatekeeper=Gate()
+wbad.n1_gatekeeper=Gate();wbad.client=N2()
 wbad._runtime_config=w._runtime_config
 wbad._task_suppressed=lambda _:False
 try:
