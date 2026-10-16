@@ -1110,6 +1110,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             replay_payload_max_bytes=int(validation_cfg.get("replay_payload_max_bytes", 393216)),
             max_replay_records=int(validation_cfg.get("max_replay_records", 3)),
             profiles=n1_cfg,
+            runtime_root=root,
         )
         resources["n1_client"] = n1_client
         resources["n1_gatekeeper"] = n1_gatekeeper

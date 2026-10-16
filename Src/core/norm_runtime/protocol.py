@@ -163,6 +163,11 @@ def validate_final_candidate(value: dict[str, Any]) -> dict[str, Any]:
         "task_id": value["task_id"],
         "step_id": value["step_id"],
         "status": "completed",
+        # These fields originate from the trusted caller, not from the generated reply.
+        # Preserve them during schema normalization so resumed N1/N2 handoffs
+        # cannot be mistaken for a new operator turn.
+        "invoke_source": "n2",
+        "invoke_target": "n1",
         "command": command,
         "user_reply": reply.strip(),
         "artifacts": clean_artifacts,

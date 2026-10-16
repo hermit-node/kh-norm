@@ -27,6 +27,7 @@ from .protocol import PROTOCOL_VERSION, final_verification_schema, normalize_com
 from .resource_status import full_context_status, impaired_context_status, merge_resource_status
 from .settings import load_path_settings
 from .voice_profile_context import load_active_voice_context
+from .invocation_source import invocation_header, work_invoke_source
 
 
 def _utc_now() -> datetime:
@@ -1215,6 +1216,7 @@ class PromptWorker:
         metadata = job.metadata or {}
         prompt_origin = str(metadata.get("prompt_origin") or ("user_prompt" if request_type == "prompt" else "norm_internal"))
         is_user_prompt = request_type == "prompt" and prompt_origin in {"user_prompt", "prompt_interface", "gui_prompt", "ssh_prompt"}
+        invoke_source = work_invoke_source(request_type, prompt_origin, metadata)
         original_user_prompt = str(metadata.get("original_user_prompt") or (job.prompt if is_user_prompt else "")).strip()
         task_user_prompt = str(metadata.get("task_user_prompt") or original_user_prompt).strip()
         instruction = str(job.prompt or "")
@@ -1230,6 +1232,8 @@ class PromptWorker:
             "kind": "work_request",
             "request_type": request_type,
             "prompt_origin": prompt_origin,
+            "invoke_source": invoke_source,
+            "invoke_target": "n2",
             "instruction_source": "user_prompt_interface" if is_user_prompt else "norm_internal",
             "processing_contract": directives[request_type],
             "persistent_instructions": agent_persistent_instructions(self._runtime_config(), "n2"),
@@ -1309,6 +1313,7 @@ class PromptWorker:
         payload = {
             "schema_version": PROTOCOL_VERSION, "kind": "step_result", "status": "completed",
             "task_id": job.task_id, "step_id": job.step_id, "request_type": request_type,
+            "invoke_source": "n2", "invoke_target": "n1",
             "command_category": self._command_from_job(job)["category"],
             "content": answer,
             "artifacts": self._artifact_snapshot(evidence),
@@ -1327,6 +1332,7 @@ class PromptWorker:
         payload = {
             "schema_version": PROTOCOL_VERSION, "kind": "final_candidate",
             "task_id": job.task_id, "step_id": job.step_id, "status": "completed",
+            "invoke_source": "n2", "invoke_target": "n1",
             "command": self._command_from_job(job),
             "user_reply": answer,
             "artifacts": self._artifact_snapshot(evidence),
@@ -1354,6 +1360,7 @@ class PromptWorker:
             "step_name": "Verify final candidate envelope",
             "verification": "Structured final verification must accept schema, requirements, and artifact evidence.",
             "prompt_origin": "runtime_final_candidate",
+            "invoke_source": "n2",
             "context_id": job.task_id,
             "original_user_prompt": str((job.metadata or {}).get("original_user_prompt") or ""),
             "task_user_prompt": str((job.metadata or {}).get("task_user_prompt") or (job.metadata or {}).get("original_user_prompt") or ""),
@@ -1443,13 +1450,17 @@ class PromptWorker:
         return corrected.strip()
 
     def _n1_final_verification(self, job: PromptJob, candidate: dict, artifact_state: bool) -> tuple[dict | None, bool]:
-        gate = self.n1_gatekeeper
+        gate = getattr(self, "n1_gatekeeper", None)
         if gate is None or not hasattr(gate, "judge_final_answer"):
             return None, False
         prior = ""
         if self.durable and hasattr(self.durable, "completed_step_context"):
             prior = self.durable.completed_step_context(job.task_id, job.step_id, max_chars=36000)
         envelope_context = {
+            "original_user_request": (job.metadata or {}).get("original_user_prompt"),
+            "primary_task_request": (job.metadata or {}).get("task_user_prompt"),
+            "current_step": job.prompt if job.request_type != "final_verification" else (job.metadata or {}).get("step_name"),
+            "verification_requirement": (job.metadata or {}).get("verification"),
             "command": candidate.get("command"),
             "requirements": candidate.get("requirements"),
             "artifacts": candidate.get("artifacts"),
@@ -2241,6 +2252,7 @@ class PromptWorker:
         final_step: bool = True,
     ) -> str:
         return (
+            invocation_header("n2", "n2", "completion_self_review") + "\n"
             "[NORM-INTERNAL COMPLETION REVIEW — NOT A NEW USER REQUEST]\n"
             "The user has not sent another message. Review the candidate for the "
             "original task, preserving the active voice profile throughout any visible reasoning.\n\n"
@@ -3140,15 +3152,6 @@ class PromptWorker:
             except ModelContextExceeded as exc:
                 self._yield_context_overflow(redis_id, job, name, started, exc)
                 return None
-            if not job.next_prompt_id and monotonic() - started_clock < 300:
-                improved = self._generate_complete_text(
-                    self._review_prompt(prompt, answer),
-                    think=True,
-                    num_predict=12000,
-                    temperature=0.1,
-                    system_context=voice_instructions,
-                )
-                answer = improved.strip() or answer
             return self._verify_and_correct_without_tools(job, prompt, answer, system_context=voice_instructions)
 
         historical_evidence = self.live.task_evidence(job.task_id) if hasattr(self.live, "task_evidence") else []
@@ -3164,22 +3167,6 @@ class PromptWorker:
             return None
         answer = str(outcome["answer"])
         evidence = list(historical_evidence) + local_evidence
-        if not job.next_prompt_id and monotonic() - started_clock < 300:
-            try:
-                review = self._run_tool_slice(
-                    job,
-                    self._review_prompt(prompt, answer, evidence),
-                    tools,
-                )
-            except ModelContextExceeded as exc:
-                self._yield_context_overflow(redis_id, job, name, started, exc)
-                return None
-            review_evidence = list(review.get("evidence") or [])
-            if review["yielded"]:
-                self._checkpoint_yield(redis_id, job, name, started, review)
-                return None
-            answer = str(review["answer"] or answer)
-            evidence.extend(review_evidence)
         return self._verify_and_correct(job, prompt, answer, evidence, tools, redis_id, name, started)
 
     @staticmethod
@@ -3604,7 +3591,7 @@ class PromptWorker:
                 # call. Give N1's opaque redirect back to N2 rather than accepting
                 # that dead-end as the step result. Do not explain the boundary.
                 messages.append(redact({"role": "assistant", "content": content}))
-                messages.append({"role": "system", "content": "[NORM-INTERNAL N1 INTERVENTION; NOT USER-AUTHORED]\n" + turn_reset})
+                messages.append({"role": "system", "content": invocation_header("n1", "n2", "tool_intervention") + "\n[NORM-INTERNAL N1 INTERVENTION; NOT USER-AUTHORED]\n" + turn_reset})
                 continue
             if not calls:
                 if done_reason == "length":
@@ -4089,7 +4076,7 @@ class PromptWorker:
             if n1_interventions:
                 messages.append({
                     "role": "system",
-                    "content": "[NORM-INTERNAL N1 LOOP RESET]\n" + "\n".join(dict.fromkeys(n1_interventions)),
+                    "content": invocation_header("n1", "n2", "loop_reset") + "\n[NORM-INTERNAL N1 LOOP RESET]\n" + "\n".join(dict.fromkeys(n1_interventions)),
                 })
 
         evidence.extend(self._verify_pending(job, pending_verification, tools))
@@ -4215,6 +4202,26 @@ class PromptWorker:
             f"Observed evidence:\n{self._evidence_text(evidence)}"
         )
 
+    @staticmethod
+    def _correction_prompt(original_prompt: str, answer: str, issues: list[str], evidence: list[dict]) -> str:
+        """Constrain a verifier-requested repair to documented defects, not style."""
+        if not issues:
+            raise VerifierProtocolError("cannot regenerate an answer without a verifier issue")
+        return (
+            invocation_header("n1" if any(str(issue).startswith("N1 requirement/scope review:") for issue in issues) else "system", "n2", "verified_correction") + "\n"
+            "[NORM INTERNAL VERIFIED REPAIR — NOT A NEW USER REQUEST]\n"
+            "The step verifier rejected the candidate for the specific issues below. "
+            "Fix those issues only; retain correct work and the existing voice and brevity. "
+            "Do not restart an accepted operation or claim an action without matching tool evidence. "
+            "Return only the corrected candidate answer, not a discussion of the review.\n\n"
+            "Original task context:\n" + str(original_prompt)
+            + "\n\nOriginal candidate (preserve unaffected wording):\n" + str(answer)
+            + "\n\nVerified issues requiring correction:\n"
+            + json.dumps([str(issue) for issue in issues], ensure_ascii=False)
+            + "\n\nObserved tool evidence:\n"
+            + PromptWorker._evidence_text(evidence)
+        )
+
     def _record_verifier_attempt(
         self, job: PromptJob, cycle: int, answer: str, report: str, accepted: bool
     ) -> None:
@@ -4226,6 +4233,8 @@ class PromptWorker:
             "timestamp": _utc_now().isoformat(),
             "task_id": job.task_id,
             "step_id": job.step_id,
+            "invoke_source": "system",
+            "invoke_target": "n2",
             "cycle": cycle,
             "accepted": accepted,
             "candidate": answer,
@@ -4258,11 +4267,37 @@ class PromptWorker:
             f"structured step verifier failed after 3 attempts: {last_error}"
         )
 
+    def _n1_step_alignment(self, job: PromptJob, answer: str, evidence: list[dict]) -> tuple[bool, list[str]]:
+        """N1 independently checks user/task/step fidelity after N2's verifier passes."""
+        gate = getattr(self, "n1_gatekeeper", None)
+        if gate is None or not hasattr(gate, "judge_step_answer"):
+            return True, []
+        meta = dict(job.metadata or {})
+        judgment = gate.judge_step_answer(
+            original_request=str(meta.get("original_user_prompt") or ""),
+            task_request=str(meta.get("task_user_prompt") or meta.get("original_user_prompt") or ""),
+            step_prompt=str(job.prompt or ""),
+            verification_requirement=str(meta.get("verification") or ""),
+            candidate=str(answer),
+            evidence=self._evidence_text(evidence),
+        )
+        if judgment.get("processing_failed"):
+            # Do not silently mark a step accepted when its required N1 gate failed.
+            raise VerifierProtocolError("N1 step alignment check could not complete; submission has not been accepted")
+        if str(judgment.get("decision")) == "accept":
+            return True, []
+        correction = str(judgment.get("retry_instruction") or "").strip()
+        if not correction:
+            raise VerifierProtocolError("N1 rejected a step without actionable correction feedback")
+        return False, ["N1 requirement/scope review: " + correction[:1800]]
+
     def _verify_and_correct_without_tools(
         self, job: PromptJob, original_prompt: str, answer: str, *, system_context: str = ""
     ) -> str:
         for cycle in range(1, 4):
             accepted, issues, report = self._request_verdict(original_prompt, answer, [])
+            if accepted:
+                accepted, issues = self._n1_step_alignment(job, answer, [])
             self._record_verifier_attempt(job, cycle, answer, report, accepted)
             if accepted:
                 return answer
@@ -4289,6 +4324,8 @@ class PromptWorker:
     ) -> str | None:
         for cycle in range(1, 4):
             accepted, issues, report = self._request_verdict(original_prompt, answer, evidence)
+            if accepted:
+                accepted, issues = self._n1_step_alignment(job, answer, evidence)
             self._record_verifier_attempt(job, cycle, answer, report, accepted)
             if accepted:
                 self._retire_verified_injections(job, report, evidence)

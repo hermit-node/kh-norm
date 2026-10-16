@@ -22,6 +22,7 @@ from .prompt_queue import PromptJob, RedisPromptQueue
 from .protocol import PROTOCOL_VERSION, command_schema, normalize_command
 from .resource_status import full_context_status, impaired_context_status, merge_resource_status
 from .voice_profile_context import load_active_voice_context
+from .invocation_source import invocation_header
 
 
 @dataclass(frozen=True)
@@ -1291,6 +1292,90 @@ class ConversationService:
             "required": ["accepted", "issues"],
             "additionalProperties": False,
         }
+    @staticmethod
+    def _plan_self_review_schema() -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "improve": {"type": "boolean"},
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "issues": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 240}},
+            },
+            "required": ["improve", "confidence", "issues"],
+            "additionalProperties": False,
+        }
+
+    def _self_review_plan(self, original_user_prompt: str, plan: dict, *, second_pass: bool = False) -> dict:
+        """N2 critiques its plan, including substantive decomposition opportunities."""
+        followup = (
+            "Your previous 'no material improvement' judgment was below 0.50 confidence. "
+            "Inspect the ORIGINAL request and EVERY step again, specifically looking for an omitted "
+            "requirement or an unrecognized opportunity to split a large step. Do not invent issues to "
+            "increase confidence. If still uncertain, report your honest confidence. "
+            if second_pass else ""
+        )
+        prompt = (
+            "You are the ORIGINAL planner doing a substantive pre-execution self-audit, not generating a second answer. "
+            + followup +
+            "CHECK EACH of the following: (1) all original user requirements and prohibitions are covered; "
+            "(2) essential prerequisites, missing inputs, dependencies and handoffs are accounted for; "
+            "(3) each step has appropriate evidence-based acceptance criteria; "
+            "(4) needless work, duplicated tool calls, bad sequencing and resource waste are avoided; "
+            "(5) oversized or heterogeneous steps should be divided into smaller independently verifiable "
+            "steps or child-task candidates WHEN that materially improves correctness, quality, parallelism, "
+            "or recovery; (6) needless task splitting is avoided, including child tasks that add overhead "
+            "without a concrete benefit; (7) nothing needed for a final complete response is missing. "
+            "Prefer the existing plan when it already works. "
+            "A shorter plan is NOT automatically better: preserve coverage, necessary tests, user-specified constraints, "
+            "and the final synthesis step for multi-step work. For one-step requests, do not invent extra steps. "
+            "Do not suggest purely cosmetic renaming, stylistic polishing, unrelated features, speculative redesigns, or work "
+            "already covered by a step. Set improve=true ONLY if you can name at least one specific, material and actionable "
+            "change. For every issue identify the affected step or missing prerequisite, what should change, "
+            "and why it improves the outcome; at most four. When recommending child tasks, name the step "
+            "and the separable bounded work, not just 'split this'. "
+            "Otherwise return improve=false with issues=[]. Provide confidence between 0 and 1 "
+            "in the verdict you return (NOT task success probability). A verdict that the plan is fine "
+            "needs confidence >= 0.50; when below that threshold, say so honestly rather than faking "
+            "certainty. A lower confidence triggers an additional bounded scrutiny pass, not an automatic rewrite. "
+            "This is an inspection, not permission to rewrite. "
+            "Return STRICT JSON matching the schema.\n\n"
+            f"AUTHORITATIVE PRIMARY TASK REQUEST:\n{original_user_prompt}\n\n"
+            f"YOUR DRAFT PLAN:\n{json.dumps(plan, ensure_ascii=False)}"
+        )
+        parsed = self._structured_generate(prompt, self._plan_self_review_schema(), num_predict=650, think=False,
+                                           invoke_source="n2", invoke_target="n2", invocation_kind="plan_self_audit")
+        improve = parsed.get("improve")
+        issues = parsed.get("issues")
+        confidence = parsed.get("confidence")
+        if (not isinstance(improve, bool) or not isinstance(issues, list) or
+                isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or
+                not 0.0 <= float(confidence) <= 1.0):
+            raise ValueError("invalid plan self-review response")
+        clean = [str(v).strip()[:240] for v in issues if isinstance(v, str) and v.strip()][:4]
+        if (improve and not clean) or (not improve and clean):
+            raise ValueError("plan self-review decision and issues disagree")
+        return {"improve": improve, "confidence": float(confidence), "issues": clean}
+
+    def _tighten_plan(self, original_user_prompt: str, plan: dict, issues: list[str]) -> dict:
+        """Change only evidence-backed self-review issues, never rewrite by default."""
+        prompt = (
+            "Tighten the DRAFT PLAN only to address the concrete issues identified by its self-review. "
+            "Preserve the authoritative user request and all constraints, and leave unaffected steps and verification "
+            "requirements as they were. Avoid cosmetic changes and new scope. Do NOT claim tools were run or work completed. "
+            "If an issue identifies quality-improving child-task decomposition, make the separable work "
+            "explicit as bounded, verifiable planned steps; do not claim a child task was already spawned. "
+            "Keep the same number of steps unless combining, splitting, adding, or removing a step is necessary to "
+            "resolve an explicitly listed issue. A single bounded task should stay one step. Multi-step work must retain "
+            "a final synthesis step. Return the COMPLETE revised plan as strict JSON in the original planner schema.\n\n"
+            f"AUTHORITATIVE PRIMARY TASK REQUEST:\n{original_user_prompt}\n\n"
+            f"DRAFT PLAN:\n{json.dumps(plan, ensure_ascii=False)}\n\n"
+            f"SPECIFIC SELF-REVIEW ISSUES:\n{json.dumps(issues, ensure_ascii=False)}"
+        )
+        return self._normalize_plan(self._structured_generate(
+            prompt, self._planner_schema(), num_predict=3200, think=False,
+            invoke_source="n2", invoke_target="n2", invocation_kind="plan_self_tighten"
+        ))
+
     def _structured_generate(
         self,
         prompt: str,
@@ -1300,11 +1385,29 @@ class ConversationService:
         think: bool = False,
         max_chars: int = 12_000,
         emit_stream: bool = True,
+        invoke_source: str = "system",
+        invoke_target: str = "n2",
+        invocation_kind: str = "structured_generation",
     ) -> dict:
+        prompt = invocation_header(invoke_source, invoke_target, invocation_kind) + "\n" + prompt
+        # Planner, planner self-audit and independent plan verification use the
+        # same active style source as the queued N2 and N1 agents. It is a
+        # system-context style prior, never an extra user instruction.
+        voice_system = ""
+        if getattr(self, "runtime_root", None) is not None:
+            voice = load_active_voice_context(self.runtime_root)
+            if voice:
+                voice_system = (
+                    "ACTIVE VOICE PROFILE SHARED WITH N1 AND N2. Apply the voice to "
+                    "your internal review, but obey the supplied strict JSON schema. "
+                    "Original user requirements, factuality, and safety always outrank style.\n\n"
+                    + voice
+                )
         try:
             raw = self.ollama.generate(
                 prompt, think=think, num_predict=num_predict, temperature=0.0,
                 response_format=schema, emit_stream=emit_stream,
+                system_context=voice_system,
             )
         except TypeError as exc:
             message = str(exc)
@@ -1315,6 +1418,8 @@ class ConversationService:
                 "num_predict": num_predict,
                 "temperature": 0.0,
             }
+            if voice_system:
+                kwargs["system_context"] = voice_system
             if "emit_stream" not in message:
                 kwargs["emit_stream"] = emit_stream
             raw = self.ollama.generate(prompt, **kwargs)
@@ -1356,12 +1461,14 @@ class ConversationService:
             f"Execution context available to the worker:\n{execution_context}"
         )
         return self._normalize_plan(
-            self._structured_generate(prompt, self._planner_schema(), num_predict=3200, think=False)
+            self._structured_generate(prompt, self._planner_schema(), num_predict=3200, think=False,
+                                      invoke_source="system", invoke_target="n2", invocation_kind="plan_initial_draft")
         )
 
-    def _check_plan(self, original_user_prompt: str, plan: dict) -> tuple[bool, list[str]]:
+    def _check_plan(self, original_user_prompt: str, plan: dict, *, scrutiny_note: str = "") -> tuple[bool, list[str]]:
         prompt = (
             f"PERSISTENT OPERATING PRINCIPLES:\n{self._persistent_instruction_text()}\n\n"
+            + ("INTERNAL PLANNING REVIEW ALERT (NOT A USER REQUEST): " + scrutiny_note + "\n\n" if scrutiny_note else "") +
             "Independently verify this proposed task plan before execution. Reject only for BLOCKING defects: a dropped or changed "
             "user constraint; unauthorized or unsafe action; a materially contradictory or impossible design; missing concrete verification "
             "for a material output; an action too large for a bounded worker slice; or, for a MULTI-STEP plan, no final synthesis step capable "
@@ -1381,7 +1488,8 @@ class ConversationService:
         for _ in range(2):
             try:
                 parsed = self._structured_generate(
-                    prompt, self._plan_verifier_schema(), num_predict=384, think=False
+                    prompt, self._plan_verifier_schema(), num_predict=384, think=False,
+                    invoke_source="n2", invoke_target="n1", invocation_kind="plan_submission_for_review"
                 )
                 accepted = parsed.get("accepted")
                 issues = parsed.get("issues")
@@ -1411,7 +1519,8 @@ class ConversationService:
             f"VERIFIER ISSUES:\n{json.dumps(issues, ensure_ascii=False)}"
         )
         return self._normalize_plan(
-            self._structured_generate(prompt, self._planner_schema(), num_predict=3200, think=False)
+            self._structured_generate(prompt, self._planner_schema(), num_predict=3200, think=False,
+                                      invoke_source="n1", invoke_target="n2", invocation_kind="plan_blocking_issue_repair")
         )
 
     def _build_verified_plan(
@@ -1420,11 +1529,45 @@ class ConversationService:
         ingrained_detail_count: int = 0, ingrained_task_context: list[str] | tuple[str, ...] = (),
     ) -> tuple[TaskPlan, str, str]:
         plan_data = self._generate_plan(original_user_prompt, execution_context, command_envelope)
+        self_review = {"status": "not_run", "issues": [], "confidence": None, "passes": 0}
+        try:
+            verdict = self._self_review_plan(original_user_prompt, plan_data)
+            self_review = {"status": "checked_no_change", "issues": verdict["issues"],
+                           "confidence": verdict["confidence"], "passes": 1}
+            if not verdict["improve"] and verdict["confidence"] < 0.50:
+                self_review["status"] = "second_review_needed"
+                verdict = self._self_review_plan(original_user_prompt, plan_data, second_pass=True)
+                self_review.update({"issues": verdict["issues"], "confidence": verdict["confidence"], "passes": 2})
+                if verdict["improve"]:
+                    self_review["status"] = "improvement_found_on_second_review"
+                elif verdict["confidence"] >= 0.50:
+                    self_review["status"] = "checked_no_change_after_second_review"
+                else:
+                    self_review["status"] = "uncertain_independent_scrutiny_required"
+            if verdict["improve"]:
+                tightened = self._tighten_plan(original_user_prompt, plan_data, verdict["issues"])
+                if tightened != plan_data:
+                    plan_data = tightened
+                    self_review["status"] = "targeted_revision"
+                else:
+                    self_review["status"] = "proposed_no_change"
+        except Exception as exc:
+            # A self-review outage cannot bypass the existing independent verifier.
+            # Nor should a failed optional refinement discard an otherwise valid draft.
+            self_review = {"status": "unavailable", "issues": [], "confidence": None,
+                           "passes": self_review.get("passes", 0)}
+            logging.warning("N2 planning self-review unavailable; independent plan verification remains required: %s", exc)
         accepted = False
         issues: list[str] = []
         max_plan_repairs = 3
         for repair_cycle in range(max_plan_repairs + 1):
-            accepted, issues = self._check_plan(original_user_prompt, plan_data)
+            scrutiny_note = (
+                "N2 did not reach 0.50 confidence that there were no material omissions after two checks. "
+                "Pay special attention to coverage, missing prerequisites, independently verifiable steps, "
+                "and worthwhile child-task decomposition. Uncertainty is NOT itself a reason to reject."
+                if self_review["status"] == "uncertain_independent_scrutiny_required" else ""
+            )
+            accepted, issues = self._check_plan(original_user_prompt, plan_data, scrutiny_note=scrutiny_note)
             if accepted:
                 break
             if repair_cycle >= max_plan_repairs:
@@ -1440,7 +1583,7 @@ class ConversationService:
             )
             plan_data = self._repair_plan(original_user_prompt, plan_data, issues)
 
-        plan_json = json.dumps({"schema_version": PROTOCOL_VERSION, "kind": "verified_plan", "command": command_envelope, "plan": plan_data}, ensure_ascii=False, indent=2)
+        plan_json = json.dumps({"schema_version": PROTOCOL_VERSION, "kind": "verified_plan", "invoke_source": "n2", "invoke_target": "n1", "command": command_envelope, "plan": plan_data, "plan_self_review": self_review}, ensure_ascii=False, indent=2)
         plan_step = TaskStep(
             id="plan-breakdown",
             name="Plan and break down request",
