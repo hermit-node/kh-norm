@@ -1,11 +1,3 @@
 @echo off
-setlocal
-set "NORM_ROOT=%~dp0..\.."
-set "PYTHON=%NORM_ROOT%\.venv\Scripts\python.exe"
-if not exist "%PYTHON%" (
-  echo Missing Norm-local Python: "%PYTHON%"
-  pause
-  exit /b 1
-)
-"%PYTHON%" -B "%~dp0app.py" --show %*
-if errorlevel 1 pause
+rem Compatibility shortcut: show the EXISTING Qt instance, do not open another.
+call "%~dp0Show Shared Browser.cmd"

@@ -1,12 +1,12 @@
-﻿Norm Shared Browser:
- browser_shared_status - inspect persistent Chromium session
- browser_shared_open - navigate
- browser_shared_show - show same page to human
- browser_shared_release - return browser control to Norm
- browser_shared_dom / browser_shared_bs_select - DOM / SoupSieve
- browser_shared_messages - inspect currently loaded ChatGPT turns
- browser_shared_scroll - DOM scroll for lazy loading
- browser_shared_archive_loaded - incremental loaded-message JSONL
- browser_shared_pdf - searchable text PDF from archived JSONL
-Start from tools\shared_browser\Launch Browser.cmd in Windows session.
-Full-conversation completeness unverified. See docs\SHARED_BROWSER.md.
+Norm Shared Browser r11:
+ browser_shared_status - visible, manual_control, loading, URL
+ browser_shared_show - reveal page; preserve controller
+ browser_shared_hide - hide page; preserve controller
+ browser_shared_take_control - human owns page; Norm operations paused
+ browser_shared_release - Norm owns page; no automatic hide
+ browser_shared_open/dom/bs_select/messages/scroll/click/type - page actions
+ browser_shared_archive_loaded - loaded chat turns to JSONL
+ browser_shared_pdf - PDF from nonempty verified-source JSONL; partial status
+ Paths: configured Documents workspace/web/shared_browser/exports
+ Double-click C:\Norm\Show Shared Browser.cmd to reveal the
+ existing browser from Windows Explorer, without spawning another.

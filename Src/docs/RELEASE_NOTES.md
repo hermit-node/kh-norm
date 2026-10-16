@@ -1,3 +1,23 @@
+### r11 recovery/verifier hotfix (October 12)
+
+- Traced live r10 task chat-41b80fe1-84b6-4132-b4b2-6560437c722e read-only: N2 step verifier returned internally contradictory accept verdicts three times, triggering a verifier error; then N1 rejected recovery plan three times over requested sentence substitutions, and the failed-handoff path fell through to destructive terminal cleanup.
+- For contradictory accept verdicts, the structured-verifier boundary now returns REVISE with an actionable unmet-requirement/evidence issue, not acceptance and not three identical malformed-verdict retries. Truly malformed/missing fields still fail. N1 scope approval remains necessary.
+- N1 recovery review distinguishes material missing work/evidence/safety defects from equivalent wording; N2 keeps bounded correction history and refuses unchanged proposals. N1 still must approve a successor; rejection is never automatically overridden.
+- CRITICAL retention fix: on failed handoff/N1 refusal preserve SOS.readme, parent Redis event/result ledger, PostgreSQL failure records/checkpoints and task temporary files. Only clear queued nodes that might revive a failed task. The older terminal cleanup deleted these despite logging that they were preserved.
+- Replayed these fault patterns in offline tests. Entire 24-test selected source suite passed. This is not an actual live N1 judgment test and does not automatically resume past failed tasks.
+
+## Norm 0.55.9r11 - Shared-browser controls and PDF corrections
+
+- Show reveals the existing Chromium page without taking control; Norm continues interacting and the user can watch. New Show Shared Browser.cmd exposes hidden Chromium from Explorer without spawning another session; old Launch Browser.cmd delegates to that shortcut.
+- Hide hides it without changing control ownership or page state.
+- Take Control gives the human exclusive page control, pausing Norm DOM/navigation actions until released.
+- Return Control to Norm unlocks the page without hiding it. Window X continues to hide only.
+- Added explicit Take Control and Return Control buttons and a visible current-controller label.
+- Browser profile/cache/exports now resolve against Norm's configured Documents workspace, not C:\\Norm\\workspace.
+- Refuse exports from blank/incorrect pages or fewer than two loaded conversation nodes. Refuse PDFs from empty, unusable or mixed-conversation JSONL. Existing PDFs are preserved on validation failures, and replacement is atomic.
+- PDF status remains partial_unverified: no claim that the entire long conversation was captured.
+- All r10 context GC and N2/N1 recovery fixes and r9 Celery/shutdown changes retained. No live installation changes.
+
 ## Norm 0.55.9r10 - Artifact proof, N2/N1 recovery separation, context GC
 
 - Repaired false negatives when a plugin generates a real file without native write_file/read_file. Norm independently reopens successful plugin-returned artifacts, hashes contents, validates PDF header, and detects file changes. Native verification preserved. Invalid files, hash mismatches, and unsuccessful tool results are rejected. Byte integrity does NOT guarantee all ChatGPT messages were captured.
@@ -12,7 +32,7 @@
 
 ## Norm 0.55.9r9 - Shared Chromium browser and Celery worker lifecycle
 
-- Adds Norm Shared Browser as an optional, human-revealable PySide6 QtWebEngine window running in the interactive Windows session. Normal mode hidden; showing browser gives human input exclusive control until Return Control to Norm. Cookies, profile, and cache persist across show/hide.
+- Adds Norm Shared Browser as an optional, human-revealable PySide6 QtWebEngine window running in the interactive Windows session. Normal mode hidden; r11 Show changes visibility only; explicit Take Control grants the human control until Return Control to Norm. Cookies, profile, and cache persist across show/hide.
 - PySide6 WebEngine and ReportLab added to pinned installer requirements for Norm-local .venv (the large temporary source-staging vendor directory is excluded from portable source and install kits).
 - Tested actual Qt DOM extraction without UI clicking. Browser RPC binds only 127.0.0.1:18767 and requires a random per-install token from state/shared_browser_token; never ship this token or the browser profile in source ZIP.
 - Qt Chromium HTTP cache capped at 2,147,483,647 bytes, its supported 32-bit maximum in this build; persistent 32 GiB *archive budget* and requested 12 GiB JS heap ceiling. No guarantee against unbounded DOM crashes; capture remains incremental.

@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "release": "0.55.9r10",
-  "baseline": "Norm-0.55.9r9-portable-source.zip",
-  "file_count": 338,
+  "release": "0.55.9r11",
+  "baseline": "Norm-0.55.9r10-portable-source.zip",
+  "file_count": 345,
   "hash_algorithm": "sha256",
   "files": {
     ".gitattributes": {
@@ -18,8 +18,8 @@
       "sha256": "e774f5ea91a76af90b32d07d967a17a1e2741a3e99c67ee944536cb548e6a432"
     },
     "README.md": {
-      "bytes": 26371,
-      "sha256": "e3f3801a8b2a90d810fd303c61b31987a5af1584835ad3b3b09112eaf41c556e"
+      "bytes": 27541,
+      "sha256": "1686f85ac14c948e9339c35cf730bf57ca895912d19e71f3a0e8902b88f039e9"
     },
     "Run-Norm.bat": {
       "bytes": 4112,
@@ -32,6 +32,10 @@
     "Safe-Shutdown-Norm.bat": {
       "bytes": 519,
       "sha256": "0f96e2194b8352c5c77b22c57888fa024bdca67f667aabc1b025d77e445c8c73"
+    },
+    "Show Shared Browser.cmd": {
+      "bytes": 394,
+      "sha256": "797ff100f7d703e437ec7a9786f4b6822d0f08bf55315c8767a0e784880305bd"
     },
     "config/plugins.ini": {
       "bytes": 1769,
@@ -47,7 +51,7 @@
     },
     "config/settings.ini": {
       "bytes": 2851,
-      "sha256": "6caaffe40c34c289d3529a03387676c36e4ed921844a62ed69528252294b39b4"
+      "sha256": "d5ffa8e183505beef5d2f68d5c15b433bfeb884b6cc1b111a25ea67720a5ffd2"
     },
     "core/norm_main.py": {
       "bytes": 69300,
@@ -182,8 +186,8 @@
       "sha256": "5b2ec43398e95b7814453b65330b224b9a2ffd87aa46fc4b1f2b6aee4b48f5e8"
     },
     "core/norm_runtime/n1_gatekeeper.py": {
-      "bytes": 105753,
-      "sha256": "6029ef2e15c853648dd3ccc59f6ac5cf26f9de21b865ed7eb9e72f2f6f358606"
+      "bytes": 106373,
+      "sha256": "734c23a2b28da4bd183f44bd50eb66856d085c301f5b0f92621c9c5adb33a4ef"
     },
     "core/norm_runtime/ollama_client.py": {
       "bytes": 33032,
@@ -222,12 +226,12 @@
       "sha256": "fcdeb924f24959bf083200511bbb9c716b309c5f653b4d0de120a48a4bd079fc"
     },
     "core/norm_runtime/prompt_worker.py": {
-      "bytes": 362426,
-      "sha256": "c490ed263df5ce4d965e3a0dccb41a2b852f0ee610db3d154d6d99549636d706"
+      "bytes": 364585,
+      "sha256": "223eba445aa2dd2b10d1be2ef4f0765d94bc3acde9660dfa8f4d93f53bc32b3b"
     },
     "core/norm_runtime/protocol.py": {
-      "bytes": 14182,
-      "sha256": "2465cc621ed64ab1974a2e0cf11146c3e296f0d7250b5c214f1124e0d5e4b3af"
+      "bytes": 16553,
+      "sha256": "35d104f08d70cd145584e1cc548e1a5e9d0be76ca68f250f848f8aa7fa894a89"
     },
     "core/norm_runtime/queue_visibility.py": {
       "bytes": 5484,
@@ -314,12 +318,12 @@
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
     },
     "docs/RELEASE_NOTES.md": {
-      "bytes": 137366,
-      "sha256": "7855e1e9e34fbee0af3e288ff9a7e30074b78ee8065f100a137f1453c3e1db93"
+      "bytes": 140093,
+      "sha256": "d01bc49e1b728aff281747e246a18efa3c4bd37f86222765514edb0e2d15e9db"
     },
     "docs/SHARED_BROWSER.md": {
-      "bytes": 4168,
-      "sha256": "8283a985bfc79501ad63e03895830df01235f6c13e9b6c4b8377a32d1c6ef643"
+      "bytes": 5519,
+      "sha256": "a97f2d5904ab374f29198570ce558a60a7651508180b3ef786dea4ff97f0cc02"
     },
     "docs/VOICE_OPERATOR_COMMANDS_PATCH.md": {
       "bytes": 1796,
@@ -374,8 +378,8 @@
       "sha256": "814cf6e096ac167f56bbb47c98287818949ec13c65843574b3a733698c91f982"
     },
     "package-manifest.json": {
-      "bytes": 31195,
-      "sha256": "a8caced5bb54f9f00be2f25f97acb69c3ee0d0d587cd4736dc751c625de97aaf"
+      "bytes": 32749,
+      "sha256": "e8cda4c3fa8fa94e7368163e88b8e57605d1e4138c687325b97d4aef1c80788f"
     },
     "plugins/README.md": {
       "bytes": 721,
@@ -610,20 +614,20 @@
       "sha256": "d6a48c646920089ca2dacc78c87722287ff62ac487569b64ed2e810586fc1ec7"
     },
     "plugins/shared_browser/README.md": {
-      "bytes": 3457,
-      "sha256": "4cc62c00e137e0be74b2817f02f8ca48412d0f0c449a8456f834e3787c009292"
+      "bytes": 827,
+      "sha256": "7e152e582404f9d2899ef4bdb01b04c43b16cd444e5d5f8b63875157e0a59706"
     },
     "plugins/shared_browser/help.txt": {
-      "bytes": 676,
-      "sha256": "85ea2568f4e5a2f3b4f2a9f0b8e87acb988338698bd6fb3c6d0f485b7895498b"
+      "bytes": 749,
+      "sha256": "4e1531b7f89154b6b816414ffb4397fcf3ca92da138abd136437cc32177c495e"
     },
     "plugins/shared_browser/plugin.json": {
-      "bytes": 567,
-      "sha256": "d4fafad5a4b65feb3e5b56ae41193e64eb173524a5f324052b98620d44b9d4a4"
+      "bytes": 534,
+      "sha256": "7711065392bb0597a33655b37f2958dc2447cc5008e1c2ef54260e3932e93970"
     },
     "plugins/shared_browser/src/main.py": {
-      "bytes": 9569,
-      "sha256": "a356db25cf7ca7c4d4ed46b405717bc9d497f8f242323bd13e895c1c89708183"
+      "bytes": 12476,
+      "sha256": "8c2bb7eb4591e24d6c9440760573884377aadb6c61935fa67103f0877fff33b4"
     },
     "plugins/soft_delete/README.md": {
       "bytes": 1219,
@@ -1050,16 +1054,24 @@
       "sha256": "10727ed3e4ad8b0f283be648157339b32b2418fc02878aae504438653c9c5f69"
     },
     "tools/shared_browser/Launch Browser.cmd": {
-      "bytes": 249,
-      "sha256": "02f3abbb05da50ff590a955983c58f96afe7cff66abc182e99e5b13692f55a0f"
+      "bytes": 126,
+      "sha256": "dd5ccb33d87d759c8bdec5ccda104d4c79a4125d4cd6bd5cd8df15df5058c632"
+    },
+    "tools/shared_browser/Show Shared Browser.cmd": {
+      "bytes": 54,
+      "sha256": "60430ef666d2eca03790519cbeb657f0d1964bfeb50b8578be9bbaa98d2f62a1"
     },
     "tools/shared_browser/Start Hidden Browser.cmd": {
-      "bytes": 292,
-      "sha256": "e3e2d9c35c508983870bc872f1c54fff1aa5c4691146bba01607c731670dee2c"
+      "bytes": 274,
+      "sha256": "4fdb5ecb1625eecff505b8580db3a6b6302dd625f77aea5be5a5a686c5a1a2fc"
     },
     "tools/shared_browser/app.py": {
-      "bytes": 14396,
-      "sha256": "564d1ef856fab405b6cff7252a58bbaffe5b53afb6802dbe2433ea3e179c7f8b"
+      "bytes": 15562,
+      "sha256": "f95a9018307707e599ca7b753d2911bbb33b3a51f9650e9e6b8f1705c07486f3"
+    },
+    "tools/show_shared_browser.py": {
+      "bytes": 1947,
+      "sha256": "7a0f19e26d06da0c6382c42d85ad3eab51cb3c5b59d1428df5ceafaacd7abc83"
     },
     "tools/start_async_workers.py": {
       "bytes": 2392,
@@ -1265,6 +1277,10 @@
       "bytes": 12809,
       "sha256": "d7ce87d425bd453706c46eacd313d1ebdd026fc53eabd755d936eb5173a233ec"
     },
+    "tools/test_recovery_failure_r11.py": {
+      "bytes": 5130,
+      "sha256": "d774eb6238274347e16c1ec53054c12071bc9b06eb71592bb66578bb1f5700c2"
+    },
     "tools/test_recovery_r9.py": {
       "bytes": 1926,
       "sha256": "1e0cb8757be891306684571cecaee11fb76678d17369ffaf89e7a4f65f0a3ff8"
@@ -1289,9 +1305,21 @@
       "bytes": 7569,
       "sha256": "5a1f6adc4e3f5c3f306a01d9f409b459b2db16160abaa4373d7943ebd272b85e"
     },
+    "tools/test_shared_browser_controls_r11.py": {
+      "bytes": 2958,
+      "sha256": "f027e443e03456826d1c3cadace666d2eb14765a46661de269850e7801ebe5f2"
+    },
+    "tools/test_shared_browser_empty_r11.py": {
+      "bytes": 2157,
+      "sha256": "d89d8a0f0f6523a6df99f9af8c0b45cfb8a4f5c6dec19735f5b1f7cc18b30267"
+    },
     "tools/test_shared_browser_r9.py": {
-      "bytes": 2277,
-      "sha256": "717efb4b6ba9fd10798ad906849d105c9e57dfeb68841b7bc3113f67880901b9"
+      "bytes": 2189,
+      "sha256": "e9180481cd1a0e587711e8d7ba15d36691636418b5482210c1cd6982ee49b551"
+    },
+    "tools/test_show_shared_browser_r11.py": {
+      "bytes": 1201,
+      "sha256": "f05e7c1d03cc3bf50587f7bb546408b72eb9594fa184c6e7ce143754531941c8"
     },
     "tools/test_subject_routing.py": {
       "bytes": 6992,

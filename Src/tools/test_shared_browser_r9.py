@@ -9,9 +9,8 @@ mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
 with TemporaryDirectory(prefix="norm-browser-r9-") as d:
     tmp=Path(d)
     (tmp/"tools/shared_browser").mkdir(parents=True)
-    import shutil
-    (tmp/"tools/shared_browser/vendor").symlink_to(root/"tools/shared_browser/vendor",target_is_directory=True)
     mod._root=lambda:tmp
+    mod._export_root=lambda:tmp/"exports"
     text="Long text " * 2500
     cache={}
     def rpc(action,**kwargs):

@@ -30,7 +30,9 @@ from PySide6.QtWebEngineCore import QWebEnginePage,QWebEngineProfile,QWebEngineS
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 TOKEN=ROOT/"state"/"shared_browser_token"
-BASE=ROOT/"workspace"/"web"/"shared_browser"
+sys.path.insert(0,str(ROOT/"core"))
+from norm_runtime.settings import load_path_settings
+BASE=Path(load_path_settings(ROOT)["workspace_root"])/"web"/"shared_browser"
 DISK_CACHE=2**31-1
 ARCHIVE_BUDGET=32*1024**3
 
@@ -67,11 +69,15 @@ class Browser(QMainWindow):
         reload=QPushButton("Reload");reload.clicked.connect(self.view.reload)
         go=QPushButton("Go");go.clicked.connect(self._navigate)
         hide=QPushButton("Hide");hide.clicked.connect(self.hide)
-        release=QPushButton("Return Control to Norm");release.clicked.connect(self._release)
+        self.take_button=QPushButton("Take Control")
+        self.take_button.clicked.connect(self._take)
+        self.release_button=QPushButton("Return Control to Norm")
+        self.release_button.clicked.connect(self._release)
         for x in (back,forward,reload):tools.addWidget(x)
         tools.addWidget(self.address,1)
-        for x in (go,release,hide):tools.addWidget(x)
-        self.label=QLabel("2 GiB Chromium cache; 32 GiB archive budget; 12 GiB JS heap ceiling")
+        for x in (go,self.take_button,self.release_button,hide):tools.addWidget(x)
+        self.label=QLabel("Norm has control | 2 GiB cache; 32 GiB archive; 12 GiB JS ceiling")
+        self._update_control_indicators()
         layout.addLayout(tools);layout.addWidget(self.label);layout.addWidget(self.view,1)
         self.setCentralWidget(bar)
         self.bridge=CommandBridge(self)
@@ -79,11 +85,24 @@ class Browser(QMainWindow):
     def _loading(self):self.loading=True;self.load_ok=None
     def _loaded(self,ok):
         self.loading=False;self.load_ok=bool(ok)
-        self.label.setText("Loaded" if ok else "Page load failed")
+        self._update_control_indicators()
     def _navigate(self):self.page.setUrl(QUrl.fromUserInput(self.address.text().strip()))
+    def _update_control_indicators(self):
+        self.take_button.setEnabled(not self.manual)
+        self.release_button.setEnabled(self.manual)
+        controller=("Human has control; Norm page actions paused"
+                    if self.manual else
+                    "Norm has control; window may stay visible")
+        loaded=("loading" if self.loading else
+                "loaded" if self.load_ok is True else
+                "load failed" if self.load_ok is False else "no page loaded")
+        self.label.setText(f"{controller} | {loaded}")
+    def _take(self):
+        self.manual=True
+        self._update_control_indicators()
     def _release(self):
-        self.manual=False;self.hide()
-        self.label.setText("Control returned to Norm")
+        self.manual=False
+        self._update_control_indicators()
     def closeEvent(self,event):
         event.ignore();self.hide()
     @staticmethod
@@ -104,7 +123,7 @@ class Browser(QMainWindow):
     @Slot(object)
     def dispatch(self,job):
         act=str(job.get("action") or "");args=job.get("args") or {}
-        if self.manual and act not in ("status","show","hide","release"):
+        if self.manual and act not in ("status","show","hide","take_control","release"):
             self.done(job,error="Human controls this page; return control to Norm")
             return
         try:
@@ -116,13 +135,18 @@ class Browser(QMainWindow):
                     "cache_limit_bytes":DISK_CACHE,"archive_budget_bytes":ARCHIVE_BUDGET,
                     "effective_cache_limit_bytes":self.profile.httpCacheMaximumSize()})
             elif act=="show":
-                self.manual=True
                 self.show();self.raise_();self.activateWindow()
-                self.done(job,{"visible":True,"manual_control":True})
+                self.done(job,{"visible":self.isVisible(),"manual_control":self.manual})
             elif act=="hide":
-                self.hide();self.done(job,{"visible":False,"manual_control":self.manual})
+                self.hide()
+                self.done(job,{"visible":self.isVisible(),"manual_control":self.manual})
+            elif act=="take_control":
+                self._take()
+                self.show();self.raise_();self.activateWindow()
+                self.done(job,{"visible":self.isVisible(),"manual_control":True})
             elif act=="release":
-                self._release();self.done(job,{"visible":False,"manual_control":False})
+                self._release()
+                self.done(job,{"visible":self.isVisible(),"manual_control":False})
             elif act=="open":
                 url=str(args.get("url") or "").strip()
                 target=QUrl.fromUserInput(url)
@@ -233,7 +257,7 @@ def main():
     args=parser.parse_args()
     app=QApplication(sys.argv[:1]);app.setQuitOnLastWindowClosed(False)
     browser=Browser()
-    if args.show:browser.manual=True;browser.show()
+    if args.show:browser.show()
     if args.self_test:
         def run():
             browser.page.setHtml("<html><body><div data-message-author-role='user'>hello</div></body></html>")

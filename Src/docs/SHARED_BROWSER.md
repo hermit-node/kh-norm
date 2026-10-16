@@ -2,15 +2,18 @@
 
 ## Run it
 
-After installing, sign into Windows normally and use either
-C:\Norm\tools\shared_browser\Start Hidden Browser.cmd or
-C:\Norm\tools\shared_browser\Launch Browser.cmd.
+After installing, sign into Windows normally and double-click
+C:\Norm\Show Shared Browser.cmd to expose the already-running
+browser. The older Launch Browser.cmd now does the same thing.
+Use tools\shared_browser\Start Hidden Browser.cmd to start
+the hidden helper without creating another instance.
 The helper runs in the logged-in desktop, not Windows service session 0.
 
-Browser_shared_show gives the human exclusive control of the same
-Chromium webpage, with the original tabs, cookies and DOM intact.
-Click Return Control to Norm (or use browser_shared_release) to unlock
-and hide the window. Hide alone does not release the human lock.
+Use Show Shared Browser.cmd in the Norm root, or browser_shared_show,
+to reveal the same Chromium page without changing who controls it.
+Take Control grants the human the page and pauses Norm; Return Control
+to Norm releases that lock WITHOUT hiding the window. Hide/Show
+never change the owner, cookies or DOM.
 
 Use browser_shared_open(url), wait for browser_shared_status(), and
 use browser_shared_dom, browser_shared_bs_select, or
@@ -81,3 +84,27 @@ Norm's own shutdown finally closes both psycopg pools after stopping
 N2 and the servers, and each Celery worker closes its own pool.
 All three operator console hosts receive a shutdown marker.
 This does NOT kill the PostgreSQL server or unrelated client connections.
+
+
+## r11 independent control and visibility
+
+browser_shared_show reveals the same Chromium tab without granting manual
+control; browser_shared_hide only hides it. browser_shared_take_control
+gives the human control and pauses Norm actions; browser_shared_release
+returns control to Norm WITHOUT hiding. The toolbar also has explicit
+Take Control and Return Control buttons. The X button hides the window.
+
+Profile/cache live under configured paths.workspace_root/web/shared_browser.
+The archives and PDF outputs are under its exports subfolder.
+Empty tabs and invalid ChatGPT conversation URLs are rejected.
+Title-only empty archives, unusable message collections and mixed-chat
+JSONL files cannot generate a successful PDF. Successful PDF results
+say partial_unverified until full conversation coverage is proven.
+
+## Windows show shortcut (r11)
+
+Double-click C:\Norm\Show Shared Browser.cmd to expose the existing
+browser. This sends an authenticated local Show command, NOT an
+independent Chromium browser/profile. If the browser is not running,
+the normal interactive-session starter launches the helper first.
+The older Launch Browser.cmd is now a compatibility alias.

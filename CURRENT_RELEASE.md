@@ -1,6 +1,6 @@
-# Norm 0.55.9r10 - release
+# Norm 0.55.9r11 - recovery-verifier
 
-Original archive SHA-256: 8c2cc096cdd49e64ebbc90facdad83454fbed6601730a227f7af06c03aecae24
+Original archive SHA-256: 4ad3108fc0611e92ffeb324969b5ecd5a43df89e1a0654c16b34bee15ee22296
 
 Historical assessment: source-inventory-verified
 

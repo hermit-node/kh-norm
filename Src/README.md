@@ -1,3 +1,27 @@
+# Norm 0.55.9r11 - Shared browser visibility and control
+
+r11 also repairs two traced verifier/recovery failures: inconsistent
+structured verifier ACCEPT results become actionable REVISE results,
+and the N1 recovery approval prompt excludes mere sentence polishing.
+A failed recovery handoff retains SOS, Redis evidence, checkpoints and
+temporary files rather than purging them. N1 approval stays mandatory.
+
+
+To reveal the hidden browser from Windows Explorer, double-click
+C:\Norm\Show Shared Browser.cmd after installation. It reuses the
+existing Chromium process; or ask Norm to run browser_shared_show().
+
+Show and Hide affect only window visibility. Take Control pauses Norm so
+you can use the browser manually. Return Control to Norm leaves the
+window visible so you can watch Norm navigate. Closing the window hides
+it without discarding cookies, page state or the control owner.
+
+The browser uses the configured Documents workspace for its profile/cache
+and JSONL/PDF exports, refuses empty or mixed-conversation PDFs, and
+does not claim entire-chat completeness from a valid PDF file alone.
+
+Includes r10 recovery/context-GC and r9 Celery/shutdown. See docs.
+
 # Norm 0.55.9r10 ? Recovery and context GC corrections
 
 All r9 shared Chromium browser, Celery/N1 adaptive waits, and safe-shutdown

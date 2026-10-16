@@ -1,11 +1,11 @@
 @echo off
-setlocal
-set "NORM_ROOT=%~dp0..\.."
-set "PYTHON=%NORM_ROOT%\.venv\Scripts\pythonw.exe"
-if not exist "%PYTHON%" set "PYTHON=%NORM_ROOT%\.venv\Scripts\python.exe"
+setlocal EnableExtensions
+set "ROOT=%~dp0..\\.."
+set "PYTHON=%ROOT%\\.venv\\Scripts\\python.exe"
 if not exist "%PYTHON%" (
-  echo Missing Norm-local Python
-  pause
-  exit /b 1
+ echo Missing Norm-local Python: "%PYTHON%"
+ pause
+ exit /b 1
 )
-start "" "%PYTHON%" -B "%~dp0app.py" %*
+"%PYTHON%" -B "%ROOT%\\tools\\start_shared_browser.py"
+if errorlevel 1 pause

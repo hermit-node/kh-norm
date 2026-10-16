@@ -240,6 +240,48 @@ def step_verification_schema() -> dict[str, Any]:
     }
 
 
+def reconcile_step_verification_verdict(value: dict[str, Any]) -> dict[str, Any]:
+    """Fail CLOSED on contradictory structured verifier 'accept' responses.
+
+    The verifier may mark a requirement incomplete while simultaneously
+    returning verdict=accept. That cannot be accepted, but it is a *valid
+    negative assessment*, not three malformed-JSON retries. Convert it to an
+    explicit revise verdict with the unmet evidence/requirement identified.
+    Unknown/missing protocol fields still fail normal validation.
+    """
+    if not isinstance(value, dict) or str(value.get("verdict") or "").lower() != "accept":
+        return value
+    required = {"requirements_complete", "evidence_supported", "issues", "repair_scope"}
+    if not required.issubset(value):
+        return value
+    if not isinstance(value["requirements_complete"], bool) or not isinstance(value["evidence_supported"], bool):
+        return value
+    if not isinstance(value["issues"], list):
+        return value
+    scope = str(value.get("repair_scope") or "").strip().lower()
+    if scope not in {"none", "response", "requirements", "evidence"}:
+        return value
+    problems = [str(x).strip() for x in value["issues"] if str(x).strip()]
+    if value["requirements_complete"] and value["evidence_supported"] and not problems and scope == "none":
+        return value
+    converted = dict(value)
+    if not value["requirements_complete"] and not any("requirement" in x.lower() for x in problems):
+        problems.append("Verifier found material task requirements incomplete; identify and complete the missing requirement using observed evidence.")
+    if not value["evidence_supported"] and not any("evidence" in x.lower() for x in problems):
+        problems.append("Verifier found insufficient observed tool evidence; obtain/verify evidence, do not claim completion.")
+    if not problems:
+        problems.append("Verifier returned an accept verdict with a non-none repair scope; inspect the named issue before accepting.")
+    converted["verdict"] = "revise"
+    converted["issues"] = problems[:8]
+    converted["repair_scope"] = (
+        "requirements" if not value["requirements_complete"]
+        else "evidence" if not value["evidence_supported"]
+        else "response" if scope == "none" else scope
+    )
+    converted["fulfilled_injection_ids"] = []
+    return converted
+
+
 def validate_step_verification(value: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("step verification must be an object")

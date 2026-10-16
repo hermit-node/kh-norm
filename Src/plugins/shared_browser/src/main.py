@@ -42,17 +42,22 @@ def browser_shared_open(url: str) -> dict:
 
 
 def browser_shared_show() -> dict:
-    """Show the SAME Chromium window to the human, pausing all Norm page actions."""
+    """Show the SAME Chromium page without changing who controls it."""
     return _rpc("show")
 
 
 def browser_shared_hide() -> dict:
-    """Hide the browser without destroying its cookies or DOM; human lock stays active."""
+    """Hide the browser without releasing control or changing its page."""
     return _rpc("hide")
 
 
+def browser_shared_take_control() -> dict:
+    """Give the human manual control; pause Norm page actions until released."""
+    return _rpc("take_control")
+
+
 def browser_shared_release() -> dict:
-    """After the human finishes, return shared-page control to Norm and hide the window."""
+    """Return page control to Norm, leaving the window visible as-is."""
     return _rpc("release")
 
 
@@ -94,25 +99,56 @@ def browser_shared_type(selector: str, value: str) -> dict:
     return _rpc("type",selector=selector,value=value)
 
 
+def _export_root() -> Path:
+    """Resolve the same Documents workspace used by the main Norm runtime."""
+    root=_root()
+    import sys
+    core=str(root/"core")
+    if core not in sys.path:sys.path.insert(0,core)
+    from norm_runtime.settings import load_path_settings
+    return Path(load_path_settings(root)["workspace_root"])/"web"/"shared_browser"/"exports"
+
+
+def _slug(name: str) -> str:
+    import re
+    return re.sub(r"[^A-Za-z0-9_.-]+","_",name)[:80].strip("._") or "chatgpt"
+
+
+def _valid_chat_url(url: str) -> bool:
+    from urllib.parse import urlparse
+    u=urlparse(url)
+    return (u.scheme=="https" and (u.hostname or "").casefold()
+            in {"chatgpt.com","chat.openai.com"} and
+            (u.path.startswith("/c/") or u.path.startswith("/share/")))
+
+
 def browser_shared_archive_loaded(name: str = "chatgpt", *, max_messages: int = 6000) -> dict:
     """Incrementally archive currently loaded ChatGPT turns as durable JSONL.
 
     Does not assert the whole chat is loaded. Repeated calls add only new/changed
     messages. Large individual replies are collected in 16k DOM text chunks.
     """
-    import re
-    root=_root()/"workspace/web/shared_browser/exports"
-    root.mkdir(parents=True,exist_ok=True)
-    slug=re.sub(r"[^A-Za-z0-9_.-]+","_",name)[:80].strip("._") or "chatgpt"
+    root=_export_root()
+    slug=_slug(name)
     dest=root/(slug+".jsonl")
     index_path=root/(slug+".sqlite")
+    snapshot=_rpc("messages",start=0,count=1)
+    total=min(max(0,int(snapshot.get("total_loaded") or 0)),max(1,int(max_messages)))
+    url=str(snapshot.get("url") or "")
+    if not _valid_chat_url(url):
+        raise RuntimeError("Browser is not on an individual ChatGPT conversation. Show the browser, log in and open the chat; nothing exported.")
+    if total<2:
+        raise RuntimeError(f"Only {total} ChatGPT message(s) loaded; refusing an empty/one-message archive.")
+    if dest.is_file() and dest.stat().st_size:
+        with dest.open("r",encoding="utf8") as previous:
+            first=previous.readline().strip()
+        if first and json.loads(first).get("url")!=url:
+            raise RuntimeError("Archive name belongs to a different conversation; choose a new name.")
+    root.mkdir(parents=True,exist_ok=True)
     import sqlite3
     con=sqlite3.connect(index_path)
     con.execute("CREATE TABLE IF NOT EXISTS archived (fingerprint TEXT PRIMARY KEY, role TEXT, position INTEGER)")
     new=0
-    snapshot=_rpc("messages",start=0,count=1)
-    total=min(max(0,int(snapshot.get("total_loaded") or 0)),max(1,int(max_messages)))
-    url=str(snapshot.get("url") or "")
     incomplete=total<int(snapshot.get("total_loaded") or 0)
     with dest.open("a",encoding="utf8") as output:
         for start in range(0,total,20):
@@ -129,12 +165,15 @@ def browser_shared_archive_loaded(name: str = "chatgpt", *, max_messages: int = 
                 if len(content)!=length:incomplete=True
                 role=str(item.get("role") or "unknown")
                 message_id=str(item.get("message_id") or "")
-                fingerprint=hashlib.sha256((role+"\0"+message_id+"\0"+content).encode("utf8")).hexdigest()
+                identity=message_id or f"position:{position}"
+                fingerprint=hashlib.sha256((role+"\0"+identity+"\0"+content).encode("utf8")).hexdigest()
                 if con.execute("SELECT 1 FROM archived WHERE fingerprint=?",(fingerprint,)).fetchone():
                     continue
                 row={"position":position,"role":role,"message_id":message_id or None,
                      "text":content,"url":url,"captured_at":__import__("datetime").datetime.now(
                          __import__("datetime").timezone.utc).isoformat()}
+                if dest.stat().st_size>=32*1024**3:
+                    raise RuntimeError("Conversation archive reached the 32 GiB storage allowance.")
                 output.write(json.dumps(row,ensure_ascii=False)+"\n")
                 con.execute("INSERT INTO archived VALUES (?,?,?)",(fingerprint,role,position))
                 new+=1
@@ -148,11 +187,27 @@ def browser_shared_archive_loaded(name: str = "chatgpt", *, max_messages: int = 
 
 def browser_shared_pdf(name: str = "chatgpt") -> dict:
     """Create a searchable text PDF from the archived JSONL without visiting the UI."""
-    import re
-    root=_root()/"workspace/web/shared_browser/exports"
-    slug=re.sub(r"[^A-Za-z0-9_.-]+","_",name)[:80].strip("._") or "chatgpt"
+    root=_export_root()
+    slug=_slug(name)
     src=root/(slug+".jsonl")
     if not src.is_file():raise FileNotFoundError(str(src))
+    messages_found=0
+    content_chars=0
+    roles=set()
+    origins=set()
+    with src.open("r",encoding="utf8") as check:
+        for raw in check:
+            if not raw.strip():continue
+            row=json.loads(raw)
+            if not isinstance(row,dict):raise ValueError("Archive row must be a record")
+            messages_found+=1
+            roles.add(str(row.get("role") or ""))
+            origins.add(str(row.get("url") or ""))
+            content_chars+=len(str(row.get("text") or "").strip())
+    if messages_found<2 or not {"user","assistant"}.issubset(roles) or content_chars==0:
+        raise RuntimeError("PDF refused: no usable user/assistant conversation messages in JSONL; existing PDF left untouched.")
+    if len(origins)!=1 or not _valid_chat_url(next(iter(origins))):
+        raise RuntimeError("PDF refused: archive has mixed or invalid conversation URLs.")
     vendor=_root()/"tools/shared_browser/vendor"
     import sys
     if vendor.exists():sys.path.insert(0,str(vendor))
@@ -166,7 +221,8 @@ def browser_shared_pdf(name: str = "chatgpt") -> dict:
         pdfmetrics.registerFont(TTFont("SegoeUI-Norm",str(fontfile)))
         font="SegoeUI-Norm"
     dst=root/(slug+".pdf")
-    doc=canvas.Canvas(str(dst),pagesize=letter,pageCompression=1)
+    pending=root/(slug+".partial.pdf")
+    doc=canvas.Canvas(str(pending),pagesize=letter,pageCompression=1)
     width,height=letter;left=46;right=46;top=54;bottom=50
     y=height-top;pages=1;messages=0
     def nextpage():
@@ -202,5 +258,11 @@ def browser_shared_pdf(name: str = "chatgpt") -> dict:
             for raw_line in str(row.get("text","")).splitlines() or [""]:
                 wrap(raw_line or " ",size=9)
     doc.save()
+    if messages!=messages_found:
+        pending.unlink(missing_ok=True)
+        raise RuntimeError("Source JSONL changed during PDF creation; output not published.")
+    os.replace(pending,dst)
     return {"ok":True,"pdf":str(dst),"jsonl":str(src),"messages":messages,
-            "pages":pages,"entire_conversation_verified":False}
+            "pages":pages,"content_chars":content_chars,
+            "status":"partial_unverified","entire_conversation_verified":False,
+            "warning":"This confirms only the archived messages were rendered, not that the full ChatGPT conversation was captured."}

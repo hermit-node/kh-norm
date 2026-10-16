@@ -23,7 +23,7 @@ from .temp_cleanup import cleanup_task_temp, cleanup_temp_root
 from .models import StepResult, StepStatus, TaskPlan, TaskStep
 from .ollama_client import ModelContextExceeded, ModelGenerationCancelled, ModelOutputTruncated, OllamaClient
 from .prompt_queue import PromptJob, RedisPromptQueue, normalize_request_type
-from .protocol import PROTOCOL_VERSION, final_verification_schema, normalize_command, step_verification_schema, validate_final_candidate, validate_final_verification, validate_step_verification
+from .protocol import PROTOCOL_VERSION, final_verification_schema, normalize_command, step_verification_schema, validate_final_candidate, validate_final_verification, validate_step_verification, reconcile_step_verification_verdict
 from .resource_status import full_context_status, impaired_context_status, merge_resource_status
 from .settings import load_path_settings
 from .voice_profile_context import load_active_voice_context
@@ -2278,6 +2278,8 @@ class PromptWorker:
                             "redis_execution_status":str(x.get("redis_execution_status") or "")}
                            for x in batch]
             correction=""
+            prior_feedback=[]
+            last_proposal_signature=""
             for attempt in range(1,4):
                 payload={
                     "original_user_request":original,
@@ -2290,6 +2292,7 @@ class PromptWorker:
                     "pending_dispatches":pending[:24],
                     "batch_number":index+1,"total_batches":len(groups),
                     "n1_correction":correction,
+                    "prior_n1_feedback":prior_feedback[-2:],
                 }
                 prompt=(
                     "You are N2 reconstructing ONLY the unfinished work of your "
@@ -2340,6 +2343,13 @@ class PromptWorker:
                                   "verify":verify[:500],"source_step_ids":ids})
                 if covered!=batch_ids:
                     raise RuntimeError("N2 recovery plan did not cover every unresolved source step")
+                proposal_signature=json.dumps(clean,sort_keys=True,ensure_ascii=False)
+                if last_proposal_signature and proposal_signature==last_proposal_signature:
+                    raise RuntimeError(
+                        "N2 repeated the unchanged recovery proposal despite an N1 "
+                        "correction. Preserve parent records for supervised retry."
+                    )
+                last_proposal_signature=proposal_signature
                 review=self.n1_gatekeeper.approve_recovery_steps(
                     original_request=original,failed_step_id=failed_step_id,
                     failure=error,completed_step_ids=finished_ids,
@@ -2351,8 +2361,17 @@ class PromptWorker:
                     all_steps.extend(clean)
                     break
                 correction=str(review.get("retry_instruction") or "")
+                prior_feedback.append({
+                    "attempt":attempt,
+                    "n1_reason":str(review.get("reason") or "")[:500],
+                    "retry_instruction":correction[:700],
+                })
                 if attempt==3:
-                    raise RuntimeError("N1 rejected N2 recovery plan after 3 proposals: "+correction[:250])
+                    raise RuntimeError(
+                        "N1 did not approve N2 recovery after 3 proposals; "
+                        "parent evidence/SOS must be retained for review: "
+                        +correction[:250]
+                    )
             else:
                 raise RuntimeError("Recovery plan not approved")
         if set(v for step in all_steps for v in step["source_step_ids"]) != all_missing:
@@ -2784,7 +2803,19 @@ class PromptWorker:
                 job, stage=stage, error=error, checkpoint=checkpoint
             )
         except Exception:
-            logging.exception("Recovery handoff unavailable; leaving durable failure and SOS intact task=%s", job.task_id)
+            logging.exception("Recovery handoff unavailable; retaining parent evidence and SOS task=%s", job.task_id)
+            # A rejection by N1 is NOT authorization to delete the evidence
+            # needed to repair the plan later. It was exactly this fallthrough
+            # that removed the SOS and cleared the parent Redis ledger in r10.
+            # Keep the failed status in PostgreSQL; prevent old queued jobs
+            # from accidentally relaunching the failed parent.
+            queue_counts = self.queue.cleanup_task(job.task_id)
+            logging.error(
+                "Recovery approval deferred; durable failure, SOS, Redis evidence, "
+                "checkpoints and temp files retained task=%s step=%s queue=%s",
+                job.task_id, job.step_id, queue_counts,
+            )
+            return
         else:
             self.durable.finalize_task(job.task_id,
                 f"PASSED_TO:{successor} — recovery after {stage}; original progress retained.", "passed_to")
@@ -5477,7 +5508,14 @@ class PromptWorker:
                 raw = self.client.generate(
                     prompt, think=False, num_predict=1400, temperature=0.0, response_format=schema
                 )
-                parsed = validate_step_verification(self.client.parse_json(raw))
+                proposed = self.client.parse_json(raw)
+                adjusted = reconcile_step_verification_verdict(proposed)
+                if isinstance(proposed,dict) and adjusted is not proposed and adjusted != proposed:
+                    logging.warning(
+                        "Contradictory verifier accept converted to REVISE; not accepted as completed: issues=%s",
+                        adjusted.get("issues",[]),
+                    )
+                parsed = validate_step_verification(adjusted)
                 accepted = parsed["verdict"] == "accept"
                 return accepted, list(parsed["issues"]), json.dumps(parsed, ensure_ascii=False)
             except (ValueError, json.JSONDecodeError, RuntimeError) as exc:
