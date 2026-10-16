@@ -17,7 +17,9 @@ def main():
     if needed==0:
         print(f"Celery already has {len(online)} running worker(s).")
         return 0
-    py=root/".venv"/"Scripts"/"python.exe"
+    pythonw = root / ".venv" / "Scripts" / "pythonw.exe"
+    python = root / ".venv" / "Scripts" / "python.exe"
+    py = pythonw if pythonw.is_file() else python
     worker=root/"tools"/"celery_tool_worker.py"
     logs=root/"logs"
     logs.mkdir(parents=True,exist_ok=True)
@@ -26,8 +28,10 @@ def main():
         with logfile.open("ab") as output:
             subprocess.Popen([str(py),"-B",str(worker),"--id",str(index)],
                 cwd=str(root),stdout=output,stderr=output,stdin=subprocess.DEVNULL,
-                creationflags=getattr(subprocess,"DETACHED_PROCESS",0)|
-                              getattr(subprocess,"CREATE_NO_WINDOW",0),
+                # pythonw.exe has no Windows console subsystem. Do not
+                # combine DETACHED_PROCESS and CREATE_NO_WINDOW flags.
+                creationflags=(0 if py == pythonw else
+                               getattr(subprocess,"CREATE_NO_WINDOW",0)),
                 env={**os.environ,"NORM_ROOT":str(root)})
     deadline=time.monotonic()+15
     while time.monotonic()<deadline:

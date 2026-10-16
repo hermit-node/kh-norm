@@ -102,6 +102,7 @@ def wiring_payload(
         "resume_maintenance": f"http://{activity_host}:{activity_port}/control/resume-maintenance",
         "inject_context": f"http://{activity_host}:{activity_port}/control/inject-context",
         "flush_suppressed": f"http://{activity_host}:{activity_port}/control/flush-suppressed",
+        "soft_delete": f"http://{activity_host}:{activity_port}/control/soft-delete",
         "delete_list": f"http://{activity_host}:{activity_port}/control/delete-list",
         "restore_delete": f"http://{activity_host}:{activity_port}/control/restore-delete",
         "delete_files": f"http://{activity_host}:{activity_port}/control/delete-files",

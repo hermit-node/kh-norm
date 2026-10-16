@@ -60,8 +60,10 @@ Task control
       Distill one general future-use lesson from failed tasks, then remove their runnable state, detailed task history/evidence, and stale background snapshots.
 
 Files / backup
+  /soft-delete "PATH"
+      Stage one file or complete folder, recording its original path and deletion ID.
   /delete-list
-      List reversible soft-deleted files.
+      List staged files, folders, and held historical orphan folders.
   /restore-delete ID
       Restore one deletion ID; use all for every non-conflicting item.
   /delete-files

@@ -1,3 +1,14 @@
+# Norm 0.55.9r4 - integrated reversible folder trash and quiet workers
+
+This build preserves N1 verification-pool/tool authorization, N2 reasoning
+and final step behavior. The existing Redis trash now supports entire
+folders and inventory detects held historical directory orphans. Operator
+soft-delete works through either console's direct /soft-delete command.
+Celery subprocesses use pythonw.exe to avoid desktop console windows.
+The native desktop GUI plugin/bridge is read-only at this stage (UI input
+is disabled). No live install or Redis mutations were performed here.
+Run the installer candidate self-test before deploying.
+
 # Norm 0.55.9r3 - Frozen Celery import repair
 
 The Norm 0.55.9r2 native tool agent split, N1 verification-pool-first

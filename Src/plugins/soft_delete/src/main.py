@@ -20,9 +20,9 @@ def _allowed(path: str) -> Path:
 
 
 def soft_delete(path: str, reason: str) -> dict:
-    """Move one allowed file into Norm's reversible trash."""
+    """Move one allowed file or complete folder into Norm's reversible trash."""
     target = _allowed(path)
-    return _queue().stage_file(target, reason=reason)
+    return _queue().stage_path(target, reason=reason)
 
 
 def soft_delete_batch(paths: list[str], reason: str) -> dict:
@@ -30,10 +30,17 @@ def soft_delete_batch(paths: list[str], reason: str) -> dict:
     if not paths:
         raise ValueError("paths must not be empty")
     items = []
+    selected: list[Path] = []
     for raw in paths:
         target = _allowed(raw)
-        if not target.is_file():
+        if not (target.is_file() or target.is_dir()):
             raise FileNotFoundError(target)
+        if target.is_symlink() or getattr(target, "is_junction", lambda: False)():
+            raise PermissionError(f"linked path is not eligible: {target}")
+        if any(target == other or target.is_relative_to(other) or other.is_relative_to(target)
+               for other in selected):
+            raise ValueError(f"overlapping deletion paths are not safe: {target}")
+        selected.append(target)
         items.append({"path": str(target), "reason": reason})
     return _queue().stage_batch(items, batch_reason=reason, checkpoint=True)
 

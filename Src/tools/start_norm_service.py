@@ -19,6 +19,12 @@ def main() -> int:
         print(f"Celery unavailable; Norm retains synchronous tool execution: {exc}")
 
     try:
+        from start_desktop_gui import main as start_gui
+        start_gui()
+    except Exception as exc:
+        print(f"Desktop GUI helper unavailable (no effect on N1/N2): {exc}")
+
+    try:
         process = start_norm_detached()
     except Exception as exc:
         print(f"Could not launch Norm service: {exc}", file=sys.stderr)

@@ -1,7 +1,7 @@
-Norm Soft Delete — plugin help
-
-Batch-oriented reversible trash management backed by Redis and one consolidated JSON checkpoint.
-
-No dedicated operator slash commands are registered for this plugin.
-The plugin provides its tools to Norm through the plugin manager.
-See plugins/soft_delete/README.md for tool usage.
+Norm Soft Delete - plugin help
+The Norm operator console provides these slash commands:
+/soft-delete "C:\\path\\to\\file-or-folder"   Stage a file or complete directory
+/delete-list                         List tracked files, folders and held orphans
+/restore-delete <id|all>             Restore without overwriting existing items
+/delete-files                        Purge tracked, known-origin trash (held orphans remain)
+Direct plugin tools remain available through N1's tool gate.

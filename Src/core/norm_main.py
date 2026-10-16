@@ -931,6 +931,19 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             return {"status": "unavailable", "deleted": 0, "reason": "worker is still initializing"}
         return worker_obj.flush_failed()
 
+    def request_trash_stage(path: str) -> dict:
+        # Operator slash-command path: never enqueue an N2 task.
+        try:
+            from norm_runtime.file_access_policy import authorize_path, load_file_access_policy
+            policy = load_file_access_policy(root, capability="soft_delete")
+            source = authorize_path(path, policy.write_roots, access="write",
+                                    hardlock=policy.enforce_write_directories)
+            return {"status": "ok", **build_deletion_queue(root).stage_path(
+                source, reason="Operator-requested reversible soft-delete")}
+        except Exception as exc:
+            logging.exception("Could not stage operator soft-delete")
+            return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+
     def request_trash_list() -> dict:
         try:
             queue_obj = build_deletion_queue(root)
@@ -1046,6 +1059,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             failed_tasks=request_failed_tasks,
             resume_failed=request_resume_failed,
             flush_failed=request_flush_failed,
+            trash_stage=request_trash_stage,
             trash_list=request_trash_list,
             trash_restore=request_trash_restore,
             trash_purge=request_trash_purge,

@@ -1,0 +1,1 @@
+desktop_windows / desktop_controls / desktop_screenshot inspect the logged-in Windows desktop; input commands are disabled in preview.

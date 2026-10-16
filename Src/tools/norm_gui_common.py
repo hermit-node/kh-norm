@@ -94,6 +94,7 @@ def endpoints() -> dict[str, str]:
         "failed_tasks": f"http://{host}:{activity_port}/control/failed",
         "resume_failed": f"http://{host}:{activity_port}/control/resume-failed",
         "flush_failed": f"http://{host}:{activity_port}/control/flush-failed",
+        "soft_delete": f"http://{host}:{activity_port}/control/soft-delete",
         "delete_list": f"http://{host}:{activity_port}/control/delete-list",
         "restore_delete": f"http://{host}:{activity_port}/control/restore-delete",
         "delete_files": f"http://{host}:{activity_port}/control/delete-files",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -53,24 +54,92 @@ class RedisDeletionQueue:
         except OSError:
             return True
 
+    @staticmethod
+    def _safe_directory_inventory(source: Path, *, fingerprint: bool = False) -> tuple[dict[str, tuple[int, str]], set[str], int]:
+        """Exact recursive inventory. Refuse links/reparse points: they can escape root."""
+        paths: dict[str, tuple[int, str]] = {}
+        dirs: set[str] = set()
+        total = 0
+        for parent, children, names in os.walk(source, followlinks=False):
+            base = Path(parent)
+            relbase = base.relative_to(source)
+            for name in children:
+                child = base / name
+                if child.is_symlink() or getattr(child, "is_junction", lambda: False)():
+                    raise PermissionError(f"linked subdirectory is not safe to move: {child}")
+                dirs.add((relbase / name).as_posix())
+            for name in names:
+                file = base / name
+                if file.is_symlink() or not file.is_file():
+                    raise PermissionError(f"non-regular file in directory: {file}")
+                size = file.stat().st_size
+                total += size
+                digest = ""
+                if fingerprint:
+                    h = hashlib.sha256()
+                    with file.open("rb") as fh:
+                        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                            h.update(chunk)
+                    digest = h.hexdigest()
+                paths[(relbase / name).as_posix()] = (size, digest)
+        return paths, dirs, total
+
     def _move_verified(self, source: Path, target: Path) -> None:
-        """Move one file safely, verifying copy size before cross-volume source removal."""
-        source = source.resolve()
+        """Move a file or directory; verify a cross-volume copy before removing source."""
+        source = source.resolve(strict=True)
         target = target.resolve(strict=False)
+        if source.is_symlink() or getattr(source, "is_junction", lambda: False)():
+            raise PermissionError(f"refusing linked path: {source}")
+        if target.exists():
+            raise FileExistsError(f"trash target already exists: {target}")
         target.parent.mkdir(parents=True, exist_ok=True)
         if self._same_volume(source, target):
             os.replace(source, target)
             return
         tmp = target.with_name(f".{target.name}.copy-{os.getpid()}-{time.time_ns()}")
         try:
-            shutil.copy2(source, tmp)
-            if int(tmp.stat().st_size) != int(source.stat().st_size):
-                raise IOError(f"cross-volume copy size mismatch: {source} -> {target}")
-            os.replace(tmp, target)
-            source.unlink()
+            if source.is_dir():
+                before_files, before_dirs, size = self._safe_directory_inventory(source, fingerprint=True)
+                if self.cross_volume_move_max_bytes and size > self.cross_volume_move_max_bytes:
+                    raise ValueError(f"cross-volume directory exceeds configured move limit: {size}")
+                shutil.copytree(source, tmp, symlinks=False)
+                after_files, after_dirs, after_size = self._safe_directory_inventory(tmp, fingerprint=True)
+                if before_files != after_files or before_dirs != after_dirs or size != after_size:
+                    raise IOError(f"cross-volume directory copy mismatch: {source}")
+                os.replace(tmp, target)
+                shutil.rmtree(source)
+            else:
+                shutil.copy2(source, tmp)
+                if int(tmp.stat().st_size) != int(source.stat().st_size):
+                    raise IOError(f"cross-volume copy size mismatch: {source} -> {target}")
+                src_hash = hashlib.sha256(source.read_bytes()).digest()
+                dst_hash = hashlib.sha256(tmp.read_bytes()).digest()
+                if src_hash != dst_hash:
+                    raise IOError(f"cross-volume copy content mismatch: {source}")
+                os.replace(tmp, target)
+                source.unlink()
         except Exception:
-            tmp.unlink(missing_ok=True)
+            if tmp.is_dir():
+                shutil.rmtree(tmp)
+            else:
+                tmp.unlink(missing_ok=True)
             raise
+
+    def _source_kind_size(self, source: Path) -> tuple[str, int]:
+        if source.is_symlink() or getattr(source, "is_junction", lambda: False)():
+            raise PermissionError(f"refusing linked source: {source}")
+        if source.is_file():
+            return "file", int(source.stat().st_size)
+        if source.is_dir():
+            _, _, size = self._safe_directory_inventory(source)
+            return "directory", size
+        raise FileNotFoundError(f"not a regular file or directory: {source}")
+
+    def _guard_source(self, source: Path) -> None:
+        if source == self.trash_root or source.is_relative_to(self.trash_root) or self.trash_root.is_relative_to(source):
+            raise PermissionError(f"cannot soft-delete the trash or its ancestor/descendant: {source}")
+        if source == Path(source.anchor):
+            raise PermissionError(f"cannot soft-delete a filesystem root: {source}")
 
     def _atomic_checkpoint(self) -> dict[str, Any]:
         raw = self.redis.hgetall(self.items_key)
@@ -178,11 +247,15 @@ class RedisDeletionQueue:
         }, sort_keys=True))
         try:
             for raw in items:
-                source = Path(str(raw.get("path") or "")).resolve()
-                if not source.is_file():
-                    skipped.append({"path": str(source), "reason": "missing_or_not_file"})
+                requested = Path(str(raw.get("path") or ""))
+                if requested.is_symlink() or getattr(requested, "is_junction", lambda: False)():
+                    raise PermissionError(f"linked source is not eligible for trash: {requested}")
+                source = requested.resolve()
+                self._guard_source(source)
+                if not (source.is_file() or source.is_dir()):
+                    skipped.append({"path": str(source), "reason": "missing_or_unsupported"})
                     continue
-                size = int(source.stat().st_size)
+                kind, size = self._source_kind_size(source)
                 if (
                     self.cross_volume_move_max_bytes
                     and size > self.cross_volume_move_max_bytes
@@ -206,6 +279,7 @@ class RedisDeletionQueue:
                     "task_id": str(raw.get("task_id") or task_id),
                     "batch_id": batch_id,
                     "size_bytes": size,
+                    "kind": kind,
                     "reproduce_from": raw.get("reproduce_from"),
                     "reproducibility": raw.get("reproducibility"),
                     "state": "committed",
@@ -237,6 +311,10 @@ class RedisDeletionQueue:
             raise
 
     def stage_file(self, source: Path, *, reason: str, task_id: str = "") -> dict[str, Any]:
+        """Backward-compatible entrypoint; now accepts a file or a whole folder."""
+        source = Path(source)
+        if source.is_symlink() or getattr(source, "is_junction", lambda: False)():
+            raise PermissionError(f"linked source is not eligible for trash: {source}")
         source = source.resolve()
         result = self.stage_batch([{
             "path": str(source), "reason": reason, "task_id": task_id,
@@ -246,7 +324,13 @@ class RedisDeletionQueue:
             raise RuntimeError(f"soft delete was not staged: {detail}")
         return result["staged"][0] | {"batch_id": result["batch_id"], "checkpoint": result.get("checkpoint")}
 
+    def stage_path(self, source: Path, *, reason: str, task_id: str = "") -> dict[str, Any]:
+        """Stage a file or complete directory as a single reversible record."""
+        return self.stage_file(source, reason=reason, task_id=task_id)
+
     def list_items(self) -> list[dict[str, Any]]:
+        # A read should never omit orphaned physical folders. Recover them
+        # as visible, held records; never invent an original location.
         self.reconcile(checkpoint=False)
         records: list[dict[str, Any]] = []
         for deletion_id, payload in self.redis.hgetall(self.items_key).items():
@@ -279,12 +363,16 @@ class RedisDeletionQueue:
             except Exception:
                 missing.append(deletion_id)
                 continue
-            source = Path(str(record.get("original_path") or "")).resolve(strict=False)
+            original = str(record.get("original_path") or "").strip()
+            if not original:
+                conflicts.append({"deletion_id": deletion_id, "reason": "original_path_unknown"})
+                continue
+            source = Path(original).resolve(strict=False)
             trash_path = self._trash_path(record)
             if source.exists():
                 conflicts.append({"deletion_id": deletion_id, "path": str(source), "reason": "destination_exists"})
                 continue
-            if not trash_path.is_file():
+            if not (trash_path.is_file() or trash_path.is_dir()):
                 conflicts.append({"deletion_id": deletion_id, "path": str(source), "reason": "trash_payload_missing"})
                 continue
             source.parent.mkdir(parents=True, exist_ok=True)
@@ -309,7 +397,9 @@ class RedisDeletionQueue:
         for deletion_id, record in snapshot.items():
             records.setdefault(deletion_id, record)
 
-        actual = {p.name: p for p in self.trash_root.iterdir() if p.is_file() and p.name != self.index_path.name}
+        actual = {p.name: p for p in self.trash_root.iterdir()
+                  if (p.is_file() or p.is_dir()) and p.name != self.index_path.name
+                  and not p.name.startswith(".")}
         stale: list[str] = []
         recovered = 0
         known_names: set[str] = set()
@@ -320,7 +410,7 @@ class RedisDeletionQueue:
                 stale.append(deletion_id)
                 continue
             known_names.add(trash_path.name)
-            if not trash_path.is_file():
+            if not (trash_path.is_file() or trash_path.is_dir()):
                 stale.append(deletion_id)
                 continue
             self.redis.hset(self.items_key, deletion_id, json.dumps(record, ensure_ascii=False, sort_keys=True))
@@ -341,12 +431,15 @@ class RedisDeletionQueue:
                 "queued_at": path.stat().st_mtime,
                 "task_id": "",
                 "batch_id": "reconcile",
-                "size_bytes": int(path.stat().st_size),
+                "size_bytes": self._source_kind_size(path)[1],
+                "kind": "directory" if path.is_dir() else "file",
                 "state": "orphaned",
             }
             self.redis.hset(self.items_key, deletion_id, json.dumps(record, ensure_ascii=False, sort_keys=True))
             recovered += 1
-        cp = self._atomic_checkpoint() if checkpoint else None
+        # A newly observed orphan must appear in BOTH Redis and the JSON
+        # checkpoint, even when discovered by a normal inventory request.
+        cp = self._atomic_checkpoint() if (checkpoint or migrated or stale or recovered) else None
         return {"migrated": migrated, "stale_removed": len(stale), "orphans_recovered": recovered, "checkpoint": cp}
 
     def purge_all(self) -> dict[str, int]:
@@ -357,10 +450,18 @@ class RedisDeletionQueue:
             try:
                 record = json.loads(payload)
                 trash_path = self._trash_path(record)
+                if record.get("state") == "orphaned" or not record.get("original_path"):
+                    # Unknown-original historical folders must not disappear
+                    # in a bulk purge. Explicit recovery/adoption comes first.
+                    raise PermissionError("orphaned trash requires recovery before purge")
                 if trash_path.exists():
-                    if not trash_path.is_file():
-                        raise IsADirectoryError(trash_path)
-                    trash_path.unlink()
+                    if trash_path.is_dir():
+                        self._safe_directory_inventory(trash_path)
+                        shutil.rmtree(trash_path)
+                    elif trash_path.is_file():
+                        trash_path.unlink()
+                    else:
+                        raise OSError(f"unsupported trash payload: {trash_path}")
                 self.redis.hdel(self.items_key, deletion_id)
                 purged += 1
             except Exception:

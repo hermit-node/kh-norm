@@ -259,7 +259,7 @@ process could share one pool, but Norm's current plugin manager serializes
 calls behind a process-wide lock, so threads alone do not provide true
 plugin-call parallelism until that mechanism is reviewed safely.
 
-Redis DB5 is a proposed Celery transport segregated from Norm's DB0 state.
+Celery Redis DB is configurable through settings.ini, default DB4; other operators may choose an unused database.
 Use bounded queues and explicit worker health/readiness checks. Only the
 interactive Windows-session-1 desktop helper can operate GUI controls.
 GUI input remains serialized irrespective of how many Celery workers exist.
@@ -354,3 +354,8 @@ Norm's .venv Python alone is NOT validation of the frozen binary.
 Import Celery dynamic fixups/worker/backends/transports in this
 probe and fail installation on import errors. Never restart an already
 completed N1/N2 task due to an optional tool transport failure.
+
+## 0.55.9r4 regression principles
+Directory payloads must be first-class Redis/JSON trash records. Inventories must include legacy orphan directories without guessing their original paths; do not purge held orphans.
+Silent Windows Celery workers use pythonw.exe. Keep N1 before_tool/after_tool and N2 planning/conclusion/recovery unchanged; verify these with source and frozen tests.
+Desktop GUI uses a Windows interactive-session helper on authenticated loopback; read-only capabilities are integrated, input remains disabled pending further testing.

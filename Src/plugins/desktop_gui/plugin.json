@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "name": "Norm Desktop GUI",
+  "version": "0.1.0",
+  "date": "2026-10-11",
+  "entrypoint": "src/main.py",
+  "description": "Windows UI Automation/window inspection, MSS screenshots, and opt-in input via a local authenticated desktop-session bridge.",
+  "capabilities": [
+    "windows enumeration",
+    "UI Automation control inspection",
+    "desktop screenshots",
+    "optional GUI input"
+  ],
+  "sha256": "4000599657fefad734f4cce609290dfe949c99b2c564228c896e0eec1a364eef",
+  "settings": {
+    "desktop_gui": {
+      "enabled": true
+    }
+  }
+}

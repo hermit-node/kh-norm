@@ -85,6 +85,7 @@ def _activity_app(
     failed_tasks: Callable[[int], dict] | None,
     resume_failed: Callable[[str], dict] | None,
     flush_failed: Callable[[], dict] | None,
+    trash_stage: Callable[[str], dict] | None,
     trash_list: Callable[[], dict] | None,
     trash_restore: Callable[[str], dict] | None,
     trash_purge: Callable[[], dict] | None,
@@ -277,6 +278,13 @@ def _activity_app(
                     if flush_failed is None:
                         return web.json_response({"error": "flush-failed control unavailable"}, status=503)
                     return web.json_response(await _call(flush_failed))
+                if path == "/control/soft-delete":
+                    if trash_stage is None:
+                        return web.json_response({"error": "soft-delete control unavailable"}, status=503)
+                    path_value = str(payload.get("path") or "").strip()
+                    if not path_value:
+                        return web.json_response({"error": "path is required"}, status=400)
+                    return web.json_response(await _call(trash_stage, path_value))
                 if path == "/control/delete-list":
                     if trash_list is None:
                         return web.json_response({"error": "trash list control unavailable"}, status=503)
@@ -337,6 +345,7 @@ def _activity_app(
             "/control/failed",
             "/control/resume-failed",
             "/control/flush-failed",
+            "/control/soft-delete",
             "/control/delete-list",
             "/control/restore-delete",
             "/control/delete-files",
@@ -365,6 +374,7 @@ def start_activity_server(
     failed_tasks: Callable[[int], dict] | None = None,
     resume_failed: Callable[[str], dict] | None = None,
     flush_failed: Callable[[], dict] | None = None,
+    trash_stage: Callable[[str], dict] | None = None,
     trash_list: Callable[[], dict] | None = None,
     trash_restore: Callable[[str], dict] | None = None,
     trash_purge: Callable[[], dict] | None = None,
@@ -392,6 +402,7 @@ def start_activity_server(
             failed_tasks=failed_tasks,
             resume_failed=resume_failed,
             flush_failed=flush_failed,
+            trash_stage=trash_stage,
             trash_list=trash_list,
             trash_restore=trash_restore,
             trash_purge=trash_purge,

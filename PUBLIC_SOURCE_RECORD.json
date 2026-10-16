@@ -1,12 +1,15 @@
 {
-  "version": "0.55.9r3",
+  "version": "0.55.9r4",
   "variant": "",
-  "tag": "v0.55.9r3",
-  "source_archive_sha256": "954b0a6607e9381b127115f9e155841cf6359faf7e6e12f4ba966a699d905a9f",
-  "source_archive": "0.55.9r3--release--954b0a6607e9.zip",
-  "quality": "static/CLI PASS, historical",
-  "known_issues": [],
-  "published_source_files": 259,
+  "tag": "v0.55.9r4",
+  "source_archive_sha256": "fbb7b433c2999b40dd111e0c90a0fd28cc80a8f67bbd70e577b58fd2c0591012",
+  "source_archive": "0.55.9r4--release--fbb7b433c299.zip",
+  "quality": "packaged GUI startup bug; live hotfix only",
+  "known_issues": [
+    "packaged GUI startup bug; live hotfix only",
+    "Packaged GUI startup failed; do not call a stable release without independent validation."
+  ],
+  "published_source_files": 266,
   "omitted_paths": [
     "config/plugins.ini",
     "config/settings.ini",

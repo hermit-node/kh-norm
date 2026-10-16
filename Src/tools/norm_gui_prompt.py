@@ -895,6 +895,22 @@ def main() -> int:
                     continue
                 print(f"Flushed {int(result.get('deleted') or 0)} suppressed task(s) and {int(result.get('delivery_deleted') or 0)} suppressed delivery record(s).")
                 continue
+            elif lowered == "/soft-delete" or lowered.startswith("/soft-delete "):
+                value = text[len("/soft-delete"):].strip()
+                if value.startswith('"') and value.endswith('"') and len(value) >= 2:
+                    value = value[1:-1]
+                if not value:
+                    print('Usage: /soft-delete "C:\\path\\to\\file-or-folder"')
+                    continue
+                try:
+                    result = post_json(ep["soft_delete"], payload={"path": value}, timeout=180)
+                    if result.get("status") == "ok":
+                        print(f"Soft-deleted: {result.get('original_path')} -> {result.get('trash_name')} (ID {result.get('deletion_id')})")
+                    else:
+                        print(f"Soft-delete failed: {result.get('error') or result.get('status')}")
+                except Exception as exc:
+                    print(f"Soft-delete failed; check trash inventory before retrying: {exc}")
+                continue
             elif lowered == "/delete-list":
                 result = post_json(ep["delete_list"], timeout=10)
                 print(json.dumps(result, ensure_ascii=False, indent=2))

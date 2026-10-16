@@ -1,508 +1,509 @@
 {
-  "package_schema": 1,
-  "name": "Norm",
-  "version": "0.55.9r3",
-  "package_type": "portable-source",
-  "source_dir": "core",
-  "entrypoint": "core/norm_main.py",
-  "compiled_executable": "core/norm.exe",
-  "settings": "config/settings.ini",
-  "runtime_config": "config/runtime.json",
-  "requirements_lock": "tools/requirements-lock.txt",
-  "excluded_generated_paths": [
-    ".venv",
-    "staging",
-    "build",
-    "dist",
-    "__pycache__",
-    "*.pyc",
-    "core/norm.exe",
-    "tools/weasyprint/runtime",
-    "tools/playwright/runtime",
-    "plugins/.registry.json",
-    "backups",
-    "*.sqlite3",
-    "*.sqlite3-wal",
-    "*.sqlite3-shm",
-    "**/master.png",
-    "**/auth.sqlite3"
-  ],
-  "dynamic_plugins": {
-    "root": "settings.ini:[plugins].root relative to runtime root",
-    "registry": "generated plugins/.registry.json; never package authority",
-    "hydration": "native-hot-reload",
-    "exposure": "public functions defined in declared schema-2 entrypoint; legacy plugins retain old scan behavior",
-    "private_convention": "prefix files or functions with _",
-    "failure_mode": "last-known-good remains active until a valid refresh loads",
-    "schema2_layout": "plugin.json + README.md + src/",
-    "entrypoint": "plugin.json:entrypoint (normally src/main.py)",
-    "source_identity": "plugin.json:sha256 over deterministic src/ tree"
-  },
-  "integrity_recovery": {
-    "task_lineage": "reconcile surviving IDs/UUIDs, then nearest validated-history ancestor, else detach safely",
-    "memory_threads": "preserve intact links, remap from source messages, then conservatively cluster remaining orphans",
-    "prune_safety": "reparent surviving children and preserve memory-thread links before destructive history pruning",
-    "repair_tool": "tools/repair_norm_state.py"
-  },
-  "external_workspace": {
-    "documents_root": "%USERPROFILE%\\Documents\\Norm",
-    "workspace_root": "workspace (durable generated artifacts/work files)",
-    "temp_root": "temp (auto-cleaned disposable scratch/recovery files)",
-    "state_root": "config/settings.ini:[paths].state_root (trusted Norm runtime state; not a tool root unless explicitly added)"
-  },
-  "persistent_install_paths": [
-    ".venv",
-    "plugins",
-    ".ssh",
-    "logs",
-    "state"
-  ],
-  "backup_package": {
-    "plugin": "plugins/backup",
-    "includes": [
-      "runtime/source",
-      "docs",
-      "plugins",
-      ".ssh",
-      "configured secrets",
-      "workspace",
-      "PostgreSQL dump",
-      "environment rebuild metadata"
-    ],
-    "excludes": [
-      ".venv",
-      "disposable temp except recovery state"
-    ],
-    "modes": {
-      "source": "package-managed source/docs/built-in plugins only; no secrets/private runtime state",
-      "full": "source plus all plugins, .ssh, configured secrets, workspace, selected recovery/log/state, and PostgreSQL"
-    }
-  },
-  "managed_persistent_subtrees": [
-    "plugins/backup",
-    "plugins/verbatim_lines",
-    "plugins/stegosplit_key",
-    "plugins/stegosplit_message",
-    "plugins/rotor5_cipher",
-    "plugins/file_read",
-    "plugins/soft_delete",
-    "plugins/postgres_pool",
-    "plugins/voice_profile",
-    "plugins/codex_reasoner",
-    "plugins/nabler",
-    "plugins/lesson_model",
-    "plugins/stegosplit_auth"
-  ],
-  "built_in_plugins": {
-    "backup": "plugins/backup",
-    "verbatim_lines": "plugins/verbatim_lines",
-    "stegosplit_key": "plugins/stegosplit_key",
-    "stegosplit_message": "plugins/stegosplit_message",
-    "rotor5_cipher": "plugins/rotor5_cipher",
-    "file_read": "plugins/file_read",
-    "soft_delete": "plugins/soft_delete",
-    "postgres_pool": "plugins/postgres_pool",
-    "voice_profile": "plugins/voice_profile",
-    "codex_reasoner": "plugins/codex_reasoner",
-    "nabler": "plugins/nabler",
-    "lesson_model": "plugins/lesson_model",
-    "stegosplit_auth": "plugins/stegosplit_auth"
-  },
-  "canonical_prompt_ingress": {
-    "redis_db": 3,
-    "stream": "norm:gui:ingress",
-    "consumer_group": "norm-gui-dispatchers",
-    "thread_key": "norm:gui:thread-id",
-    "project_id": "default",
-    "frontends": [
-      "local-rich-console",
-      "ssh-gui"
-    ],
-    "invariant": "accepted normal prompt must produce a durable task_id before ingress is acknowledged"
-  },
-  "startup_reliability": {
-    "startup_resource_boundary": "activity API, worker, chat API, and their threads are released on every startup exit/failure before retry",
-    "postgres_retry_boundary": "normal startup performs PostgreSQL connection/schema initialization inside the bounded three-attempt psycopg retry loop",
-    "postgres_connect_timeout_seconds": 5,
-    "plugin_concurrency": "hydration, schema refresh, and execution are serialized by one process-global reentrant lock"
-  },
-  "large_source_processing": {
-    "source_size_limit": "none; filesystem/storage only",
-    "per_pass_process_bytes": 3221225472,
-    "task_storage_limit_bytes": 57982058496,
-    "text_processing_buffer_bytes": 25165824,
-    "tool_return_bytes": 393216,
-    "internal_note_chunk_bytes": 5242880,
-    "human_output_bytes": 393216,
-    "ceiling_behavior": "checkpoint + suppress/park same task; manual resume resets per-pass counter",
-    "terminal_cleanup": "delete reproducible task-local derivatives; retain source/recipe lineage and internal Markdown notes"
-  },
-  "ingrained_details": {
-    "semantic_type": "ingrained_detail",
-    "primary_rule": "confidently classified details go directly to their final durable home",
-    "unresolved_table": "norm_runtime.unresolved_bits",
-    "trial_table": "norm_runtime.unresolved_bit_trials",
-    "trial_policy": "test a few plausible bits against later tasks; preserve trial outcomes while unresolved",
-    "default_prune_gate": {
-      "trials": 15,
-      "distinct_domains": 3,
-      "requires_zero_useful_trials": true,
-      "requires_single_mention": true
-    },
-    "resolved_cleanup": "delete temporary unresolved row and its cascade trial history after final-home promotion",
-    "queue_status": "DB3 prompt_id is carried into durable task provenance so /queue can show current task/step instead of only a prompt prefix"
-  },
-  "windows_launcher": {
-    "service_host": "headless CREATE_NO_WINDOW + SW_HIDE; existing shutdown lifecycle owns process exit",
-    "runtime_console": "prefer dedicated Windows Terminal wt.exe window; classic console fallback",
-    "prompt_replies": "existing explicit console behavior unchanged"
-  },
-  "pdf_vision_parse": {
-    "plugin": "plugins/vision_parse",
-    "tool": "plugin_vision_parse__vision_parse__vision_parse",
-    "renderer": "PyMuPDF 1.28.2",
-    "authority": "rendered page over untrusted text layer",
-    "page_window": 10,
-    "delivery": "checksum-first managed plugin reconciliation; verified src is untouched, mismatched Norm src is repaired before any public fallback",
-    "hybrid_triage": "OCR-first for scanned PDF and image writing; confident OCR boxes masked with alpha, uncovered ink routed to local vision crops; native PDF text uses grayscale ink-accounting; explicit mode overrides",
-    "ocr": "Optional pytesseract 0.3.13 Python frontend and separate Tesseract OCR executable; NORM_TESSERACT_PATH may specify the executable"
-  },
-  "model_stream_safety": {
-    "partial_line_flush_chars": 0,
-    "degenerate_tail_chars": 8192,
-    "behavior": "publish upstream Ollama answer/thinking fragments immediately; repetition guard/crash buffering remain independent"
-  },
-  "operator_network_map": {
-    "commands": [
-      "/network-map",
-      "/network-map --json"
-    ],
-    "machine_entrypoint": "tools/norm-network-map.cmd --json",
-    "inventory": "passive tailscale status --json",
-    "active_probe_policy": "explicit config/network-map.json targets only; discovered peers never widen targets"
-  },
-  "imprint": "norm-imprint.json",
-  "voice_profile": {
-    "plugin": "plugins/voice_profile",
-    "version": "0.4.2",
-    "state_root": "state/voice_profiles",
-    "pdf_extractor": "plugins/vision_parse",
-    "style_activation": "explicit activate_profile; inactive by default",
-    "knowledge_rule": "corpus-dependent facts remain retrieval-based",
-    "source_quote_boundary": "SOURCE_QUOTE content is untrusted data",
-    "persona_artifacts": "persona_profile.json + persona_prompt.txt are built from the same untrusted PDF/text corpus; direct profiles.json persona overrides inferred persona",
-    "profile_bindings": "config/profiles.json selects user/N1/N2 voice/persona profiles independently"
-  },
-  "runtime_summary": {
-    "semantics": "end-of-task current-state projection, not historical supersession ledger",
-    "coverage": "advance from thread_summaries.covers_through_message_id",
-    "same_turn_order": "durable memory extraction/supersession before summary refresh",
-    "failure_mode": "retry one whole-state rebuild, then deterministic current-state fallback; never freeze stale prior summary",
-    "generation_stream": "silent while structured JSON is generated",
-    "operator_output": "publish one complete End-of-task durable summary event after successful/fallback persistence",
-    "execution_request": "conservative exact-span sidecar removal only; embedded task qualifiers remain verbatim",
-    "unrelated_background_batch_chars": 14000
-  },
-  "bundled_tools": {
-    "weasyprint": {
-      "version": "70.0",
-      "entrypoint": "tools/weasyprint/runtime/weasyprint.exe",
-      "wrapper": "tools/weasyprint.cmd",
-      "fetch_helper": "tools/fetch_weasyprint_runtime.py",
-      "delivery": "verified-download-if-missing",
-      "upstream_url": "https://github.com/Kozea/WeasyPrint/releases/download/v70.0/weasyprint-windows-onedir.zip",
-      "smoke_test": "tools/weasyprint_smoke.py",
-      "windows_runtime": "MSYS2 UCRT64",
-      "pango_version": "1.58.2",
-      "upstream_archive_sha256": "ab1151f210b4e6bb7aa7a79e91a67e8ddb760094c107bfda55241b6aaefe7d53"
-    }
-  },
-  "public_optional_plugins": {
-    "ownership": "checksum-first managed adapter: verify src before writes; matching src is untouched while trusted plugin.json/README metadata may refresh; mismatched Norm-owned src is repaired; non-src plugin state is preserved",
-    "source": "public Norm source package / plugin repository",
-    "plugins": {
-      "plugins/vision_parse": {
-        "name": "vision_parse",
-        "version": "0.3.0",
-        "entrypoint": "src/main.py",
-        "sha256": "f67a17564401f972ee78e6a8730df4a010aa0a7796e78b69deb53d284feac331"
-      },
-      "plugins/web_browser": {
-        "name": "Norm Web Browser",
-        "version": "1.0.0",
-        "entrypoint": "src/main.py",
-        "sha256": "42f54fcb0513162d4996b0e1cf56328c3c2012ee9f4e74602f3c277b0edb5a44"
-      },
-      "plugins/jan": {
-        "name": "jan",
-        "version": "1.0.2",
-        "entrypoint": "src/main.py",
-        "sha256": "a215575ea54105ee8e916a8d5873cc505cefd4e3a3ba73b00f8da1a928cc4ab1"
-      },
-      "plugins/vane": {
-        "name": "vane",
-        "version": "1.0.2",
-        "entrypoint": "src/main.py",
-        "sha256": "681854480ae6878ca38b170025ec2fc1537fdd0c7729c737ce08bad9d128a949"
-      },
-      "plugins/opencode": {
-        "name": "opencode",
-        "version": "1.0.2",
-        "entrypoint": "src/main.py",
-        "sha256": "207108cfad6c17aff0cb977ad66ae3a5a60f895827ba4de71c559c4425cc081a"
-      }
-    }
-  },
-  "public_plugin_install": {
-    "policy": "hash installed managed plugin src first; if target SHA matches, leave src untouched and refresh only changed trusted metadata; otherwise repair Norm src from packaged release, re-hash, then use pinned public source only if packaged repair still fails; missing plugins prefer public source",
-    "package_url": "https://raw.githubusercontent.com/hermit-node/kh-norm/main/Norm-0.54.2g-portable-source.zip",
-    "package_version": "0.54.2g",
-    "subtrees": [
-      "plugins/vision_parse",
-      "plugins/web_browser",
-      "plugins/jan",
-      "plugins/vane",
-      "plugins/opencode"
-    ],
-    "verification": "exact trusted Schema-2 name/version/entrypoint/src-tree SHA; verification always precedes writes; public source is a second repair path and fresh-install source"
-  },
-  "plugin_settings": {
-    "file": "config/plugins.ini",
-    "authority": "installed schema-2 plugin.json settings declarations",
-    "reconcile": "startup and every PluginManager refresh/hot-swap; preserve declared operator values, fill missing/invalid values from defaults, prune dangling keys/sections after backup",
-    "backup_dir": "backups/plugins-ini",
-    "backup_limit": 12,
-    "secrets": "external environment/secrets file only; never plugins.ini",
-    "backup_dedup": "SHA-256 exact-content dedupe; identical states do not consume retention slots; legacy config/backups/plugins-ini is migrated and duplicate copies are collapsed"
-  },
-  "plugin_configuration": {
-    "file": "config/plugins.ini",
-    "optional": true,
-    "absent_behavior": "Jan, Vane, OpenCode, and shared model-provider routing are disabled; existing Norm/Ollama behavior is unchanged",
-    "secrets": "configured secrets .env only",
-    "legacy_migration": "Installer 1.6.10 migrates any 1.6.9 model_provider/remote_agents sections out of settings.ini and removes them from the core config"
-  },
-  "backup_retention": {
-    "limit": 12,
-    "semantics": "12 newest backup sets per backup class/location; a backup ZIP plus its .sha256 companion counts as one set"
-  },
-  "n1_control_loop": {
-    "flow": "user -> N1 ingress review -> N2 -> N1 tool gate/verification-pool sufficiency -> N2 -> N1 final review -> user",
-    "ingress": "N1 may attach advisory guidance but cannot rewrite or block the exact user turn",
-    "routing": "N2 proposes subject decomposition/thread placement; N1 accepts or retries before persistence",
-    "tool_gate": "For information requests N1 judges whether relevant live Redis verification-pool evidence is sufficient; sufficient evidence is replayed to N2, otherwise the source executes fresh. Repeated non-information paths remain loop-guarded.",
-    "final": "N1 accepts/retries; N2 performs any repair; N1 does not rewrite the final answer",
-    "runtime_config": {
-      "ingress": {
-        "num_predict": 3600,
-        "think": true,
-        "temperature": 0.0,
-        "timeout_seconds": 720
-      },
-      "routing": {
-        "num_predict": 3600,
-        "think": true,
-        "temperature": 0.0,
-        "timeout_seconds": 720
-      },
-      "final_review": {
-        "num_predict": 5000,
-        "think": true,
-        "temperature": 0.0,
-        "timeout_seconds": 720
-      },
-      "maintenance_review": {
-        "num_predict": 5000,
-        "think": true,
-        "temperature": 0.0,
-        "timeout_seconds": 720
-      },
-      "tool_loop_reset": {
-        "num_predict": 220,
-        "think": true,
-        "temperature": 0.0,
-        "timeout_seconds": 86400
-      },
-      "reasoning_loop_judgment": {
-        "num_predict": 420,
-        "think": true,
-        "temperature": 0.0,
-        "timeout_seconds": 86400
-      },
-      "redis_reuse_decision": {
-        "num_predict": 420,
-        "think": true,
-        "temperature": 0.0,
-        "timeout_seconds": 86400
-      },
-      "verification_value": {
-        "num_predict": 700,
-        "think": true,
-        "temperature": 0.0,
-        "timeout_seconds": 86400
-      }
-    },
-    "persistent_instructions": "config/runtime.json:agents.n1.persistent_instructions; runtime-owned and preserved across model switches"
-  },
-  "subject_routing": {
-    "routing_threshold": 0.68,
-    "raw_authority": "norm_runtime.messages.content",
-    "thread_projection": "norm_runtime.message_threads.projected_content",
-    "existing_thread_policy": "reuse only at confidence >= threshold; otherwise create a better subject thread or clarify",
-    "assistant_projection": "verbatim excerpts only; failure falls back to primary thread only",
-    "summary_memory_scope": "per accepted subject thread"
-  },
-  "model_runtime_policy": {
-    "authority": "config/runtime.json only; config/settings.ini, config/norm.json, and Modelfile do not own context size",
-    "default_context_length": 65536,
-    "model_context_overrides": {
-      "norm": 180000
-    },
-    "n1_persistent_instructions": "shared persistent_instructions + config/runtime.json:agents.n1.persistent_instructions",
-    "n2_persistent_instructions": "shared persistent_instructions + config/runtime.json:agents.n2.persistent_instructions",
-    "model_switch": "changes model identity only; agent context and persistent instructions remain attached to runtime-owned clients and probes",
-    "context_overflow": "exceed_context_size_error yields into existing bounded oversize-recovery decomposition rather than identical HTTP retry",
-    "shared_persistent_instructions": "config/runtime.json:persistent_instructions; preserved from pre-0.54.1a live installs by generic JSON migration"
-  },
-  "profiles_config": "config/profiles.json",
-  "profile_runtime": {
-    "config": "config/profiles.json",
-    "installer_semantics": "schema-managed JSON: whole config directory is snapshotted before in-place sync; matching live values are merged into new schema",
-    "blocks": [
-      "user.persona",
-      "user.voice",
-      "n1.persona",
-      "n1.voice",
-      "n2.persona",
-      "n2.voice"
-    ],
-    "direct_persona": "operator-authored authority",
-    "inferred_persona": "voice_profile persona_profile.json; supplemental only",
-    "voice": "voice_profile voice_prompt.txt",
-    "model_switch": "profile context is runtime-owned and remains attached when model identity changes"
-  },
-  "codex_reasoning": {
-    "plugin": "plugins/codex_reasoner",
-    "execution_owner": "Norm/N2",
-    "sandbox": "read-only",
-    "ephemeral": true,
-    "workspace": "disposable empty temp directory",
-    "input": "question plus evidence explicitly supplied by Norm",
-    "output": "structured reasoning recommendation"
-  },
-  "user_voice_history": {
-    "source": "PostgreSQL durable conversation messages with role=user only",
-    "tool": "plugin_voice_profile__main__build_from_chat_history",
-    "persona_policy": "voice-only; never writes operator-authored user persona"
-  },
-  "chunked_evidence": {
-    "authority": "config/runtime.json:context_budget",
-    "scope": "large default text read_file results delivered to N2",
-    "context_partition": "measure current system/messages/tool schemas, reserve current N2 num_predict output plus safety, then target raw_evidence_fraction of remaining usable input",
-    "raw_evidence_fraction": 0.2,
-    "max_raw_evidence_items_per_n2_turn": 1,
-    "compact_state_max_fraction": 0.3,
-    "addressing": "stable byte ranges within one source-fingerprint-locked stream; N2 may request any one numbered piece",
-    "seams": "{0:1} start, {n:n+1} internal, {N:0} end",
-    "eviction": "after N2 consumes a chunk and emits its next tool call, raw text is replaced in active model history by compact provenance + retained facts; full raw tool evidence remains durable out of context",
-    "n1_verification": "Chunked read_file calls use the same live Redis verification pool. N1 sees bounded candidate metadata/canonical values, judges sufficiency, and may replay exactly one prior raw chunk payload from Redis; canonical values are never substituted for requested file bytes. If prior evidence is insufficient or unavailable, the source is read fresh.",
-    "source_change": "source_fingerprint mismatch invalidates the active stream and requires a fresh read",
-    "context_headroom_checkpoint": {
-      "remaining_fraction": 0.05,
-      "counter_source": "Ollama prompt_eval_count plus estimated newly visible assistant payload; no full prompt rescan per turn",
-      "lossless_archive": "norm_runtime.task_context_slices stores the recent execution slice in PostgreSQL before continuation",
-      "distillation": "N1 converts the durable slice into task-applicable continuation state only; an assistant tool-call proposal without a following tool result is explicitly treated as unexecuted",
-      "resume": "PromptQueue.yield_job requeues the same task/step with distilled job.context; the resumed slice uses the authoritative original request + current internal step + compact continuation/evidence cursors and skips bulk task working memory, prior-step, and background-memory reinjection; lossless PostgreSQL context remains available by reference",
-      "stream_cursor": "chunked evidence stream states are carried in existing job metadata across the requeue"
-    }
-  },
-  "verification_pool_replay": {
-    "authority": "Redis live verification pool: compact metadata in norm:validation:pool plus raw payloads in the companion norm:validation:pool:replay hash, both keyed by the same record_id; no parallel in-process raw-result cache",
-    "decision_owner": "N1 judges whether one or more relevant prior observations are sufficiently applicable/current for N2's present information request; cost is not a decision criterion",
-    "freshness": "age alone does not determine staleness; N1 reasons from source volatility, requested freshness, known mutations/invalidation, scope, contradictions, and evidence completeness",
-    "candidate_context": "N1 scans only the compact metadata hash and receives bounded metadata/canonical values, age/check count, scope, and replay availability; raw replay payloads are fetched from the companion hash only after selection",
-    "replay": "after N1 selects sufficient evidence, the exact hot replay payload is fetched from Redis and supplied to N2; N2 need not know whether evidence was replayed or freshly observed",
-    "multi_record": "N1 may select up to validation_pool.max_replay_records relevant small observations; read_file remains limited to one raw evidence payload per N2 turn",
-    "payload_limit": "validation_pool.replay_payload_max_bytes bounds each private hot replay payload; oversized/unavailable payloads force fresh source execution rather than bloating N1 context",
-    "mutation": "known mutations invalidate affected Redis validation targets immediately; a moved/unreachable locator does not retroactively invalidate already observed cached content",
-    "durability": "PostgreSQL retains durable validation/history/checkpoint state; private replay payloads are Redis-hot evidence and are not copied into long-term validation history",
-    "config": {
-      "replay_payload_max_bytes": 393216,
-      "max_replay_records": 3
-    }
-  },
-  "remote_sse_client": {
-    "builder": "make_sse.bat",
-    "build_script": "tools/build_sse_client.py",
-    "output": "Norm-SSE.exe",
-    "transport": "read-only HTTP server-sent events from activity /events over the configured tailnet host",
-    "configuration": "builder resolves the installed network.current_machine/current_domain and activity_port at build time and embeds only the remote SSE endpoint",
-    "secrets": "none; generated client does not embed Redis/PostgreSQL credentials or Norm secret environment values",
-    "portability": "single Windows executable intended to be copied to another tailnet-connected Windows machine"
-  },
-  "task_round_budget": {
-    "base_limit": 128,
-    "first_progress_review": 96,
-    "extension_rounds": 36,
-    "hard_limit": 384,
-    "judge": "N1 grants each additional bounded lease only for genuine forward progress rather than raw tool/activity volume",
-    "manual_recovery": "At the granted/hard boundary a resumable failure checkpoint is retained for /failed and /resume-failed; /flush-failed distills a reusable lesson before purging detailed failed-task state."
-  },
-  "lesson_model": {
-    "plugin": "plugins/lesson_model",
-    "version": "0.3.0a1",
-    "mode": "operator-reviewed lessons + versioned code memory + topology",
-    "training_backend": "not configured; training and auto-promotion disabled",
-    "state_root": "state/lesson_model",
-    "source_retention": "content-addressed wholesale ZIP copy; original input is never deleted",
-    "postgres_table": "configured runtime schema.code_memory_snapshots",
-    "human_outputs": [
-      "README.md",
-      "standalone interactive topology HTML"
-    ]
-  },
-  "stegosplit_message": {
-    "plugin": "plugins/stegosplit_message",
-    "version": "0.4.3",
-    "engine_version": "3.0.0a1 / distributed native plugin 0.4.0",
-    "format_version": "V3",
-    "pair_carrier": "RGB +/-1 color-delta nibble (4 bits per pixel; zlib on payload when useful)",
-    "public_carrier": "independent single-PNG RGB LSB (3 bits per pixel) or overt tEXt metadata",
-    "security_boundary": "public identifiers are NOT authentication credentials; no private keys embedded",
-    "compiled_implementation": "Windows CPython 3.14 x64 .pyd modules"
-  },
-  "stegosplit_auth": {
-    "plugin": "plugins/stegosplit_auth",
-    "version": "0.1.0",
-    "format": "anchored SSMC/v1",
-    "master": "private master.png with unencrypted issuer-seed metadata",
-    "native_windows_module": "plugins/stegosplit_auth/src/master_client_auth.cp314-win_amd64.pyd",
-    "github_source": "private implementation source excluded",
-    "security": "bearer credentials; revocation/expiration/failed-password lockouts",
-    "integration": "standalone only, no OpenSSH/TLS listener",
-    "shared_v3_engine": "plugins/stegosplit_message/src/_stegosplit_v3"
-  },
-  "stegosplit_key": {
-    "version": "0.2.0a1",
-    "compiled_implementation": "Windows CPython 3.14 x64 .pyd modules"
-  },
-  "output_overflow": {
-    "implementation": "core/norm_runtime/output_overflow.py",
-    "user_report": "configured state_root/reports/final-overflow/*.md",
-    "redis_receipt": "norm:output:overflow:* (24h, verified readback)",
-    "condensation_attempts": 3,
-    "policy": "retain full generated original and submit shortest complete summary; no bypass of N1/N2 verification",
-    "normal_output_child_tasks": "not included; deferred"
-  },
-  "release_revision": "r3 frozen Celery import fix and compiled runtime smoke test",
-  "celery_tool_transport": {
-    "transport": "Celery",
-    "enabled_setting": "config/settings.ini:[celery].enabled",
-    "redis_db_setting": "config/settings.ini:[celery].redis_db",
-    "worker_count_setting": "config/settings.ini:[celery].worker_count",
-    "n1_gate": "before_tool / after_tool",
-    "n2": "original active step and final conclusion remain N2-owned",
-    "worker_entrypoint": "tools/celery_tool_worker.py",
-    "launcher": "tools/start_async_workers.py"
-  }
+    "package_schema":  1,
+    "name":  "Norm",
+    "version":  "0.55.9r4",
+    "package_type":  "portable-source",
+    "source_dir":  "core",
+    "entrypoint":  "core/norm_main.py",
+    "compiled_executable":  "core/norm.exe",
+    "settings":  "config/settings.ini",
+    "runtime_config":  "config/runtime.json",
+    "requirements_lock":  "tools/requirements-lock.txt",
+    "excluded_generated_paths":  [
+                                     ".venv",
+                                     "staging",
+                                     "build",
+                                     "dist",
+                                     "__pycache__",
+                                     "*.pyc",
+                                     "core/norm.exe",
+                                     "tools/weasyprint/runtime",
+                                     "tools/playwright/runtime",
+                                     "plugins/.registry.json",
+                                     "backups",
+                                     "*.sqlite3",
+                                     "*.sqlite3-wal",
+                                     "*.sqlite3-shm",
+                                     "**/master.png",
+                                     "**/auth.sqlite3"
+                                 ],
+    "dynamic_plugins":  {
+                            "root":  "settings.ini:[plugins].root relative to runtime root",
+                            "registry":  "generated plugins/.registry.json; never package authority",
+                            "hydration":  "native-hot-reload",
+                            "exposure":  "public functions defined in declared schema-2 entrypoint; legacy plugins retain old scan behavior",
+                            "private_convention":  "prefix files or functions with _",
+                            "failure_mode":  "last-known-good remains active until a valid refresh loads",
+                            "schema2_layout":  "plugin.json + README.md + src/",
+                            "entrypoint":  "plugin.json:entrypoint (normally src/main.py)",
+                            "source_identity":  "plugin.json:sha256 over deterministic src/ tree"
+                        },
+    "integrity_recovery":  {
+                               "task_lineage":  "reconcile surviving IDs/UUIDs, then nearest validated-history ancestor, else detach safely",
+                               "memory_threads":  "preserve intact links, remap from source messages, then conservatively cluster remaining orphans",
+                               "prune_safety":  "reparent surviving children and preserve memory-thread links before destructive history pruning",
+                               "repair_tool":  "tools/repair_norm_state.py"
+                           },
+    "external_workspace":  {
+                               "documents_root":  "%USERPROFILE%\\Documents\\Norm",
+                               "workspace_root":  "workspace (durable generated artifacts/work files)",
+                               "temp_root":  "temp (auto-cleaned disposable scratch/recovery files)",
+                               "state_root":  "config/settings.ini:[paths].state_root (trusted Norm runtime state; not a tool root unless explicitly added)"
+                           },
+    "persistent_install_paths":  [
+                                     ".venv",
+                                     "plugins",
+                                     ".ssh",
+                                     "logs",
+                                     "state"
+                                 ],
+    "backup_package":  {
+                           "plugin":  "plugins/backup",
+                           "includes":  [
+                                            "runtime/source",
+                                            "docs",
+                                            "plugins",
+                                            ".ssh",
+                                            "configured secrets",
+                                            "workspace",
+                                            "PostgreSQL dump",
+                                            "environment rebuild metadata"
+                                        ],
+                           "excludes":  [
+                                            ".venv",
+                                            "disposable temp except recovery state"
+                                        ],
+                           "modes":  {
+                                         "source":  "package-managed source/docs/built-in plugins only; no secrets/private runtime state",
+                                         "full":  "source plus all plugins, .ssh, configured secrets, workspace, selected recovery/log/state, and PostgreSQL"
+                                     }
+                       },
+    "managed_persistent_subtrees":  [
+                                        "plugins/backup",
+                                        "plugins/verbatim_lines",
+                                        "plugins/stegosplit_key",
+                                        "plugins/stegosplit_message",
+                                        "plugins/rotor5_cipher",
+                                        "plugins/file_read",
+                                        "plugins/soft_delete",
+                                        "plugins/postgres_pool",
+                                        "plugins/voice_profile",
+                                        "plugins/codex_reasoner",
+                                        "plugins/nabler",
+                                        "plugins/lesson_model",
+                                        "plugins/stegosplit_auth"
+                                    ],
+    "built_in_plugins":  {
+                             "backup":  "plugins/backup",
+                             "verbatim_lines":  "plugins/verbatim_lines",
+                             "stegosplit_key":  "plugins/stegosplit_key",
+                             "stegosplit_message":  "plugins/stegosplit_message",
+                             "rotor5_cipher":  "plugins/rotor5_cipher",
+                             "file_read":  "plugins/file_read",
+                             "soft_delete":  "plugins/soft_delete",
+                             "postgres_pool":  "plugins/postgres_pool",
+                             "voice_profile":  "plugins/voice_profile",
+                             "codex_reasoner":  "plugins/codex_reasoner",
+                             "nabler":  "plugins/nabler",
+                             "lesson_model":  "plugins/lesson_model",
+                             "stegosplit_auth":  "plugins/stegosplit_auth",
+                             "desktop_gui":  "plugins/desktop_gui"
+                         },
+    "canonical_prompt_ingress":  {
+                                     "redis_db":  3,
+                                     "stream":  "norm:gui:ingress",
+                                     "consumer_group":  "norm-gui-dispatchers",
+                                     "thread_key":  "norm:gui:thread-id",
+                                     "project_id":  "default",
+                                     "frontends":  [
+                                                       "local-rich-console",
+                                                       "ssh-gui"
+                                                   ],
+                                     "invariant":  "accepted normal prompt must produce a durable task_id before ingress is acknowledged"
+                                 },
+    "startup_reliability":  {
+                                "startup_resource_boundary":  "activity API, worker, chat API, and their threads are released on every startup exit/failure before retry",
+                                "postgres_retry_boundary":  "normal startup performs PostgreSQL connection/schema initialization inside the bounded three-attempt psycopg retry loop",
+                                "postgres_connect_timeout_seconds":  5,
+                                "plugin_concurrency":  "hydration, schema refresh, and execution are serialized by one process-global reentrant lock"
+                            },
+    "large_source_processing":  {
+                                    "source_size_limit":  "none; filesystem/storage only",
+                                    "per_pass_process_bytes":  3221225472,
+                                    "task_storage_limit_bytes":  57982058496,
+                                    "text_processing_buffer_bytes":  25165824,
+                                    "tool_return_bytes":  393216,
+                                    "internal_note_chunk_bytes":  5242880,
+                                    "human_output_bytes":  393216,
+                                    "ceiling_behavior":  "checkpoint + suppress/park same task; manual resume resets per-pass counter",
+                                    "terminal_cleanup":  "delete reproducible task-local derivatives; retain source/recipe lineage and internal Markdown notes"
+                                },
+    "ingrained_details":  {
+                              "semantic_type":  "ingrained_detail",
+                              "primary_rule":  "confidently classified details go directly to their final durable home",
+                              "unresolved_table":  "norm_runtime.unresolved_bits",
+                              "trial_table":  "norm_runtime.unresolved_bit_trials",
+                              "trial_policy":  "test a few plausible bits against later tasks; preserve trial outcomes while unresolved",
+                              "default_prune_gate":  {
+                                                         "trials":  15,
+                                                         "distinct_domains":  3,
+                                                         "requires_zero_useful_trials":  true,
+                                                         "requires_single_mention":  true
+                                                     },
+                              "resolved_cleanup":  "delete temporary unresolved row and its cascade trial history after final-home promotion",
+                              "queue_status":  "DB3 prompt_id is carried into durable task provenance so /queue can show current task/step instead of only a prompt prefix"
+                          },
+    "windows_launcher":  {
+                             "service_host":  "headless CREATE_NO_WINDOW + SW_HIDE; existing shutdown lifecycle owns process exit",
+                             "runtime_console":  "prefer dedicated Windows Terminal wt.exe window; classic console fallback",
+                             "prompt_replies":  "existing explicit console behavior unchanged"
+                         },
+    "pdf_vision_parse":  {
+                             "plugin":  "plugins/vision_parse",
+                             "tool":  "plugin_vision_parse__vision_parse__vision_parse",
+                             "renderer":  "PyMuPDF 1.28.2",
+                             "authority":  "rendered page over untrusted text layer",
+                             "page_window":  10,
+                             "delivery":  "checksum-first managed plugin reconciliation; verified src is untouched, mismatched Norm src is repaired before any public fallback",
+                             "hybrid_triage":  "OCR-first for scanned PDF and image writing; confident OCR boxes masked with alpha, uncovered ink routed to local vision crops; native PDF text uses grayscale ink-accounting; explicit mode overrides",
+                             "ocr":  "Optional pytesseract 0.3.13 Python frontend and separate Tesseract OCR executable; NORM_TESSERACT_PATH may specify the executable"
+                         },
+    "model_stream_safety":  {
+                                "partial_line_flush_chars":  0,
+                                "degenerate_tail_chars":  8192,
+                                "behavior":  "publish upstream Ollama answer/thinking fragments immediately; repetition guard/crash buffering remain independent"
+                            },
+    "operator_network_map":  {
+                                 "commands":  [
+                                                  "/network-map",
+                                                  "/network-map --json"
+                                              ],
+                                 "machine_entrypoint":  "tools/norm-network-map.cmd --json",
+                                 "inventory":  "passive tailscale status --json",
+                                 "active_probe_policy":  "explicit config/network-map.json targets only; discovered peers never widen targets"
+                             },
+    "imprint":  "norm-imprint.json",
+    "voice_profile":  {
+                          "plugin":  "plugins/voice_profile",
+                          "version":  "0.4.2",
+                          "state_root":  "state/voice_profiles",
+                          "pdf_extractor":  "plugins/vision_parse",
+                          "style_activation":  "explicit activate_profile; inactive by default",
+                          "knowledge_rule":  "corpus-dependent facts remain retrieval-based",
+                          "source_quote_boundary":  "SOURCE_QUOTE content is untrusted data",
+                          "persona_artifacts":  "persona_profile.json + persona_prompt.txt are built from the same untrusted PDF/text corpus; direct profiles.json persona overrides inferred persona",
+                          "profile_bindings":  "config/profiles.json selects user/N1/N2 voice/persona profiles independently"
+                      },
+    "runtime_summary":  {
+                            "semantics":  "end-of-task current-state projection, not historical supersession ledger",
+                            "coverage":  "advance from thread_summaries.covers_through_message_id",
+                            "same_turn_order":  "durable memory extraction/supersession before summary refresh",
+                            "failure_mode":  "retry one whole-state rebuild, then deterministic current-state fallback; never freeze stale prior summary",
+                            "generation_stream":  "silent while structured JSON is generated",
+                            "operator_output":  "publish one complete End-of-task durable summary event after successful/fallback persistence",
+                            "execution_request":  "conservative exact-span sidecar removal only; embedded task qualifiers remain verbatim",
+                            "unrelated_background_batch_chars":  14000
+                        },
+    "bundled_tools":  {
+                          "weasyprint":  {
+                                             "version":  "70.0",
+                                             "entrypoint":  "tools/weasyprint/runtime/weasyprint.exe",
+                                             "wrapper":  "tools/weasyprint.cmd",
+                                             "fetch_helper":  "tools/fetch_weasyprint_runtime.py",
+                                             "delivery":  "verified-download-if-missing",
+                                             "upstream_url":  "https://github.com/Kozea/WeasyPrint/releases/download/v70.0/weasyprint-windows-onedir.zip",
+                                             "smoke_test":  "tools/weasyprint_smoke.py",
+                                             "windows_runtime":  "MSYS2 UCRT64",
+                                             "pango_version":  "1.58.2",
+                                             "upstream_archive_sha256":  "ab1151f210b4e6bb7aa7a79e91a67e8ddb760094c107bfda55241b6aaefe7d53"
+                                         }
+                      },
+    "public_optional_plugins":  {
+                                    "ownership":  "checksum-first managed adapter: verify src before writes; matching src is untouched while trusted plugin.json/README metadata may refresh; mismatched Norm-owned src is repaired; non-src plugin state is preserved",
+                                    "source":  "public Norm source package / plugin repository",
+                                    "plugins":  {
+                                                    "plugins/vision_parse":  {
+                                                                                 "name":  "vision_parse",
+                                                                                 "version":  "0.3.0",
+                                                                                 "entrypoint":  "src/main.py",
+                                                                                 "sha256":  "f67a17564401f972ee78e6a8730df4a010aa0a7796e78b69deb53d284feac331"
+                                                                             },
+                                                    "plugins/web_browser":  {
+                                                                                "name":  "Norm Web Browser",
+                                                                                "version":  "1.0.0",
+                                                                                "entrypoint":  "src/main.py",
+                                                                                "sha256":  "42f54fcb0513162d4996b0e1cf56328c3c2012ee9f4e74602f3c277b0edb5a44"
+                                                                            },
+                                                    "plugins/jan":  {
+                                                                        "name":  "jan",
+                                                                        "version":  "1.0.2",
+                                                                        "entrypoint":  "src/main.py",
+                                                                        "sha256":  "a215575ea54105ee8e916a8d5873cc505cefd4e3a3ba73b00f8da1a928cc4ab1"
+                                                                    },
+                                                    "plugins/vane":  {
+                                                                         "name":  "vane",
+                                                                         "version":  "1.0.2",
+                                                                         "entrypoint":  "src/main.py",
+                                                                         "sha256":  "681854480ae6878ca38b170025ec2fc1537fdd0c7729c737ce08bad9d128a949"
+                                                                     },
+                                                    "plugins/opencode":  {
+                                                                             "name":  "opencode",
+                                                                             "version":  "1.0.2",
+                                                                             "entrypoint":  "src/main.py",
+                                                                             "sha256":  "207108cfad6c17aff0cb977ad66ae3a5a60f895827ba4de71c559c4425cc081a"
+                                                                         }
+                                                }
+                                },
+    "public_plugin_install":  {
+                                  "policy":  "hash installed managed plugin src first; if target SHA matches, leave src untouched and refresh only changed trusted metadata; otherwise repair Norm src from packaged release, re-hash, then use pinned public source only if packaged repair still fails; missing plugins prefer public source",
+                                  "package_url":  "https://raw.githubusercontent.com/hermit-node/kh-norm/main/Norm-0.54.2g-portable-source.zip",
+                                  "package_version":  "0.54.2g",
+                                  "subtrees":  [
+                                                   "plugins/vision_parse",
+                                                   "plugins/web_browser",
+                                                   "plugins/jan",
+                                                   "plugins/vane",
+                                                   "plugins/opencode"
+                                               ],
+                                  "verification":  "exact trusted Schema-2 name/version/entrypoint/src-tree SHA; verification always precedes writes; public source is a second repair path and fresh-install source"
+                              },
+    "plugin_settings":  {
+                            "file":  "config/plugins.ini",
+                            "authority":  "installed schema-2 plugin.json settings declarations",
+                            "reconcile":  "startup and every PluginManager refresh/hot-swap; preserve declared operator values, fill missing/invalid values from defaults, prune dangling keys/sections after backup",
+                            "backup_dir":  "backups/plugins-ini",
+                            "backup_limit":  12,
+                            "secrets":  "external environment/secrets file only; never plugins.ini",
+                            "backup_dedup":  "SHA-256 exact-content dedupe; identical states do not consume retention slots; legacy config/backups/plugins-ini is migrated and duplicate copies are collapsed"
+                        },
+    "plugin_configuration":  {
+                                 "file":  "config/plugins.ini",
+                                 "optional":  true,
+                                 "absent_behavior":  "Jan, Vane, OpenCode, and shared model-provider routing are disabled; existing Norm/Ollama behavior is unchanged",
+                                 "secrets":  "configured secrets .env only",
+                                 "legacy_migration":  "Installer 1.6.10 migrates any 1.6.9 model_provider/remote_agents sections out of settings.ini and removes them from the core config"
+                             },
+    "backup_retention":  {
+                             "limit":  12,
+                             "semantics":  "12 newest backup sets per backup class/location; a backup ZIP plus its .sha256 companion counts as one set"
+                         },
+    "n1_control_loop":  {
+                            "flow":  "user -\u003e N1 ingress review -\u003e N2 -\u003e N1 tool gate/verification-pool sufficiency -\u003e N2 -\u003e N1 final review -\u003e user",
+                            "ingress":  "N1 may attach advisory guidance but cannot rewrite or block the exact user turn",
+                            "routing":  "N2 proposes subject decomposition/thread placement; N1 accepts or retries before persistence",
+                            "tool_gate":  "For information requests N1 judges whether relevant live Redis verification-pool evidence is sufficient; sufficient evidence is replayed to N2, otherwise the source executes fresh. Repeated non-information paths remain loop-guarded.",
+                            "final":  "N1 accepts/retries; N2 performs any repair; N1 does not rewrite the final answer",
+                            "runtime_config":  {
+                                                   "ingress":  {
+                                                                   "num_predict":  3600,
+                                                                   "think":  true,
+                                                                   "temperature":  0.0,
+                                                                   "timeout_seconds":  720
+                                                               },
+                                                   "routing":  {
+                                                                   "num_predict":  3600,
+                                                                   "think":  true,
+                                                                   "temperature":  0.0,
+                                                                   "timeout_seconds":  720
+                                                               },
+                                                   "final_review":  {
+                                                                        "num_predict":  5000,
+                                                                        "think":  true,
+                                                                        "temperature":  0.0,
+                                                                        "timeout_seconds":  720
+                                                                    },
+                                                   "maintenance_review":  {
+                                                                              "num_predict":  5000,
+                                                                              "think":  true,
+                                                                              "temperature":  0.0,
+                                                                              "timeout_seconds":  720
+                                                                          },
+                                                   "tool_loop_reset":  {
+                                                                           "num_predict":  220,
+                                                                           "think":  true,
+                                                                           "temperature":  0.0,
+                                                                           "timeout_seconds":  86400
+                                                                       },
+                                                   "reasoning_loop_judgment":  {
+                                                                                   "num_predict":  420,
+                                                                                   "think":  true,
+                                                                                   "temperature":  0.0,
+                                                                                   "timeout_seconds":  86400
+                                                                               },
+                                                   "redis_reuse_decision":  {
+                                                                                "num_predict":  420,
+                                                                                "think":  true,
+                                                                                "temperature":  0.0,
+                                                                                "timeout_seconds":  86400
+                                                                            },
+                                                   "verification_value":  {
+                                                                              "num_predict":  700,
+                                                                              "think":  true,
+                                                                              "temperature":  0.0,
+                                                                              "timeout_seconds":  86400
+                                                                          }
+                                               },
+                            "persistent_instructions":  "config/runtime.json:agents.n1.persistent_instructions; runtime-owned and preserved across model switches"
+                        },
+    "subject_routing":  {
+                            "routing_threshold":  0.68,
+                            "raw_authority":  "norm_runtime.messages.content",
+                            "thread_projection":  "norm_runtime.message_threads.projected_content",
+                            "existing_thread_policy":  "reuse only at confidence \u003e= threshold; otherwise create a better subject thread or clarify",
+                            "assistant_projection":  "verbatim excerpts only; failure falls back to primary thread only",
+                            "summary_memory_scope":  "per accepted subject thread"
+                        },
+    "model_runtime_policy":  {
+                                 "authority":  "config/runtime.json only; config/settings.ini, config/norm.json, and Modelfile do not own context size",
+                                 "default_context_length":  65536,
+                                 "model_context_overrides":  {
+                                                                 "norm":  180000
+                                                             },
+                                 "n1_persistent_instructions":  "shared persistent_instructions + config/runtime.json:agents.n1.persistent_instructions",
+                                 "n2_persistent_instructions":  "shared persistent_instructions + config/runtime.json:agents.n2.persistent_instructions",
+                                 "model_switch":  "changes model identity only; agent context and persistent instructions remain attached to runtime-owned clients and probes",
+                                 "context_overflow":  "exceed_context_size_error yields into existing bounded oversize-recovery decomposition rather than identical HTTP retry",
+                                 "shared_persistent_instructions":  "config/runtime.json:persistent_instructions; preserved from pre-0.54.1a live installs by generic JSON migration"
+                             },
+    "profiles_config":  "config/profiles.json",
+    "profile_runtime":  {
+                            "config":  "config/profiles.json",
+                            "installer_semantics":  "schema-managed JSON: whole config directory is snapshotted before in-place sync; matching live values are merged into new schema",
+                            "blocks":  [
+                                           "user.persona",
+                                           "user.voice",
+                                           "n1.persona",
+                                           "n1.voice",
+                                           "n2.persona",
+                                           "n2.voice"
+                                       ],
+                            "direct_persona":  "operator-authored authority",
+                            "inferred_persona":  "voice_profile persona_profile.json; supplemental only",
+                            "voice":  "voice_profile voice_prompt.txt",
+                            "model_switch":  "profile context is runtime-owned and remains attached when model identity changes"
+                        },
+    "codex_reasoning":  {
+                            "plugin":  "plugins/codex_reasoner",
+                            "execution_owner":  "Norm/N2",
+                            "sandbox":  "read-only",
+                            "ephemeral":  true,
+                            "workspace":  "disposable empty temp directory",
+                            "input":  "question plus evidence explicitly supplied by Norm",
+                            "output":  "structured reasoning recommendation"
+                        },
+    "user_voice_history":  {
+                               "source":  "PostgreSQL durable conversation messages with role=user only",
+                               "tool":  "plugin_voice_profile__main__build_from_chat_history",
+                               "persona_policy":  "voice-only; never writes operator-authored user persona"
+                           },
+    "chunked_evidence":  {
+                             "authority":  "config/runtime.json:context_budget",
+                             "scope":  "large default text read_file results delivered to N2",
+                             "context_partition":  "measure current system/messages/tool schemas, reserve current N2 num_predict output plus safety, then target raw_evidence_fraction of remaining usable input",
+                             "raw_evidence_fraction":  0.2,
+                             "max_raw_evidence_items_per_n2_turn":  1,
+                             "compact_state_max_fraction":  0.3,
+                             "addressing":  "stable byte ranges within one source-fingerprint-locked stream; N2 may request any one numbered piece",
+                             "seams":  "{0:1} start, {n:n+1} internal, {N:0} end",
+                             "eviction":  "after N2 consumes a chunk and emits its next tool call, raw text is replaced in active model history by compact provenance + retained facts; full raw tool evidence remains durable out of context",
+                             "n1_verification":  "Chunked read_file calls use the same live Redis verification pool. N1 sees bounded candidate metadata/canonical values, judges sufficiency, and may replay exactly one prior raw chunk payload from Redis; canonical values are never substituted for requested file bytes. If prior evidence is insufficient or unavailable, the source is read fresh.",
+                             "source_change":  "source_fingerprint mismatch invalidates the active stream and requires a fresh read",
+                             "context_headroom_checkpoint":  {
+                                                                 "remaining_fraction":  0.05,
+                                                                 "counter_source":  "Ollama prompt_eval_count plus estimated newly visible assistant payload; no full prompt rescan per turn",
+                                                                 "lossless_archive":  "norm_runtime.task_context_slices stores the recent execution slice in PostgreSQL before continuation",
+                                                                 "distillation":  "N1 converts the durable slice into task-applicable continuation state only; an assistant tool-call proposal without a following tool result is explicitly treated as unexecuted",
+                                                                 "resume":  "PromptQueue.yield_job requeues the same task/step with distilled job.context; the resumed slice uses the authoritative original request + current internal step + compact continuation/evidence cursors and skips bulk task working memory, prior-step, and background-memory reinjection; lossless PostgreSQL context remains available by reference",
+                                                                 "stream_cursor":  "chunked evidence stream states are carried in existing job metadata across the requeue"
+                                                             }
+                         },
+    "verification_pool_replay":  {
+                                     "authority":  "Redis live verification pool: compact metadata in norm:validation:pool plus raw payloads in the companion norm:validation:pool:replay hash, both keyed by the same record_id; no parallel in-process raw-result cache",
+                                     "decision_owner":  "N1 judges whether one or more relevant prior observations are sufficiently applicable/current for N2\u0027s present information request; cost is not a decision criterion",
+                                     "freshness":  "age alone does not determine staleness; N1 reasons from source volatility, requested freshness, known mutations/invalidation, scope, contradictions, and evidence completeness",
+                                     "candidate_context":  "N1 scans only the compact metadata hash and receives bounded metadata/canonical values, age/check count, scope, and replay availability; raw replay payloads are fetched from the companion hash only after selection",
+                                     "replay":  "after N1 selects sufficient evidence, the exact hot replay payload is fetched from Redis and supplied to N2; N2 need not know whether evidence was replayed or freshly observed",
+                                     "multi_record":  "N1 may select up to validation_pool.max_replay_records relevant small observations; read_file remains limited to one raw evidence payload per N2 turn",
+                                     "payload_limit":  "validation_pool.replay_payload_max_bytes bounds each private hot replay payload; oversized/unavailable payloads force fresh source execution rather than bloating N1 context",
+                                     "mutation":  "known mutations invalidate affected Redis validation targets immediately; a moved/unreachable locator does not retroactively invalidate already observed cached content",
+                                     "durability":  "PostgreSQL retains durable validation/history/checkpoint state; private replay payloads are Redis-hot evidence and are not copied into long-term validation history",
+                                     "config":  {
+                                                    "replay_payload_max_bytes":  393216,
+                                                    "max_replay_records":  3
+                                                }
+                                 },
+    "remote_sse_client":  {
+                              "builder":  "make_sse.bat",
+                              "build_script":  "tools/build_sse_client.py",
+                              "output":  "Norm-SSE.exe",
+                              "transport":  "read-only HTTP server-sent events from activity /events over the configured tailnet host",
+                              "configuration":  "builder resolves the installed network.current_machine/current_domain and activity_port at build time and embeds only the remote SSE endpoint",
+                              "secrets":  "none; generated client does not embed Redis/PostgreSQL credentials or Norm secret environment values",
+                              "portability":  "single Windows executable intended to be copied to another tailnet-connected Windows machine"
+                          },
+    "task_round_budget":  {
+                              "base_limit":  128,
+                              "first_progress_review":  96,
+                              "extension_rounds":  36,
+                              "hard_limit":  384,
+                              "judge":  "N1 grants each additional bounded lease only for genuine forward progress rather than raw tool/activity volume",
+                              "manual_recovery":  "At the granted/hard boundary a resumable failure checkpoint is retained for /failed and /resume-failed; /flush-failed distills a reusable lesson before purging detailed failed-task state."
+                          },
+    "lesson_model":  {
+                         "plugin":  "plugins/lesson_model",
+                         "version":  "0.3.0a1",
+                         "mode":  "operator-reviewed lessons + versioned code memory + topology",
+                         "training_backend":  "not configured; training and auto-promotion disabled",
+                         "state_root":  "state/lesson_model",
+                         "source_retention":  "content-addressed wholesale ZIP copy; original input is never deleted",
+                         "postgres_table":  "configured runtime schema.code_memory_snapshots",
+                         "human_outputs":  [
+                                               "README.md",
+                                               "standalone interactive topology HTML"
+                                           ]
+                     },
+    "stegosplit_message":  {
+                               "plugin":  "plugins/stegosplit_message",
+                               "version":  "0.4.3",
+                               "engine_version":  "3.0.0a1 / distributed native plugin 0.4.0",
+                               "format_version":  "V3",
+                               "pair_carrier":  "RGB +/-1 color-delta nibble (4 bits per pixel; zlib on payload when useful)",
+                               "public_carrier":  "independent single-PNG RGB LSB (3 bits per pixel) or overt tEXt metadata",
+                               "security_boundary":  "public identifiers are NOT authentication credentials; no private keys embedded",
+                               "compiled_implementation":  "Windows CPython 3.14 x64 .pyd modules"
+                           },
+    "stegosplit_auth":  {
+                            "plugin":  "plugins/stegosplit_auth",
+                            "version":  "0.1.0",
+                            "format":  "anchored SSMC/v1",
+                            "master":  "private master.png with unencrypted issuer-seed metadata",
+                            "native_windows_module":  "plugins/stegosplit_auth/src/master_client_auth.cp314-win_amd64.pyd",
+                            "github_source":  "private implementation source excluded",
+                            "security":  "bearer credentials; revocation/expiration/failed-password lockouts",
+                            "integration":  "standalone only, no OpenSSH/TLS listener",
+                            "shared_v3_engine":  "plugins/stegosplit_message/src/_stegosplit_v3"
+                        },
+    "stegosplit_key":  {
+                           "version":  "0.2.0a1",
+                           "compiled_implementation":  "Windows CPython 3.14 x64 .pyd modules"
+                       },
+    "output_overflow":  {
+                            "implementation":  "core/norm_runtime/output_overflow.py",
+                            "user_report":  "configured state_root/reports/final-overflow/*.md",
+                            "redis_receipt":  "norm:output:overflow:* (24h, verified readback)",
+                            "condensation_attempts":  3,
+                            "policy":  "retain full generated original and submit shortest complete summary; no bypass of N1/N2 verification",
+                            "normal_output_child_tasks":  "not included; deferred"
+                        },
+    "release_revision":  "r4 integration",
+    "celery_tool_transport":  {
+                                  "transport":  "Celery",
+                                  "enabled_setting":  "config/settings.ini:[celery].enabled",
+                                  "redis_db_setting":  "config/settings.ini:[celery].redis_db",
+                                  "worker_count_setting":  "config/settings.ini:[celery].worker_count",
+                                  "n1_gate":  "before_tool / after_tool",
+                                  "n2":  "original active step and final conclusion remain N2-owned",
+                                  "worker_entrypoint":  "tools/celery_tool_worker.py",
+                                  "launcher":  "tools/start_async_workers.py"
+                              }
 }

@@ -1,3 +1,18 @@
+## Norm 0.55.9r4 - integrated fixes (test candidate)
+
+- Original N1 gate, N2 planning and final-conclusion logic preserved.
+- Files and complete folders now share one reversible Redis DB2/JSON trash
+  lifecycle, including inventory, restore, purge and cross-volume verification.
+- Historical unknown-origin folders appear as held orphan records, never
+  silently restored to a guessed location or deleted by bulk purge.
+- /soft-delete "PATH" is a direct operator command in both Norm consoles.
+  /delete-list, /restore-delete and /delete-files operate on the same records.
+- Soft-delete help and operator help menus updated for the actual commands.
+- Celery launcher uses pythonw.exe instead of visible console-based workers.
+- Includes the Schema-2 pywinauto/MSS plugin with session-1 loopback helper
+  and configurable [desktop_gui] port. Read-only GUI tools are supported;
+  mouse and keyboard operations remain disabled for safety.
+- Existing Redis records and installed C:Norm remain untouched by packaging.
 ## Norm 0.55.9r3 - frozen Celery dependency compatibility (2026-10-11)
 
 - Corrects the installer PyInstaller analysis to explicitly collect dynamically

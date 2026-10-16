@@ -42,6 +42,7 @@ class NormConsole:
         self.failed_url = control_base + "/failed"
         self.resume_failed_url = control_base + "/resume-failed"
         self.flush_failed_url = control_base + "/flush-failed"
+        self.soft_delete_url = control_base + "/soft-delete"
         self.delete_list_url = control_base + "/delete-list"
         self.restore_delete_url = control_base + "/restore-delete"
         self.delete_files_url = control_base + "/delete-files"
@@ -328,6 +329,20 @@ class NormConsole:
         except Exception as exc:
             self.console.print(f"[red]Failed-task operation failed: {exc}[/]")
 
+    def _stage_trash(self, source: str) -> None:
+        try:
+            req = request.Request(
+                self.soft_delete_url, data=json.dumps({"path": source}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST")
+            with request.urlopen(req, timeout=180) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            if result.get("status") != "ok":
+                self.console.print(f"[red]Soft-delete failed: {result.get('error') or result.get('status')}[/]")
+                return
+            self.console.print(f"[yellow]Staged {result.get('original_path')} as {result.get('deletion_id')}.[/]")
+        except Exception as exc:
+            self.console.print(f"[red]Could not soft-delete: {exc}. Check /delete-list before retrying.[/]")
+
     def _trash_command(self, action: str, deletion_id: str = "") -> None:
         try:
             if action == "list":
@@ -515,6 +530,14 @@ class NormConsole:
             threading.Thread(target=self._failed_command, args=("resume", parts[1]), daemon=True).start()
         elif parts == ["/flush-failed"]:
             threading.Thread(target=self._failed_command, args=("flush",), daemon=True).start()
+        elif parts and parts[0] == "/soft-delete":
+            source = stripped[len("/soft-delete"):].strip()
+            if len(source) >= 2 and source[0] == source[-1] == '"':
+                source = source[1:-1]
+            if not source:
+                self.console.print('Usage: /soft-delete "C:\\path\\to\\file-or-folder"', markup=False)
+            else:
+                threading.Thread(target=self._stage_trash, args=(source,), daemon=True).start()
         elif parts == ["/delete-list"]:
             threading.Thread(target=self._trash_command, args=("list",), daemon=True).start()
         elif parts and parts[0] == "/restore-delete" and len(parts) == 2:
