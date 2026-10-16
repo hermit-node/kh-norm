@@ -26,6 +26,7 @@ from .plugin_manager import PluginManager
 from .plugin_identity import verify_identity
 from .task_storage import TaskStorageLimitReached, TaskStorageManager
 from .archive_adapter import archive_manifest, compare_archive_to_directory, hash_archive_member, looks_like_archive, read_archive_member
+from .backup_retention import DEFAULT_BACKUP_LIMIT, prune_backup_files
 from .file_access_policy import authorize_path
 
 
@@ -998,6 +999,7 @@ class FileToolExecutor:
         stamp = time.strftime("%Y%m%d-%H%M%S")
         backup = self.backup_root / f"{stamp}-{sha256[:12]}-{path.name}"
         shutil.copy2(path, backup)
+        prune_backup_files(self.backup_root, limit=DEFAULT_BACKUP_LIMIT)
 
     def _audit(
         self,

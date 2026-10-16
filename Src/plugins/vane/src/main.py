@@ -11,7 +11,7 @@ def vane_status() -> dict:
     r = remote("vane")
     if not r["enabled"]:
         return {"enabled": False, "configured": bool(r["host"]), "endpoint": r["base"]}
-    if not r["host"]: raise RuntimeError("Vane is enabled but remote_agents.vane_host is blank")
+    if not r["host"]: raise RuntimeError("Vane is enabled but vane.host is blank")
     return {"enabled": True, "endpoint": r["base"], "health": request_json(r["base"] + "/health", headers=_headers(), timeout=10)}
 
 

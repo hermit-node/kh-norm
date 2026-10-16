@@ -6,9 +6,9 @@ from ._client import basic, remote, request_json, resolve_model, settings
 def _cfg() -> tuple[dict, str, str, str]:
     r = remote("opencode")
     p = settings()
-    user = p.get("remote_agents", "opencode_username", fallback="opencode").strip() or "opencode"
-    provider = p.get("remote_agents", "opencode_provider_id", fallback="norm-shared").strip() or "norm-shared"
-    default_model = p.get("remote_agents", "opencode_model", fallback="primary").strip() or "primary"
+    user = p.get("opencode", "username", fallback="opencode").strip() or "opencode"
+    provider = p.get("opencode", "provider_id", fallback="norm-shared").strip() or "norm-shared"
+    default_model = p.get("opencode", "model", fallback="primary").strip() or "primary"
     return r, user, provider, default_model
 
 
@@ -22,7 +22,7 @@ def opencode_status() -> dict:
     if not r["enabled"]:
         return {"enabled": False, "configured": bool(r["host"]), "endpoint": r["base"]}
     if not r["host"]:
-        raise RuntimeError("OpenCode is enabled but remote_agents.opencode_host is blank")
+        raise RuntimeError("OpenCode is enabled but opencode.host is blank")
     health = request_json(r["base"] + "/global/health", headers=_headers(user), timeout=10)
     return {"enabled": True, "endpoint": r["base"], "health": health, "provider_id": provider, "default_model": resolve_model(default_model)}
 

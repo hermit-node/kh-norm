@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "jan",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "date": "2026-10-05",
   "entrypoint": "src/main.py",
   "description": "Remote Jan adapter for model/chat delegation over an operator-configured Tailscale endpoint.",
@@ -10,5 +10,23 @@
     "remote-agent",
     "model-provider"
   ],
-  "sha256": "800092f44721f5dbf5e0e33db751d27dca074339dec632c3787bdc3ae57448ea"
+  "sha256": "a215575ea54105ee8e916a8d5873cc505cefd4e3a3ba73b00f8da1a928cc4ab1",
+  "settings": {
+    "model_provider": {
+      "enabled": false,
+      "chat_base_url": "",
+      "primary_model": "",
+      "secondary_model": "",
+      "embedding_base_url": "",
+      "embedding_model": "",
+      "timeout_seconds": 180
+    },
+    "jan": {
+      "enabled": false,
+      "scheme": "http",
+      "host": "",
+      "port": 1337,
+      "model": "primary"
+    }
+  }
 }

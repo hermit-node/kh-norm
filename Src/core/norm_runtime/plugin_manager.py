@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 
 from .plugin_identity import identity_files, verify_identity
+from .plugin_settings import reconcile_plugin_settings
 
 PLUGIN_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://github.com/hermit-node/norm/plugins/v2")
 _MANIFEST_KEYS = {"NAME", "VERSION", "ENTRYPOINT", "CAPABILITIES", "DESCRIPTION"}
@@ -207,6 +208,8 @@ class PluginManager:
         self._loaded: dict[str, _LoadedPlugin] = {}
         self._errors: dict[str, str] = {}
         self._generation = 0
+        self._settings_status: dict[str, Any] = {"ok": True, "changed": False, "resolved": {}}
+        self._disabled: set[str] = set()
         self._lock = _PLUGIN_GLOBAL_LOCK
         self.plugin_root.mkdir(parents=True, exist_ok=True)
 
@@ -446,11 +449,37 @@ class PluginManager:
             if folder.is_dir() and not folder.name.startswith((".", "_"))
         }
         changed = False
+        try:
+            self._settings_status = reconcile_plugin_settings(self.plugin_root, backup_limit=12)
+        except Exception as exc:
+            self._settings_status = {
+                "ok": False, "changed": False, "resolved": {},
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        if self._settings_status.get("changed"):
+            changed = True
+        resolved_settings = self._settings_status.get("resolved") or {}
+        disabled_now: set[str] = set()
+        for folder_name in current_folders:
+            section = resolved_settings.get(folder_name) or {}
+            raw_enabled = str(section.get("enabled", "true")).strip().lower()
+            if raw_enabled in {"0", "no", "false", "off"}:
+                disabled_now.add(folder_name)
+        for folder_name in sorted(disabled_now):
+            if folder_name in self._loaded:
+                self._loaded.pop(folder_name, None)
+                changed = True
+            self._errors.pop(folder_name, None)
+        if disabled_now != self._disabled:
+            changed = True
+        self._disabled = disabled_now
         for removed in sorted(set(self._loaded) - set(current_folders)):
             self._loaded.pop(removed, None)
             self._errors.pop(removed, None)
             changed = True
         for folder_name, folder in sorted(current_folders.items()):
+            if folder_name in self._disabled:
+                continue
             try:
                 fingerprint, scripts = self._folder_fingerprint(folder)
                 prior = self._loaded.get(folder_name)
@@ -517,11 +546,15 @@ class PluginManager:
         for folder, error in sorted(self._errors.items()):
             if folder not in self._loaded:
                 plugins.append({"name": folder, "folder": folder, "version": "", "tools": [], "refresh_error": error})
+        for folder in sorted(self._disabled):
+            if folder not in self._loaded:
+                plugins.append({"name": folder, "folder": folder, "version": "", "tools": [], "disabled": True, "refresh_error": None})
         return {
             "schema_version": 2,
             "generated_at": datetime.now().astimezone().isoformat(),
             "generation": self._generation,
             "plugin_root": str(self.plugin_root),
+            "plugin_settings": self._settings_status,
             "plugins": plugins,
             "errors": [{"folder": folder, "error": error} for folder, error in sorted(self._errors.items())],
         }

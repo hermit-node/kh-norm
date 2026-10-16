@@ -16,5 +16,10 @@
     "dynamic vision output budgeting",
     "process-local page result cache"
   ],
-  "sha256": "c3ffc0499dd1a0b9ec5889321139b5d0ee2d2536d9fe1778cbb8fdb182f8ebe6"
+  "sha256": "c3ffc0499dd1a0b9ec5889321139b5d0ee2d2536d9fe1778cbb8fdb182f8ebe6",
+  "settings": {
+    "vision_parse": {
+      "enabled": true
+    }
+  }
 }

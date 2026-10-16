@@ -8,7 +8,7 @@ def jan_status() -> dict:
     if not cfg["enabled"]:
         return {"enabled": False, "configured": bool(cfg["host"]), "endpoint": cfg["base"]}
     if not cfg["host"]:
-        raise RuntimeError("Jan is enabled but remote_agents.jan_host is blank")
+        raise RuntimeError("Jan is enabled but jan.host is blank")
     result = request_json(cfg["base"] + "/v1/models", headers=bearer("NORM_JAN_API_KEY"), timeout=10)
     return {"enabled": True, "endpoint": cfg["base"], "models": result.get("data", []) if isinstance(result, dict) else result}
 

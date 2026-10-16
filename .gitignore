@@ -1,46 +1,21 @@
-# Machine-local/private state
+# Exclude machine-private state
 .env
 .env.*
 !.env.example
-norm-imprint.local.json
-norm-imprint.*.local.json
-.norm-local/
-.ssh/
 secrets/
 state/
 logs/
 workspace/
 temp/
-backup/
 backups/
-*.dump
-*.sql
 *.key
 *.pem
 *.pfx
 *.p12
-
-# Generated source/runtime output
-src/Norm/.venv/
-src/Norm/core/norm.exe
-src/Norm/tools/weasyprint/runtime/
+*.dump
+*.sqlite
+*.db
 **/__pycache__/
 *.pyc
+.venv/
 .pytest_cache/
-build/
-dist/
-*.spec
-
-# Editor/OS
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
-
-!Norm-Installer.spec
-
-!Norm-0.53.20-portable-source.zip
-
-# Backup plugin source is part of the release.
-!Src/plugins/backup/
-!Src/plugins/backup/**

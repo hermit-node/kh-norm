@@ -15,5 +15,10 @@
     "archive member sha256",
     "archive-directory compare"
   ],
-  "sha256": "5559f93c18b5fe7cd6ffbe6e695dd5dbf7bc95a915f94302d66b565913eabaa4"
+  "sha256": "5559f93c18b5fe7cd6ffbe6e695dd5dbf7bc95a915f94302d66b565913eabaa4",
+  "settings": {
+    "file_read": {
+      "enabled": true
+    }
+  }
 }

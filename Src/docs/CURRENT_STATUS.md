@@ -1,6 +1,6 @@
 # Norm current status
 
-Current package: **Norm 0.53.20** with **Installer 1.6.9-unified**.
+Current package: **Norm 0.53.21** with **Installer 1.6.10-unified**.
 
 This file is a current-state snapshot only.
 
@@ -9,7 +9,8 @@ This file is a current-state snapshot only.
 - Default runtime root: C:\Norm and relocatable through installer path configuration.
 - Runtime source/executable: core\.
 - Compiled target: core\norm.exe.
-- Canonical configuration: config\settings.ini and config\runtime.json.
+- Canonical core configuration: config\settings.ini and config\runtime.json.
+- Plugin configuration registry: config\plugins.ini, generated/reconciled from each Schema-2 plugin.json on startup/hot refresh. Jan/Vane/OpenCode and shared-model defaults are disabled with blank endpoints, so no second-PC configuration preserves legacy Norm/Ollama behavior.
 - Canonical runtime state root: [paths].state_root.
 - Durable workspace: %USERPROFILE%\Documents\Norm\workspace.
 - Disposable/recovery root: %USERPROFILE%\Documents\Norm\temp.
@@ -121,3 +122,7 @@ Package validation proves the shipped source/package contract. It does not by it
 ## Optional web-browser plugin
 
 This 0.53.20 package includes `plugins\web_browser` v1.0.0. It exposes real-browser page opening/text extraction, CSS-selected link discovery, bounded crawling, Bing/Bing News result discovery, and file-link download into the Norm workspace. Browser state persists under `Documents\Norm\workspace\web\sessions`. The plugin runs its Playwright/Beautiful Soup/Soup Sieve/Trafilatura worker through the installed Norm virtual environment rather than embedding those libraries into `norm.exe`.
+### Plugin settings registry (0.53.21)
+
+Schema-2 plugins declare non-secret defaults in `plugin.json` under `settings`. `PluginManager.refresh()` materializes/reconciles `config/plugins.ini` on startup and hot-rescan: declared operator values are preserved, missing/invalid values get defaults, and dangling keys/sections are removed after a rotating backup. Secrets stay in the configured external `.env`. Plugin/config/file/SQL/archive backup classes retain at most 12 newest backup sets.
+

@@ -12,5 +12,10 @@
     "source-grounded corpus retrieval",
     "active conversation voice conditioning"
   ],
-  "sha256": "390b889f39d8b2d182fad5efc7ec8559c0faa1be53517018806f300ef2648a5e"
+  "sha256": "390b889f39d8b2d182fad5efc7ec8559c0faa1be53517018806f300ef2648a5e",
+  "settings": {
+    "voice_profile": {
+      "enabled": true
+    }
+  }
 }

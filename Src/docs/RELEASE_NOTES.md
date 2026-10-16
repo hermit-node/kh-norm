@@ -1,5 +1,15 @@
 # Norm release notes
 
+## 0.53.21 — 2026-10-05 — manifest-driven plugin settings and bounded backups
+
+- Added manifest-driven `config/plugins.ini`: every Schema-2 plugin carries a `settings` declaration in `plugin.json`; `PluginManager.refresh()` reconciles settings on startup and every hot-rescan. Existing declared values survive, missing/invalid values fall back to plugin defaults, and dangling keys/sections are pruned only after a backup is written.
+- Added a standard per-plugin `enabled` setting. Jan/Vane/OpenCode default disabled; existing built-ins default enabled. Toggling a plugin setting takes effect on the next normal plugin refresh without rebuilding Norm.
+- Shared model-provider defaults are declared identically by Jan/Vane/OpenCode and merged safely; conflicting defaults from two plugins are rejected instead of silently using last-writer-wins behavior. Remote/model endpoints default blank and disabled, so an install with no second PC configured behaves exactly like pre-remote-agent Norm.
+- Installer 1.6.10 edits the same plugin settings sections (`model_provider`, `jan`, `vane`, `opencode`) instead of writing remote-agent fields into core `settings.ini`; it can read/migrate the short-lived 1.6.9 experimental `[model_provider]` / `[remote_agents]` core sections.
+- Secrets remain exclusively in Norm's configured external `.env`; `plugins.ini` is non-secret derived/operator configuration.
+- Backup retention is hard-capped at the newest 12 sets per backup class/location: plugin-settings snapshots, file-tool write backups, maintenance SQL safety dumps, source/full backup archives, and installer config snapshots. A `.zip` plus its `.sha256` companion counts as one backup set.
+- Jan/Vane/OpenCode adapters advance to v1.0.2 for the per-plugin settings layout; source-tree identities are rehashed and verified.
+
 ## 0.53.20 — 2026-10-05 — remote agents, shared models, and reproducible optional plugins
 
 - Added Schema-2 `jan`, `vane`, and `opencode` adapters using explicit operator-configured Tailscale endpoints; no peer discovery or endpoint sweeping is performed.
@@ -117,8 +127,6 @@
 - The active suppression transition marker now survives until the worker acknowledges cancellation; duplicate suppress requests during that window are idempotent.
 - Prompt control HTTP failures are displayed without terminating the Prompt console.
 - The Prompt console now closes its one-shot PostgreSQL pool after recovering the latest turn, preventing `psycopg_pool` finalizer warnings on helper shutdown.
-
-# Norm release notes
 
 ## Coverage note
 

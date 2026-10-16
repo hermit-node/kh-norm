@@ -20,6 +20,7 @@ if str(APP) not in sys.path:
     sys.path.insert(0, str(APP))
 
 from norm_runtime.settings import load_path_settings, load_plugin_settings, load_ssh_settings
+from norm_runtime.backup_retention import DEFAULT_BACKUP_LIMIT, prune_backup_sets
 
 
 def load_settings() -> configparser.ConfigParser:
@@ -174,7 +175,8 @@ def _source_backup(cfg: configparser.ConfigParser, *, label: str, validate_only:
     with zipfile.ZipFile(partial, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6, allowZip64=True) as zf:
         files, total = add_package_source(zf, ROOT, manifest)
     result = _finalize_zip(partial, final_zip)
-    return {"ok": True, "mode": "source", **result, "source_files": files, "source_bytes": total, "sensitive": False}
+    pruned = prune_backup_sets(backup_root, pattern="Norm-*.zip", limit=DEFAULT_BACKUP_LIMIT)
+    return {"ok": True, "mode": "source", **result, "source_files": files, "source_bytes": total, "sensitive": False, "backup_sets_limit": DEFAULT_BACKUP_LIMIT, "pruned_backup_files": pruned}
 
 
 def _full_backup(cfg: configparser.ConfigParser, *, label: str, validate_only: bool) -> dict:
@@ -311,13 +313,14 @@ def _full_backup(cfg: configparser.ConfigParser, *, label: str, validate_only: b
             zf.writestr("backup-state/backup-manifest.json", json.dumps(backup_manifest, indent=2, ensure_ascii=False) + "\n")
             zf.writestr("SENSITIVE_BACKUP.txt", backup_manifest["warning"] + "\n")
         result = _finalize_zip(partial, final_zip)
+        pruned = prune_backup_sets(backup_root, pattern="Norm-*.zip", limit=DEFAULT_BACKUP_LIMIT)
         return {
             "ok": True, "mode": "full", **result,
             "source_files": source_files, "source_bytes": source_bytes,
             "persistent_files": p_files, "persistent_bytes": p_bytes,
             "workspace_files": w_files, "workspace_bytes": w_bytes,
             "recovery_files": r_files, "recovery_bytes": r_bytes,
-            "sensitive": True,
+            "sensitive": True, "backup_sets_limit": DEFAULT_BACKUP_LIMIT, "pruned_backup_files": pruned,
         }
 
 

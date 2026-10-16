@@ -204,7 +204,7 @@ def resolve_bind_host(value: str) -> str:
     if result.returncode != 0 or not result.stdout.strip():
         raise RuntimeError("No Tailscale IPv4 address is available")
     host = result.stdout.strip().splitlines()[0].strip()
-    if ipaddress.ip_address(host) not in ipaddress.ip_network("100.64.0.0/10"):
+    if ipaddress.ip_address(host) not in ipaddress.ip_network("127.0.0.1/10"):
         raise RuntimeError(f"Refusing non-Tailscale bind address: {host}")
     return host
 

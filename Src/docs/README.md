@@ -2,14 +2,15 @@
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.53.20 / Installer 1.6.9-unified** package only. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.53.21 / Installer 1.6.10-unified** package only. Version history belongs only in RELEASE_NOTES.md.
 
 ## Runtime layout
 
 Default installation root: C:\Norm.
 
 - core\ — runtime source and compiled norm.exe target.
-- config\settings.ini — resolved paths, service endpoints, plugin root, file-access policy, and connection configuration.
+- config\settings.ini — core Norm paths, services, plugin root, file-access policy, and connection configuration.
+- config\plugins.ini — optional remote-plugin/shared-model configuration; not created unless remote integrations are enabled.
 - config\runtime.json — worker, model, maintenance, queue, storage, and memory policy.
 - docs\ — maintained current-state documentation plus the release ledger.
 - plugins\ — first-party and operator-added dynamic plugins.
@@ -238,3 +239,7 @@ Installer 1.6.9 performs managed in-place updates, preserves persistent machine 
 - FUTURE_IMPLEMENTATION_NOTES.md — active unimplemented backlog only.
 - MAINTENANCE_VERIFICATION.md — current package validation evidence.
 - RELEASE_NOTES.md — the only maintained historical/version ledger.
+### Plugin settings registry (0.53.21)
+
+Schema-2 plugins declare non-secret defaults in `plugin.json` under `settings`. `PluginManager.refresh()` materializes/reconciles `config/plugins.ini` on startup and hot-rescan: declared operator values are preserved, missing/invalid values get defaults, and dangling keys/sections are removed after a rotating backup. Secrets stay in the configured external `.env`. Plugin/config/file/SQL/archive backup classes retain at most 12 newest backup sets.
+

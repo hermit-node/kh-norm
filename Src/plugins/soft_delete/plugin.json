@@ -12,5 +12,10 @@
     "trash reconciliation",
     "trash purge"
   ],
-  "sha256": "eef4095a6626c6d8f26ef933e6854065c81960f9024b1d15e924d589442b18a2"
+  "sha256": "eef4095a6626c6d8f26ef933e6854065c81960f9024b1d15e924d589442b18a2",
+  "settings": {
+    "soft_delete": {
+      "enabled": true
+    }
+  }
 }

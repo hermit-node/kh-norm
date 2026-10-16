@@ -13,5 +13,10 @@
     "norm runtime writes",
     "bounded connections"
   ],
-  "sha256": "1a31b8fe6b01962348d0f90c361ac75baf8cacafc4a429f415d504d504185e9d"
+  "sha256": "1a31b8fe6b01962348d0f90c361ac75baf8cacafc4a429f415d504d504185e9d",
+  "settings": {
+    "postgres_pool": {
+      "enabled": true
+    }
+  }
 }

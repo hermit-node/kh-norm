@@ -12,5 +12,10 @@
     "installer package",
     "postgres backup"
   ],
-  "sha256": "5c634219e4a3fb6b60cf00ae71b3b5ba64f5579cf2382a7a2b64d7ffd531f540"
+  "sha256": "5c634219e4a3fb6b60cf00ae71b3b5ba64f5579cf2382a7a2b64d7ffd531f540",
+  "settings": {
+    "backup": {
+      "enabled": true
+    }
+  }
 }

@@ -12,5 +12,10 @@
     "newline-safe writing",
     "convenience script writer"
   ],
-  "sha256": "b90c88618f84b5a0708cb79854955fe740f37f22a5735b1855a3c498c4369d21"
+  "sha256": "b90c88618f84b5a0708cb79854955fe740f37f22a5735b1855a3c498c4369d21",
+  "settings": {
+    "verbatim_lines": {
+      "enabled": true
+    }
+  }
 }

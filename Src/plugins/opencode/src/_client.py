@@ -16,13 +16,20 @@ def runtime_root() -> Path:
 
 
 def settings() -> configparser.ConfigParser:
+    """Return optional plugin settings; missing config means remote integrations are disabled."""
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(runtime_root() / "config" / "plugins.ini", encoding="utf-8-sig")
+    return parser
+
+
+def _core_settings() -> configparser.ConfigParser:
     parser = configparser.ConfigParser(interpolation=None)
     parser.read(runtime_root() / "config" / "settings.ini", encoding="utf-8-sig")
     return parser
 
 
 def _env_file() -> dict[str, str]:
-    parser = settings()
+    parser = _core_settings()
     raw = parser.get("environment", "secrets_file", fallback="").strip()
     if not raw:
         return {}
@@ -46,23 +53,33 @@ def secret(name: str) -> str:
 
 def remote(name: str) -> dict[str, Any]:
     p = settings()
-    section = "remote_agents"
-    enabled = p.getboolean(section, f"{name}_enabled", fallback=False)
-    host = p.get(section, f"{name}_host", fallback="").strip()
-    port = p.getint(section, f"{name}_port", fallback={"jan": 1337, "vane": 7789, "opencode": 4096}[name])
-    scheme = p.get(section, f"{name}_scheme", fallback="http").strip() or "http"
+    section = str(name).strip().lower()
+    enabled = p.getboolean(section, "enabled", fallback=False)
+    host = p.get(section, "host", fallback="").strip()
+    port = p.getint(section, "port", fallback={"jan": 1337, "vane": 7789, "opencode": 4096}[name])
+    scheme = p.get(section, "scheme", fallback="http").strip() or "http"
     return {"enabled": enabled, "host": host, "port": port, "scheme": scheme, "base": f"{scheme}://{host}:{port}" if host else ""}
 
 
 def model_config() -> dict[str, Any]:
     p = settings()
     s = "model_provider"
+    enabled = p.getboolean(s, "enabled", fallback=False)
+    if not enabled:
+        return {
+            "chat_base_url": "",
+            "primary_model": "",
+            "secondary_model": "",
+            "embedding_base_url": "",
+            "embedding_model": "",
+            "timeout_seconds": 180,
+        }
     return {
-        "chat_base_url": p.get(s, "chat_base_url", fallback="http://127.0.0.1:8080/v1").rstrip("/"),
+        "chat_base_url": p.get(s, "chat_base_url", fallback="").rstrip("/"),
         "primary_model": p.get(s, "primary_model", fallback="").strip(),
         "secondary_model": p.get(s, "secondary_model", fallback="").strip(),
-        "embedding_base_url": p.get(s, "embedding_base_url", fallback="http://127.0.0.1:11434/v1").rstrip("/"),
-        "embedding_model": p.get(s, "embedding_model", fallback="nomic-embed-text").strip(),
+        "embedding_base_url": p.get(s, "embedding_base_url", fallback="").rstrip("/"),
+        "embedding_model": p.get(s, "embedding_model", fallback="").strip(),
         "timeout_seconds": p.getint(s, "timeout_seconds", fallback=180),
     }
 

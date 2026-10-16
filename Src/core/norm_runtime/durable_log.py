@@ -15,6 +15,7 @@ from psycopg.types.json import Jsonb
 from .models import StepResult, TaskPlan
 from .integrity_repair import prepare_task_prune_cur, repair_task_lineage_cur
 from .resource_status import merge_resource_status
+from .backup_retention import DEFAULT_BACKUP_LIMIT, prune_backup_files
 
 _SCHEMA_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -2193,6 +2194,7 @@ class PostgresTaskLog:
             except OSError:
                 pass
             raise RuntimeError("SQL backup failed; destructive history maintenance refused: " + proc.stderr.strip()[:600])
+        prune_backup_files(target_dir, pattern="norm_runtime-pre-prune-*.sql", limit=DEFAULT_BACKUP_LIMIT)
         return str(out)
 
     @staticmethod
