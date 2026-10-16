@@ -3,6 +3,7 @@ The active tab is not navigated or copied. Exports are created atomically by wor
 """
 from __future__ import annotations
 import re
+import json
 import uuid
 import random
 import hashlib
@@ -173,11 +174,30 @@ class VisualCapture:
             shutil.rmtree(j['folder'],ignore_errors=True)
         self.job=None
 
+    def _run_json_js(self, script, receiver):
+        """QtWebEngine on Windows does not reliably marshal JS objects/arrays.
+
+        Return serialized JSON across the Qt callback boundary and decode it
+        on the Python side. This preserves structured DOM/scroll metadata.
+        """
+        def delivered(raw):
+            if isinstance(raw, str):
+                try:
+                    value = json.loads(raw)
+                except (ValueError, TypeError):
+                    value = {"error": "Visual capture JavaScript returned invalid JSON"}
+            else:
+                value = raw
+            if value is None or value == "":
+                value = {"error": "Visual capture JavaScript returned no metadata"}
+            receiver(value)
+        self.browser.page.runJavaScript("JSON.stringify(" + script + ")", delivered)
+
     def _prepare(self):
         """Locate the scroll container without jumping to an arbitrary end."""
         if self.job is None:return
         self.job["prepare_attempts"]=self.job.get("prepare_attempts",0)+1
-        self.browser.page.runJavaScript(PREPARE_JS,self._prepared)
+        self._run_json_js(PREPARE_JS, self._prepared)
 
     def _prepared(self,data):
         if self.job is None:return
@@ -210,7 +230,7 @@ class VisualCapture:
         # Scroll upward by a real viewport fraction instead of setting scrollTop
         # to zero once. This triggers the website's lazy-history listeners.
         delta=-max(350,int(j['clip'][3]*.72))
-        self.browser.page.runJavaScript(SCROLL_JS.replace('STEP',str(delta)),self._top_checked)
+        self._run_json_js(SCROLL_JS.replace('STEP',str(delta)), self._top_checked)
 
     def _spinner_fingerprint(self,rects):
         pix=self.browser.view.grab()
@@ -301,8 +321,8 @@ class VisualCapture:
 
     def _snap(self,refresh=False):
         if not self.job or self.cancelled:return
-        self.browser.page.runJavaScript(
-            REGIONS_JS,lambda rects:self._snap_pixels(rects,refresh))
+        self._run_json_js(
+            REGIONS_JS, lambda rects: self._snap_pixels(rects, refresh))
 
     def _snap_pixels(self,rects,refresh=False):
         j=self.job
@@ -360,7 +380,7 @@ class VisualCapture:
         j=self.job
         if not j:return
         delta=int(j['clip'][3]*.68)
-        self.browser.page.runJavaScript(SCROLL_JS.replace('STEP',str(delta)),self._scrolled)
+        self._run_json_js(SCROLL_JS.replace('STEP',str(delta)), self._scrolled)
 
     def _scrolled(self,meta):
         j=self.job

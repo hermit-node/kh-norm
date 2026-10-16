@@ -1,3 +1,11 @@
+Norm 0.55.10r8: Visual PDF callback transport fix; source-only package. Requires the PyMuPDF dependency listed in core/requirements.txt. See docs/RELEASE_NOTES.md.
+
+Norm 0.55.10r7: independent N1 parent-step review; source-only, not installed. See docs/RELEASE_NOTES.md.
+
+# Norm 0.55.10r6 — chat-style rich dialogue PDF
+
+Updates the rich-dialogue formatter used by `/pdf-chat` so the output reads like a back-and-forth conversation instead of a compact article. User and assistant turns are visually separated, continuation labels survive page breaks, and citation links remain live.
+
 # Norm 0.55.10 - Integrated Workspace Source
 
 Continuing 0.55.9r13 browser-PDF with native three-terminal workspace, persistent fonts/layout and locked startup/shutdown. See docs/WORKSPACE_05510.md.

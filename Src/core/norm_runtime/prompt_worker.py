@@ -1459,7 +1459,6 @@ class PromptWorker:
                 "step_id": job.step_id,
                 "instruction": instruction,
                 "expected_result_kind": str(metadata.get("expected_result_kind") or "step_result"),
-                "acceptance_criteria": str(metadata.get("verification") or ""),
             },
             "handoff_precedence": {
                 "original_user_prompt": "authoritative user constraints over conflicting generated step wording",
@@ -1531,7 +1530,6 @@ class PromptWorker:
             "command_category": self._command_from_job(job)["category"],
             "content": answer,
             "artifacts": self._artifact_snapshot(evidence),
-            "verification_requirement": str((job.metadata or {}).get("verification") or ""),
             "evidence_count": len(evidence),
             "resource_status": resource_status,
         }
@@ -1554,8 +1552,7 @@ class PromptWorker:
             "user_reply": answer,
             "artifacts": self._artifact_snapshot(evidence),
             "requirements": {
-                "verification_requirement": str((job.metadata or {}).get("verification") or ""),
-                "expected_output": self._command_from_job(job).get("expected_output", {}),
+                    "expected_output": self._command_from_job(job).get("expected_output", {}),
             },
             "evidence_count": len(evidence),
             "resource_status": resource_status,
@@ -1595,6 +1592,8 @@ class PromptWorker:
             "task_user_prompt": str((job.metadata or {}).get("task_user_prompt") or (job.metadata or {}).get("original_user_prompt") or ""),
             "expected_result_kind": str((job.metadata or {}).get("expected_result_kind") or "final_candidate"),
             "parent_task_id": str((job.metadata or {}).get("parent_task_id") or ""),
+            "parent_step_id": str((job.metadata or {}).get("parent_step_id") or ""),
+            "internal_child_result": bool((job.metadata or {}).get("internal_child_result")),
             "recovery_scope_items": list((job.metadata or {}).get("recovery_scope_items") or []),
             "ingrained_task_context": list((job.metadata or {}).get("ingrained_task_context") or []),
             "command_envelope": self._command_from_job(job),
@@ -1700,7 +1699,6 @@ class PromptWorker:
             "primary_task_request": (job.metadata or {}).get("task_user_prompt"),
             "expected_result_kind": (job.metadata or {}).get("expected_result_kind"),
             "current_step": job.prompt if job.request_type != "final_verification" else (job.metadata or {}).get("step_name"),
-            "verification_requirement": (job.metadata or {}).get("verification"),
             "command": candidate.get("command"),
             "requirements": candidate.get("requirements"),
             "artifacts": candidate.get("artifacts"),
@@ -1759,6 +1757,57 @@ class PromptWorker:
             "n1_reason": str(judgment.get("reason") or ""),
         }, False
 
+    @staticmethod
+    def _internal_child_work(job: PromptJob) -> bool:
+        """True only for work whose finished submission is reviewed by its parent.
+
+        Do NOT include designated recovery successors: their previous parent
+        has failed, so no live parent step remains to perform the N1 review.
+        """
+        metadata = dict(job.metadata or {})
+        return bool(metadata.get("parent_task_id")) and (
+            str(metadata.get("prompt_origin") or "").startswith("runtime_child_")
+            or str(metadata.get("prompt_origin") or "").startswith("runtime_oversize_recovery_")
+            or bool(metadata.get("internal_child_result"))
+        )
+
+    def _complete_internal_child_candidate(
+        self, redis_id: str, job: PromptJob, name: str, started,
+        candidate: dict,
+    ) -> None:
+        """Release N2's self-reviewed component; N1 evaluates the parent step.
+
+        Never characterize the child as N1-approved. Child evidence, summaries,
+        and original step material remain in PostgreSQL for the parent review.
+        """
+        if not str(candidate.get("user_reply") or "").strip():
+            raise VerifierProtocolError("N2 child submission is empty")
+        supplied = candidate.get("artifacts") or []
+        if supplied and any(not bool(item.get("verified")) for item in supplied):
+            raise VerifierProtocolError("Child submission contains an unverified artifact")
+        summary = json.dumps({
+            "kind": "internal_child_ready_for_parent", "n2_self_checked": True,
+            "parent_task_id": str((job.metadata or {}).get("parent_task_id") or ""),
+            "parent_step_id": str((job.metadata or {}).get("parent_step_id") or ""),
+        }, ensure_ascii=False)
+        result = StepResult(
+            task_id=job.task_id, step_id=job.step_id, name=name,
+            status=StepStatus.COMPLETED, summary=summary,
+            verification="n2-self-checked:parent-n1-review-pending",
+            started_at=started, completed_at=_utc_now(),
+        )
+        if self.durable:
+            self.durable.checkpoint_step(result)
+            if not self.durable.all_steps_completed(job.task_id):
+                raise VerifierProtocolError("Internal child incomplete: cannot return partial result to parent")
+            self.durable.finalize_task(job.task_id, candidate["user_reply"], "completed")
+            if not self.durable.terminal_summary_verified(job.task_id):
+                raise RuntimeError("Durable child summary verification failed")
+        self.live.step_completed(job.task_id, job.step_id, summary, result.verification)
+        self.live.finish(job.task_id, candidate["user_reply"])
+        self._clear_terminal_redis(job.task_id, verified_outputs=supplied)
+        logging.info("N2 child result assembled; waiting for parent N1 review child=%s", job.task_id)
+
     def _process_final_verification(self, redis_id: str, job: PromptJob, name: str, started) -> None:
         original_prompt = self._ensure_original_user_prompt(job)
         try:
@@ -1773,6 +1822,11 @@ class PromptWorker:
             candidate = validate_final_candidate(raw_candidate, require_original_prompt=True)
         except (json.JSONDecodeError, ValueError) as exc:
             raise VerifierProtocolError(f"queued final candidate failed deterministic schema validation: {exc}") from exc
+        # Internal child pieces have already passed N2's self-review. The
+        # parent-step result will receive the sole N1 semantic acceptance.
+        if self._internal_child_work(job):
+            self._complete_internal_child_candidate(redis_id, job, name, started, candidate)
+            return
         artifact_state = self._final_artifact_state(candidate)
         n1_result, n1_processing_failed = self._n1_final_verification(job, candidate, artifact_state)
         if n1_result is None:
@@ -2777,6 +2831,20 @@ class PromptWorker:
                 self.live.step_completed(child_id, step.id, "Recovery lineage recorded", step.verify)
         elif existing not in {"running", "passed_to", "completed"}:
             raise RuntimeError("existing recovery task is not safely resumable: " + existing)
+        # The successor is also privately interpreted by N1 before its first
+        # work item is queued; accepted N2 recovery instructions are not N1's
+        # checklist. A retry reuses the immutable PostgreSQL interpretations.
+        active_for_n1 = steps[2:-1]
+        if active_for_n1 and hasattr(self.durable, "n1_step_intent"):
+            missing = [step for step in active_for_n1
+                       if not self.durable.n1_step_intent(child_id, step.id)]
+            if missing:
+                intent_map = self.n1_gatekeeper.prepare_private_step_intents(
+                    original_request=original, task_request=original,
+                    steps=[{"id": step.id, "name": step.name,
+                            "description": step.description} for step in missing],
+                )
+                self.durable.save_n1_step_intents(child_id, intent_map)
         # Do not enqueue duplicate or already-completed recovery work.
         if existing in {"completed", "passed_to"}:
             return child_id
@@ -2786,7 +2854,8 @@ class PromptWorker:
             for index, step in enumerate(active):
                 meta = dict(job.metadata or {})
                 meta.update({
-                    "step_name": step.name, "verification": step.verify,
+                    "step_name": step.name, "verification": "",
+                    "n1_private_prepared": True,
                     "prompt_origin": "runtime_recovery_attempt", "recovery_mode": True,
                     "recovery_parent_task_id": job.task_id,
                     "recovery_failed_step_id": job.step_id,
@@ -3319,7 +3388,8 @@ class PromptWorker:
                 message_id=step.node_id, task_id=child_id, step_id=step.id,
                 prompt=step.description, project_id=job.project_id, context=parent_context,
                 attempt=0, created_at=__import__("time").time(), metadata={
-                    "step_name": step.name, "verification": step.verify,
+                    "step_name": step.name, "verification": "",
+                    "internal_child_result": True,
                     "prompt_origin": "runtime_child_subtask", "context_id": child_id,
                     "original_user_prompt": original_user_prompt,
                     "task_user_prompt": task_user_prompt,
@@ -3424,7 +3494,8 @@ class PromptWorker:
             message_id=work_step.node_id, task_id=child_id, step_id="work",
             prompt=instruction, project_id=parent_job.project_id, context=context,
             attempt=0, created_at=__import__("time").time(), metadata={
-                "step_name": title, "verification": verify,
+                "step_name": title, "verification": "",
+                "internal_child_result": True,
                 "prompt_origin": prompt_origin, "context_id": child_id,
                 "original_user_prompt": original_user_prompt,
                 "task_user_prompt": instruction if prompt_origin in {
@@ -5628,6 +5699,9 @@ class PromptWorker:
         if gate is None or not hasattr(gate, "judge_step_answer"):
             return True, []
         meta = dict(job.metadata or {})
+        # Internal pieces are self-checked by N2; N1 reviews the assembled parent.
+        if self._internal_child_work(job):
+            return True, []
         expected_kind = str(meta.get("expected_result_kind") or "")
         if expected_kind == "recovery_analysis":
             try:
@@ -5641,15 +5715,38 @@ class PromptWorker:
                     analysis=analysis)
             except (ValueError, RuntimeError) as exc:
                 return False, [f"Wrong recovery-analysis result contract: {exc}"]
+        # N1's independent judgment was formed and persisted before the step
+        # became runnable. Never pass N2's suggested `verification` checklist.
+        private_intent = None
+        durable = getattr(self, "durable", None)
+        if durable is not None and hasattr(durable, "n1_step_intent"):
+            private_intent = durable.n1_step_intent(job.task_id, job.step_id)
+        if meta.get("n1_private_prepared") and not private_intent:
+            raise VerifierProtocolError("Private N1 pre-execution judgment missing; cannot approve N2's finished work")
+        parent_evidence = list(evidence)
+        if durable is not None and hasattr(durable, "child_step_evidence"):
+            parent_evidence.extend(durable.child_step_evidence(job.task_id, job.step_id))
+        # N1's independent artifact read-back is NOT the N2 self-check. The
+        # artifact verifier only trusts observed tool returns, never prose
+        # claims. It streams files and checks their current SHA-256, or records
+        # that no independent proof was available.
+        from .artifact_verification import snapshot as independent_artifact_snapshot
+        artifact_observations = independent_artifact_snapshot(parent_evidence)
+        if artifact_observations:
+            parent_evidence.append({
+                "tool": "n1_independent_artifact_readback",
+                "arguments": {"task_id": job.task_id, "step_id": job.step_id},
+                "result": {"ok": True, "artifacts": artifact_observations},
+                "deterministic_verification": True,
+            })
         judgment = gate.judge_step_answer(
+            private_intent=private_intent if isinstance(private_intent, str) else "",
+            recovery_analysis=(expected_kind == "recovery_analysis"),
             original_request=str(meta.get("original_user_prompt") or ""),
             task_request=str(meta.get("task_user_prompt") or meta.get("original_user_prompt") or ""),
             step_prompt=str(job.prompt or ""),
-            verification_requirement=(str(meta.get("verification") or "")
-                + ("\nINTERNAL CHILD CONTRACT: expected recovery_analysis JSON; original root request is reference only. Judge the structured assessment, not the root deliverable."
-                   if expected_kind == "recovery_analysis" else "")),
             candidate=str(answer),
-            evidence=self._evidence_text(evidence),
+            evidence=self._evidence_text(parent_evidence),
         )
         if judgment.get("processing_failed"):
             if not verified_by_n2:
@@ -5671,11 +5768,10 @@ class PromptWorker:
                  "content": json.dumps({
                      "primary_task": str(meta.get("task_user_prompt") or meta.get("original_user_prompt") or ""),
                      "step_prompt": str(job.prompt or ""),
-                     "verification_requirement": str(meta.get("verification") or ""),
                  }, ensure_ascii=False)},
                 {"role": "assistant", "invoke_source": "n2", "kind": "verified_candidate", "content": str(answer)},
                 {"role": "tool", "invoke_source": "system", "kind": "observed_evidence",
-                 "content": json.dumps(evidence, ensure_ascii=False, default=str)},
+                 "content": json.dumps(parent_evidence, ensure_ascii=False, default=str)},
                 {"role": "system", "invoke_source": "system", "kind": "execution_progress",
                  "content": json.dumps({"working_context": job.context, "job_metadata": meta,
                                         "previous_steps": prior_progress}, ensure_ascii=False, default=str)},
@@ -5714,7 +5810,7 @@ class PromptWorker:
             handoff = (
                 "This is attempt 2 of the same N1 step review after a model-processing failure. "
                 "Do not repeat N2's completed work. The N2 structured verifier already accepted this exact candidate; "
-                "that does NOT constitute N1 approval. Independently compare the original request, step criteria, "
+                "that does NOT constitute N1 approval. Independently compare the original request, step purpose, "
                 "candidate and evidence supplied above. Return ACCEPT or specific actionable RETRY instructions.\n"
                 f"First review failure: {checkpoint['n1_first_failure']}\n"
                 f"Lossless PostgreSQL archive: task_context_slices task_id={job.task_id} "
@@ -5726,10 +5822,11 @@ class PromptWorker:
             )
             logging.warning("N1 step review failed; checkpointed verified candidate and retrying N1 only task=%s step=%s", job.task_id, job.step_id)
             judgment = gate.judge_step_answer(
+                private_intent=private_intent if isinstance(private_intent, str) else "",
+                recovery_analysis=(expected_kind == "recovery_analysis"),
                 original_request=saved_request,
                 task_request=str(saved_scope["primary_task"]),
                 step_prompt=str(saved_scope["step_prompt"]),
-                verification_requirement=str(saved_scope["verification_requirement"]),
                 candidate=saved_candidate, evidence=self._evidence_text(saved_evidence), review_handoff=handoff,
             )
             if judgment.get("processing_failed"):

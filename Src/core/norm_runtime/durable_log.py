@@ -127,6 +127,18 @@ class PostgresTaskLog:
                     PRIMARY KEY (task_id, step_id)
                 )
             """).format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
+            # N1-only, immutable, pre-execution interpretation of each step's purpose.
+            # N2's suggested `verify` field stays in task_runs.plan only as an
+            # optional historical example, never as the independent review standard.
+            cur.execute(sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {}.n1_step_intents (
+                    task_id text NOT NULL REFERENCES {}.task_runs(task_id) ON DELETE CASCADE,
+                    step_id text NOT NULL,
+                    success_intent text NOT NULL,
+                    created_at timestamptz NOT NULL DEFAULT now(),
+                    PRIMARY KEY(task_id, step_id)
+                )
+            """).format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
             cur.execute(sql.SQL("""
                 CREATE TABLE IF NOT EXISTS {}.task_evidence (
                     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -981,6 +993,38 @@ class PostgresTaskLog:
             kind_row=cur.fetchone(); task_kind=str(kind_row[0] or 'root') if kind_row else 'root'
             self._sync_plan_nodes(cur,plan.task_id,plan.task_uuid,plan.as_dict(),task_kind)
 
+    def save_n1_step_intents(self, task_id: str, intents: dict[str, str]) -> None:
+        """Persist N1's private interpretation exactly once, before dispatch.
+
+        Existing values cannot be overwritten by a later attempt. This is a
+        review record, not a new worker instruction or an executable checklist.
+        """
+        if not intents or any(not str(k).strip() or not str(v).strip() for k, v in intents.items()):
+            raise ValueError("N1 step intents require nonempty step IDs and judgments")
+        with self._connect() as conn, conn.cursor() as cur:
+            for step_id, intent in intents.items():
+                cur.execute(sql.SQL("""
+                    INSERT INTO {}.n1_step_intents(task_id,step_id,success_intent)
+                    VALUES (%s,%s,%s) ON CONFLICT (task_id,step_id) DO NOTHING
+                """).format(sql.Identifier(self.schema)),
+                    (str(task_id), str(step_id), str(intent)))
+                cur.execute(sql.SQL("""
+                    SELECT success_intent FROM {}.n1_step_intents
+                    WHERE task_id=%s AND step_id=%s
+                """).format(sql.Identifier(self.schema)), (str(task_id), str(step_id)))
+                row = cur.fetchone()
+                if not row or str(row[0]) != str(intent):
+                    raise ValueError("N1's pre-execution step judgment cannot be replaced")
+
+    def n1_step_intent(self, task_id: str, step_id: str) -> str | None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                SELECT success_intent FROM {}.n1_step_intents
+                WHERE task_id=%s AND step_id=%s
+            """).format(sql.Identifier(self.schema)), (str(task_id), str(step_id)))
+            row = cur.fetchone()
+            return str(row[0]) if row else None
+
     def start_child_task(self, plan: TaskPlan, parent_task_id: str, parent_step_id: str, original_request: str = "", task_kind: str = "child") -> None:
         parent_task_id = str(parent_task_id or "").strip()
         parent_step_id = str(parent_step_id or "").strip()
@@ -1798,6 +1842,43 @@ class PostgresTaskLog:
             cur.execute(sql.SQL("DELETE FROM {}.global_validation_generations WHERE archived_at < now() - (%s * interval '1 second')").format(sql.Identifier(self.schema)), (seconds,))
             generations = int(cur.rowcount or 0)
         return {"pool_records_deleted": pool_records, "observation_batches_deleted": observations, "change_records_deleted": changes, "legacy_generations_deleted": generations, "retention_seconds": seconds}
+
+    def child_step_evidence(self, parent_task_id: str, parent_step_id: str) -> list[dict]:
+        """Return lightweight durable locators, never child context dumps.
+
+        Redis queue/continuation metadata carries the active child task ID;
+        PostgreSQL retains child summaries and complete evidence. The parent
+        and its independent reviewer receive only the provenance needed to
+        retrieve specific evidence if necessary.
+        """
+        links = []
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                SELECT task_id,status,updated_at FROM {}.task_runs
+                WHERE parent_task_id=%s AND parent_step_id=%s
+                  AND task_kind='child'
+                ORDER BY started_at ASC LIMIT 64
+            """).format(sql.Identifier(self.schema)), (parent_task_id, parent_step_id))
+            for child_id,status,updated_at in cur.fetchall():
+                child_id = str(child_id)
+                cur.execute(sql.SQL("""
+                    SELECT COUNT(*) FROM {}.task_evidence WHERE task_id=%s
+                """).format(sql.Identifier(self.schema)), (child_id,))
+                evidence_count = int(cur.fetchone()[0])
+                links.append({
+                    'tool': 'durable_child_result_pointer',
+                    'arguments': {'child_task_id': child_id},
+                    'result': {
+                        'ok': str(status) == 'completed',
+                        'child_status': str(status),
+                        'updated_at': str(updated_at),
+                        'evidence_count': evidence_count,
+                        'result_locator': f'PostgreSQL task_summaries task_id={child_id}',
+                        'evidence_locator': f'PostgreSQL task_evidence task_id={child_id}',
+                    },
+                    'deterministic_verification': False,
+                })
+        return links
 
     def record_evidence(self, task_id: str, step_id: str, evidence: list[dict]) -> None:
         if not evidence:

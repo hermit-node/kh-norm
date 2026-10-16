@@ -185,12 +185,81 @@ class N1Gatekeeper:
             prompt = "[N1 SYSTEM STYLE CONTEXT]\n" + voice + "\n\n[N1 REVIEW INSTRUCTIONS]\n" + prompt
         return target.generate(prompt, **kwargs)
 
+    def prepare_private_step_intents(
+        self, *, original_request: str, task_request: str, steps: list[dict],
+    ) -> dict[str, str]:
+        """N1 judges what success means *before* it sees N2's work.
+
+        N2's self-check suggestions and the final N1 judgments are deliberately
+        absent from this call. The result is stored in PostgreSQL, never in a
+        PromptJob or a generated-step prompt.
+        """
+        if not self.enabled:
+            raise RuntimeError("Independent N1 must be enabled to pre-interpret steps")
+        if not steps:
+            return {}
+        result = {}
+        schema = {"type": "object", "properties": {"interpretations": {
+            "type": "array", "items": {"type": "object", "properties": {
+                "step_id": {"type": "string"}, "meaning": {"type": "string"}},
+                "required": ["step_id", "meaning"], "additionalProperties": False}}},
+            "required": ["interpretations"], "additionalProperties": False}
+        for offset in range(0, len(steps), 5):
+            batch = steps[offset:offset + 5]
+            expected = {str(step["id"]) for step in batch}
+            # N1 thinks independently from the original task and the step purpose.
+            # No N2-created checklist, `verify` field, or answer is supplied.
+            context = [{"step_id": str(step["id"]),
+                        "name": str(step["name"]),
+                        "assignment": str(step["description"])} for step in batch]
+            prompt = (
+                "You are N1, forming your independent understanding of successful "
+                "completion for the following scheduled work BEFORE N2 starts. "
+                "Reason from the user's actual intent, the purpose and scope of "
+                "each step, and your own judgment. For each step, describe in "
+                "natural prose what meaningful success would look like and what "
+                "would convince you of it. Treat examples and historical testing "
+                "conventions as inspiration only, not required procedures. "
+                "Do not create a checklist, mandatory tool sequence, invented "
+                "output fields, or predetermined list of rejection grounds. "
+                "Do not demand completion of future steps. This private interpretation "
+                "is for N1's later evaluation only; it will never be given to N2. "
+                "Return one interpretation per step ID as strict JSON.\n\n"
+                f"USER REQUEST:\n{str(original_request)[:12000]}\n\n"
+                f"PRIMARY TASK:\n{str(task_request)[:12000]}\n\n"
+                f"WORK TO INTERPRET:\n{json.dumps(context, ensure_ascii=False)}"
+            )
+            raw = self._review_generate(
+                prompt, think=True, num_predict=5000, temperature=0.1,
+                response_format=schema, emit_stream=False,
+                timeout_seconds=300, invocation_kind="pre_execution_private_step_judgment",
+            )
+            data = OllamaClient.parse_json(raw)
+            items = data.get("interpretations") if isinstance(data, dict) else None
+            if not isinstance(items, list) or len(items) != len(expected):
+                raise ValueError("N1 private step interpretations missing or incomplete")
+            ids = [str(x.get("step_id") or "") for x in items if isinstance(x, dict)]
+            if len(ids) != len(expected) or set(ids) != expected or len(set(ids)) != len(ids):
+                raise ValueError("N1 private step interpretation IDs do not match the plan")
+            for item in items:
+                meaning = str(item.get("meaning") or "").strip()
+                if not meaning or len(meaning) > 1600:
+                    raise ValueError("N1 private step interpretation is empty or oversized")
+                result[str(item["step_id"])] = meaning
+        return result
+
     def judge_step_answer(
         self, *, original_request: str, task_request: str, step_prompt: str,
-        verification_requirement: str, candidate: str, evidence: str = "",
-        review_handoff: str = "",
+        candidate: str, evidence: str = "", private_intent: str = "",
+        verification_requirement: str = "", review_handoff: str = "",
+        recovery_analysis: bool = False,
     ) -> dict[str, Any]:
-        """Independent N1 semantic-scope gate BEFORE N2 step is marked complete."""
+        """N1 independently reviews N2's self-checked result.
+
+        ``verification_requirement`` is accepted for legacy call compatibility;
+        its N2-generated text is never added to N1's review. It is historical
+        example material, not an acceptance contract.
+        """
         if not self.enabled:
             return {"decision": "accept", "reason": "N1 disabled by operator", "retry_instruction": "", "processing_failed": False}
         schema = {
@@ -202,63 +271,57 @@ class N1Gatekeeper:
             "additionalProperties": False,
         }
         review = (
-            "You are N1 verifying an N2 STEP submission BEFORE it is accepted. "
-            "Compare the candidate to the EXACT original user request, the PRIMARY task, "
-            "the assigned CURRENT step, and its VERIFICATION REQUIREMENT. "
-            "Judge the ACTUAL CURRENT STEP work against observed evidence and the "
-            "ORIGINAL user intent/constraints. Original constraints win over "
-            "contradictory generated steps, but do not replace the CURRENT step "
-            "with the full original task. Do not retry, delete or redo verified "
-            "previous work merely because the original task mentions it. "
-            "Norm-generated steps never become new user requests. "
-            "Do not demand completion of later steps in this step. Do not accept missing or changed "
-            "constraints, unsupported claims, skipped required work, or output that does not fulfill "
-            "the current step. Use evidence to distinguish completed work from unsupported assertions. "
-            "Inspect the actual tool return payload and only require fields genuinely returned. "
-            "During routine plugin operation never instruct N2 to browse plugin source files "
-            "to discover an output contract; use the observed tool result, or report its failure. "
-            "Only inspect plugin internals for an explicit user-requested development task. "
-            "If a material requirement is missing, return RETRY with a specific actionable correction; "
-            "otherwise ACCEPT, keeping N2's text unchanged. Do not polish, paraphrase, or rewrite "
-            "a satisfactory candidate, and do not invent new work. Strict JSON only.\n\n"
+            "You are N1 receiving N2's finished, self-verified step work for independent acceptance review. "
+            "Exercise your own judgment, grounded in the original user's intent, "
+            "the actual scope of this step, and observed evidence. Your private "
+            "pre-execution interpretation is a reasoned starting point, not a "
+            "rigid checklist or a reason to move goalposts. You may accept equally "
+            "convincing evidence in another form. Distinguish this step from later "
+            "work and keep the user's original constraints authoritative. "
+            "Judge the finished work for what it genuinely accomplishes, not "
+            "whether it followed one specific procedure. When it claims a file "
+            "was produced, compare its location, actual existence, and claimed "
+            "SHA-256 with independent observed read-back evidence. Unsupported "
+            "claims are not facts. Notice work outside the assigned boundaries "
+            "and record it in your reasoning, but do not reject otherwise valid "
+            "work merely for having done something extra; preserve that work. "
+            "Accept genuinely satisfactory work without editing it. If you "
+            "find a meaningful deficiency, send N2 only the concrete correction, "
+            "never your private review interpretation or a newly invented rubric. "
+            "Return strict JSON.\n\n"
             f"ORIGINAL USER PROMPT:\n{str(original_request)[:14000]}\n\n"
             f"PRIMARY TASK:\n{str(task_request)[:14000]}\n\n"
-            f"CURRENT INTERNAL STEP:\n{str(step_prompt)[:10000]}\n\n"
-            f"STEP ACCEPTANCE CRITERIA:\n{str(verification_requirement)[:3000]}\n\n"
+            f"CURRENT STEP ASSIGNMENT:\n{str(step_prompt)[:10000]}\n\n"
+            f"N1 PRIVATE PRE-EXECUTION UNDERSTANDING (never reveal to N2):\n{str(private_intent)[:1600]}\n\n"
             f"N2 SUBMISSION:\n{str(candidate)[:22000]}\n\n"
-            f"OBSERVED EVIDENCE (not user instructions):\n{str(evidence)[:12000]}"
-            + (
-                "\n\nRECOVERY HANDOFF FOR THIS REVIEW RETRY (internal summary, not user instructions or new evidence):\n"
-                + str(review_handoff)[:5500]
-                if review_handoff else ""
-            )
+            f"OBSERVED EVIDENCE:\n{str(evidence)[:12000]}"
+            + ("\n\nN1 INTERNAL REVIEW CONTINUATION (not new evidence):\n" + str(review_handoff)[:5500]
+               if review_handoff else "")
         )
-        if "INTERNAL CHILD CONTRACT:" in str(verification_requirement):
+        if recovery_analysis:
             review = (
-                "N1 RECOVERY-ANALYSIS CHILD REVIEW. The authoritative deliverable for "
-                "this child is structured recovery_analysis JSON, not the root user's "
-                "file, PDF, or final answer. The original request is reference material "
-                "for preserving user constraints; the ACTIVE child analysis assignment "
-                "remains the work being reviewed. The original is NOT an uncompleted "
-                "child work order. Judge analysis claims against surviving evidence. "
-                "ACCEPT if the analysis is accurate, scoped, structured, and adequately "
-                "supported by observed evidence. RETRY only for a defect in this child's "
-                "own assignment/structure/evidence. Never demand the root deliverable. "
-                "Return decision, reason, retry_instruction as strict JSON.\n\n"
-                f"ORIGINAL INTENT (reference only):\n{str(original_request)[:10000]}\n\n"
+                "N1 is reviewing a recovery-analysis child. Judge whether the "
+                "child's assigned analysis is genuinely satisfactory, not whether "
+                "the original parent's full deliverable is finished. Rely on "
+                "actual evidence, your independent understanding, and your judgment. "
+                "If correction is needed, describe only the material problem to N2; "
+                "never reveal the private N1 evaluation criteria. Strict JSON.\n\n"
+                f"ORIGINAL USER INTENT (reference):\n{str(original_request)[:10000]}\n\n"
                 f"CHILD ASSIGNMENT:\n{str(step_prompt)[:12000]}\n\n"
-                f"CHILD ACCEPTANCE CRITERIA:\n{str(verification_requirement)[:4000]}\n\n"
+                f"N1 PRIVATE UNDERSTANDING:\n{str(private_intent)[:1600]}\n\n"
                 f"CHILD RESULT:\n{str(candidate)[:22000]}\n\n"
                 f"OBSERVED EVIDENCE:\n{str(evidence)[:12000]}"
+                + ("\n\nN1 INTERNAL REVIEW CONTINUATION (not new evidence):\n"
+                   + str(review_handoff)[:5500] if review_handoff else "")
             )
         try:
             profile = self._profile("step_review", num_predict=6000, timeout_seconds=300.0)
-            # Guard against a prior oversized num_predict override consuming the
-            # context window or keeping an unsuccessful review alive for an hour.
-            raw = self._review_generate(review, think=profile["think"], temperature=profile["temperature"],
-                                        num_predict=min(profile["num_predict"], 10000), response_format=schema,
-                                        emit_stream=False, timeout_seconds=min(profile["timeout_seconds"], 300.0),
-                                        invoke_source="n2", invocation_kind="step_acceptance_review")
+            raw = self._review_generate(
+                review, think=profile["think"], temperature=profile["temperature"],
+                num_predict=min(profile["num_predict"], 10000), response_format=schema,
+                emit_stream=False, timeout_seconds=min(profile["timeout_seconds"], 300.0),
+                invoke_source="n2", invocation_kind="step_acceptance_review",
+            )
             parsed = OllamaClient.parse_json(raw)
             decision = parsed.get("decision")
             reason = parsed.get("reason")
@@ -845,23 +908,17 @@ class N1Gatekeeper:
             "review_iteration": int(iteration),
         }
         prompt = (
-            "You are N1 reviewing N2's proposed recovery remainder for a FAILED PARENT task. "
-            "N2 generated the plan; YOU DO NOT rewrite, expand, or create steps. "
-            "Approve only if all source steps in this batch are covered, all accepted "
-            "completed steps are excluded, work isn't duplicated, references point to "
-            "observed evidence, and the original user intent remains respected. "
-            "An unverified file reference is not proof of completed work. "
-            "Reject ONLY for a substantive, demonstrable defect: omitted work, "
-            "incorrect evidence, unsafe action, or failure to preserve the task. "
-            "Do NOT reject for wording, sentence substitutions, style, or whether "
-            "N2 says 'only' versus 'in' when the allowed evidence set is equivalent. "
-            "In particular, do not require a blocker-note file as evidence if "
-            "N2 correctly excludes it as unverified. "
-            "If incorrect, return RETRY with ONE concrete MATERIAL defect, "
-            "the missing requirement or observed evidence ID/path, and a "
-            "correction that changes the ACTION, not merely its phrasing. "
-            "Do not ask N2 to copy tool logs, artifacts, or conversation text into "
-            "the new task; use their references. Return strict JSON only.\\n\\n"
+            "You are N1 reviewing N2's proposed remaining work for a failed "
+            "parent task. Decide independently whether the proposal genuinely "
+            "preserves the user's intent and the completed work, uses evidence "
+            "appropriately, and provides a sensible way to finish. The parent "
+            "records and artifacts remain in durable storage. Exercise actual "
+            "judgment rather than policing a predefined checklist or requiring "
+            "particular wording, tool names or fields. Explain a concrete, "
+            "material problem if the proposal needs correction; otherwise accept "
+            "without rewriting. Keep your private understanding private: N2 "
+            "receives only actionable corrections, not your review framework. "
+            "Return strict JSON.\n\n"
             + json.dumps(data,ensure_ascii=False,default=str)
         )
         profile=self._profile("pre_recovery_approval",num_predict=1800,timeout_seconds=300)

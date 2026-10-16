@@ -1,7 +1,52 @@
+## Norm 0.55.10r8 — Visual PDF QtWebEngine callback fix (2026-10-13)
+
+- Corrected actual capture blocker: QtWebEngine returns an empty callback value for JavaScript objects/arrays on the tested KHzz setup; serialized JSON callbacks now reliably return DOM/scroll/region metadata to Python. Applied to discovery, scrolling in both directions, and visual-region detection.
+- N2 self-verifier and r7 private N1 parent-step verification are unmodified.
+- Tested in the active KHzz interactive Windows desktop session, with a controlled DOM conversation: 0 to 1862 scroll pixels, six real QWebEngineView screenshots, assembled 840×2472 PNG, four-page PDF, 154 OCR words and selectable PDF text confirmed by PDF readback. Live ChatGPT conversation history loading and completeness still need separate validation.
+- The live KHzz install also had the capture code fixed and browser-local PyMuPDF==1.28.2 installed. Vendor-package permissions were rebuilt to permit the interactive Windows user to import the package. The vendored wheel is intentionally not included in this source-only release; the existing Python requirements specify PyMuPDF.
+
+## Norm 0.55.10r7 — independent N1 parent-step review (2026-10-13)
+
+- N2's existing structured self-verifier and three correction cycles remain byte-identical to r6; N2 submits finished, self-checked step work to N1.
+- N1 independently formulates private, prose-based interpretations of successful work before N2 executes and saves them in a new PostgreSQL n1_step_intents table. They are not sent to N2.
+- N2's optional per-step `verify` text is retained in the historical plan but no longer prescribed as N1's review rubric, nor required inside N2's execution prompt.
+- N1 reviews the assembled parent step only; internal child components stay provisional and are self-checked by N2. Parent review receives PostgreSQL child evidence locators, not bulk child contexts.
+- N1 independently evaluates finished work, intent and observed facts; extra/out-of-scope work is noted without automatically invalidating completed useful work. Real file/sha256 claims can be independently checked using streamed file readback.
+- An N1 rejection sends N2 a concrete correction without exposing N1's private pre-execution judgment. Existing source ZIPs, task history, custom plugins and live installations are not replaced.
+- Private N1 criteria require a schema migration on startup; this source-only release requires installation and service restart before activation. Offline tests do not prove live N1 behavior.
+
+## Norm 0.55.10r6 — /pdf-chat now renders as a readable chat transcript (2026-10-13)
+
+- Changed the rich-dialogue formatter behind `/pdf-chat` from a compact stacked document layout to a clearer chat-style reading layout.
+- Preserves native PDF vectors, images, bookmarks, and citation links while keeping existing no-overwrite safety.
+- User turns are visually separated from ChatGPT turns and page breaks add continuation labels.
+
+## Norm 0.55.10r5 — Unified PDF formatting and direct PDF slash shortcuts (2026-10-13)
+
+- Consolidates **text**, **visual**, and **rich-dialogue** export under the existing shared_browser plugin.
+- New direct Norm Prompt shortcuts: /pdf, /pdf-chat, /pdf-dialogue, /pdf-name, /pdf-verify, /pdf-text, /pdf-visual, /pdf-status, /pdf-cleanup.
+- Rich dialogue preserves native vector typography, original image bytes, source code panels, chat bubbles and list formatting while compacting whitespace. Includes date/user bookmarks and an optional original-page appendix.
+- Filename convention `{title} - Rich Dialogue.pdf`; optional human-readable title; source, existing outputs and verification reports are never overwritten.
+- Independent source-to-output comparison, SHA-256 verification sidecar, and dry-run-first cleanup limited to stale formatter temporary files.
+- Standalone Python command: `python tools/shared_browser/rich_dialogue_pdf.py "original.pdf" --title "topic"`.
+- Existing browser tools, JSONL archive/text exporter, Qt visual exporter, settings, plugins and runtime state preserved. No installer or runtime executable compilation in this source release.
+
+## Norm 0.55.10r4 — restore the actual 2026-10-11 Qt Focus workspace (2026-10-12)
+
+- The user-selected authoritative workspace is N_Workspace/NormWorkspace-Qt-Focus, not fonts-v3, Geometry-v4 or Triad-v5. Original app.py from NormWorkspace-Qt-Focus-source.zip (18:29, Oct 11) is preserved byte-identical as tools/workspace/qt_focus_original_source.py, with original icon and user-saved Qt Focus layout/active-role preferences.
+- Default Run-Norm.bat now launches the Qt Focus source via C:/Norm/.venv/Scripts/pythonw.exe, not the previously selected C++ workspace. The QT Focus window immediately runs current start_roles.py, which invokes the existing Run-Norm.bat --service-only branch and the file-locked, idempotent operator launcher. Already-existing sessions are reused; only missing roles are launched.
+- Removed the erroneous suppression of all bootstrapping when one operator PID exists but zero of three expected HWNDs are attachable. Unknown independent duplicates remain controlled by start_operator_consoles.py, not blindly spawned by UI.
+- Preserve the original Qt Focus Win32 child-window embedding, native mouse-hook focus restoration, freeform draggable overlapping panes, card z-order, selected role, and Unicode UTF-8 window title. The original October 11 focus regression suite passes unchanged except an isolate-safe source path update.
+- Added explicit Quit Norm button and close-interception using safe_shutdown_norm.py. Shutdown failures keep the UI open. A new normal service/BAT shutdown marker closes the workspace, while older markers are ignored. Operator/trash cleanup semantics are delegated to the existing shutdown helper; soft-delete queue is not purged.
+- Added native-platform Qt font picker with Workspace UI, Runtime, Replies and Prompt options. Fonts are persisted through the existing workspace INI updater; terminal role settings apply to new WT sessions and do not restart active terminals.
+- Added Win64-safe named-mutex guard to prevent multiple Qt Focus containers. The old C++ binaries remain in the source tree for historical rollback only and are not launched by default. Unrelated Norm modules and all user-increased conversation-service budgets are retained.
+- Offline tests: original Qt Focus focus/geometry regression, partial-role/idempotent startup, shutdown success/failure, external signal, celery worker inventory, reversible-trash handling, Verbatim Lines write protections and r3 hybrid Visual PDF all passed. No live Norm install/service, authenticated browser, cookies, or user data modified to produce this release.
+
 ## Norm 0.55.10r3 — hybrid Visual PDF and browser-preserving scroll capture (2026-10-12)
 
 - Based on 0.55.10r2 native C++ workspace and normal startup/shutdown, unchanged. All user conversation generation budgets preserved.
 - Discover the true oldest currently accessible conversation turn by repeatedly scrolling upward, checking scrollbar position, first message fingerprint, loaded count and scrollable height. If the user starts at the top, use a five-second stable fast path; otherwise require sixty seconds without new history before beginning capture.
+- The visible browser toolbar reports top-search and loader sampling progress rather than appearing idle while the document is being discovered.
 - Detect possible loading-icon regions and compare one initial screenshot with five additional samples at randomized 1–3-second intervals; when the loader animates, wait five seconds and retry the scroll. Stationary decorative icons are ignored temporarily. Same policy for upward and downward navigation.
 - Capture and overlap successive scrolling screenshots from top to bottom; take slightly delayed alternate screenshots and choose the globally most consistent overlapping sequence before stitching. Stop only after the scrollbar and last-turn metadata remain stable; do not assume three identical screenshots prove completeness.
 - Produce a HYBRID PDF: OCR text is rendered once as selectable, visible native PDF text (built-in Helvetica where possible); original image/code/math/table/diagram regions are retained at screenshot pixel resolution as raster cutouts. No invisible OCR layer over a full-page raster, so there is no duplicate printed text. Photographic crops use JPEG when smaller, sharp artwork lossless PNG.

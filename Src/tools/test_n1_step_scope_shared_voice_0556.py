@@ -40,8 +40,12 @@ class AlignmentTests(unittest.TestCase):
             candidate='X changed and Y overwritten',evidence='changed Y')
         self.assertEqual(result['decision'],'retry')
         prompt=client.prompts[0][0]
-        for part in ['Fix X without changing Y','Fix X','Change X only','Y must remain untouched']:
+        for part in ['Fix X without changing Y','Fix X','Change X only']:
             self.assertIn(part,prompt)
+        # N1 must judge the original user's constraint independently.
+        # This N2-generated verification string is historical only and never
+        # an authoritative acceptance checklist.
+        self.assertNotIn('Y must remain untouched',prompt)
         self.assertIn('Restore Y',result['retry_instruction'])
 
     def test_n1_accepts_good_step_without_rewriting_it(self):

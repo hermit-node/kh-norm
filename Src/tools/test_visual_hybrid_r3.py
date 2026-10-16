@@ -15,6 +15,9 @@ from hybrid_ocr_pdf import write_hybrid_pdf
 from visual_capture import SCROLL_JS,REGIONS_JS,VisualCapture
 assert 'loaders:' in SCROLL_JS and 'at_top:' in SCROLL_JS and 'at_bottom:' in SCROLL_JS
 assert 'img,svg,canvas,video,pre,table' in REGIONS_JS
+browser_ui=(ROOT/'tools/shared_browser/app.py').read_text('utf8')
+assert "result['state']=='seeking_top'" in browser_ui
+assert 'Finding the oldest conversation turn' in browser_ui
 font=ImageFont.truetype('C:/Windows/Fonts/arial.ttf',24)
 with tempfile.TemporaryDirectory(prefix='norm-r3-hybrid-') as td:
     base=Path(td)

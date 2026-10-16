@@ -16,3 +16,24 @@ browser_shared_visual_status - poll frames, output paths, capture uncertainty
 browser_shared_visual_cancel - stop in-progress capture without altering saved PDFs
 
 browser_shared_visual_title_context(last_user=3) - recent user turns for choosing PDF name
+
+Shared Browser PDF formats and Norm Prompt direct shortcuts (0.55.10r6):
+  /pdf                                   List supported PDF shortcuts
+  /pdf-chat "SOURCE.pdf" [--name "TITLE"] [--output "FILE.pdf"] [--include-original]
+  /pdf-dialogue "SOURCE.pdf"             Alias for /pdf-chat (rich native-vector PDF)
+  /pdf-name "SOURCE.pdf"                 See original dates/user turns for choosing a title
+  /pdf-verify "SOURCE.pdf" "DIALOGUE.pdf" Compare source words, original images and bookmarks
+  /pdf-text "ARCHIVE"                    Text PDF from existing archived chat JSONL
+  /pdf-visual ["TITLE"]                  Start scrolling screenshot capture in shared browser
+  /pdf-status                             Check visual PDF capture status
+  /pdf-cleanup ["FOLDER"] [--older-hours 24] [--execute]
+                                           Dry-run by default; only stale *.partial-PID.pdf files
+  /help shared-browser                    Show this manual
+
+Native tool: browser_shared_pdf_export(format="text|visual|dialogue", name="", source="", output="", include_original=False)
+Native tools: browser_shared_pdf_title_context(source), browser_shared_pdf_verify(source,output), browser_shared_pdf_cleanup(directory="",dry_run=True,older_than_hours=24)
+
+Naming convention: "{title} - Rich Dialogue.pdf" in source folder unless --output is provided.
+A separate .verification.json records the source and output SHA256 and PDF fidelity checks.
+Never overwrites the source, existing output, completed reports, or other plugins/settings.
+Rich dialogue requires existing original ChatGPT Exporter PDF; the visual capture is a separate live-browser workflow.

@@ -27,3 +27,16 @@ is unchanged. This is a visual image PDF (not searchable text), and ChatGPT's
 virtualized/unloaded messages cannot be certified complete.
 Capture needs a visible window and exclusive Norm control; navigating or
 hiding the shared page while capturing is blocked.
+
+## r5: Unified PDF export formats and operator slash shortcuts
+
+The existing **Norm Shared Browser** plugin now owns all three PDF formats:
+`browser_shared_pdf_export(format="text|visual|dialogue", name="", source="", output="", include_original=False)`.
+
+* **text** uses the existing JSONL-to-ReportLab exporter, and is not advertised as fully historical unless source coverage is independently audited.
+* **visual** triggers the existing asynchronous shared-browser capture; query progress with `/pdf-status`.
+* **dialogue** reformats an **existing ChatGPT Exporter PDF**, using PyMuPDF native vector content (no OCR). Original fonts, drawings, shaded code, images, bullets and chat bubbles remain embedded. Source remains unchanged. User turns are bookmarked by date; `include_original=True` appends the original pages. Fails closed if text tokens or image bytes are missing, and publishes a JSON SHA256 verification report.
+
+In Norm Prompt use `/pdf` to list shortcuts, `/pdf-chat "SOURCE.pdf" --name "TITLE"`, `/pdf-name`, `/pdf-verify`, `/pdf-visual`, `/pdf-status`, `/pdf-text`, and `/pdf-cleanup` (dry-run first). Slash operations execute locally instead of submitting model tasks. All new source file reads/writes use Norm's canonical `shared_browser` file-access policy.
+
+Naming: `{title} - Rich Dialogue.pdf` beside the original or an explicit output path. There is no silent replacement of prior exports. `/pdf-chat` now lays the reading edition out like a clearer back-and-forth chat transcript while still preserving source vectors. For better naming, ask Norm to call the title-context tool first; filenames from `/pdf-chat` default to the source's cleaned title.

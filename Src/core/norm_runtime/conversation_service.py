@@ -1272,7 +1272,7 @@ class ConversationService:
                             "description": {"type": "string", "maxLength": 1200},
                             "verify": {"type": "string", "maxLength": 500},
                         },
-                        "required": ["name", "description", "verify"],
+                        "required": ["name", "description"],
                         "additionalProperties": False,
                     },
                 },
@@ -1446,8 +1446,8 @@ class ConversationService:
             name = str(item.get("name") or "").strip()[:120]
             description = str(item.get("description") or "").strip()[:1200]
             verify = str(item.get("verify") or "").strip()[:500]
-            if not name or not description or not verify:
-                raise ValueError("every planner step requires name, description, and verify")
+            if not name or not description:
+                raise ValueError("every planner step requires name and description")
             steps.append({"name": name, "description": description, "verify": verify})
         return {"title": title or "Task", "steps": steps}
 
@@ -1459,7 +1459,7 @@ class ConversationService:
             "bounded steps for later execution; do not run tools, modify files, "
             "claim execution results, or turn the plan into a user-facing answer. "
             "A separate worker execution phase will prosecute each accepted step "
-            "using its own concrete verification criteria and progress record. "
+            "and check its own finished work before submitting the result to N1. "
             "Create a concrete execution plan for Norm before any task work begins. "
             "Break substantial work into small observable actions that can each finish within a bounded "
             "model/tool slice. Aim for about 6 actionable steps for substantial work, but use exactly ONE step when the request can be completed as one bounded action. Never manufacture a separate preparation step plus synthesis step for a trivial request. Use more steps only when the work genuinely benefits from decomposition, up to a hard maximum of 25. Preserve every user constraint, especially "
@@ -1479,24 +1479,18 @@ class ConversationService:
     def _check_plan(self, original_user_prompt: str, plan: dict, *, scrutiny_note: str = "") -> tuple[bool, list[str]]:
         prompt = (
             f"PERSISTENT OPERATING PRINCIPLES:\n{self._persistent_instruction_text()}\n\n"
-            + ("INTERNAL PLANNING REVIEW ALERT (NOT A USER REQUEST): " + scrutiny_note + "\n\n" if scrutiny_note else "") +
-            "Independently verify this proposed task plan before execution. Reject only for BLOCKING defects: a dropped or changed "
-            "user constraint; unauthorized or unsafe action; a materially contradictory or impossible design; missing concrete verification "
-            "for a material output; an action too large for a bounded worker slice; or, for a MULTI-STEP plan, no final synthesis step capable "
-            "of answering the user from prior results. If a plan depends on specific historical labels, dedicated commits, "
-            "or a named data source that has NOT been confirmed to exist, insist on an evidence-based fallback "
-            "(general history, tags, source artifacts, or structural comparison) rather than repeatedly querying the absent label. "
-            "Do NOT reject for advisory style, naming, organization, or merely because a step contains "
-            "multiple tightly coupled subcomponents. A multi-part step is an opaque catch-all only when it is vague/generic or hides materially "
-            "distinct phases that cannot reasonably complete in one bounded slice. Explicitly named related modules/functions may share one step "
-            "when their roles are clear and the verification independently covers them. Redundant mechanisms are not a blocking defect unless they "
-            "create a contradiction, ambiguity that prevents implementation, or violate the user's request. Do not invent hypothetical implementation "
-            "defects or boundary-value failures when the plan explicitly inspects/reuses existing code or includes execution tests that will verify the "
-            "relevant invariant; those details belong to execution and step verification unless the plan itself mandates unsafe behavior. Reject a plan "
-            "that asks one step to generate more than about 8 rich repeated items when the work can be safely batched and merged. If only advisory "
-            "concerns remain, accept the plan with an empty issues list. Return strict JSON only: {\"accepted\":true|false,\"issues\":[...]}.\n\n"
-            f"AUTHORITATIVE PRIMARY TASK REQUEST:\n{original_user_prompt}\n\n"
-            f"PROPOSED PLAN:\n{json.dumps(plan, ensure_ascii=False)}"
+            + ("INTERNAL PLANNING REVIEW ALERT (not a user request): " + scrutiny_note + "\n\n" if scrutiny_note else "") +
+            "You are N1 independently reviewing this proposed plan before work "
+            "begins. Exercise your own judgment about whether its execution would "
+            "serve the user's genuine intent, remain within scope, and be feasible. "
+            "The planner's optional verify strings are examples of N2's own "
+            "thinking, not standards imposed on you or binding checklists. "
+            "Do not invent arbitrary objections or procedural demands. "
+            "If the plan has a meaningful deficiency, explain the specific "
+            "problem so N2 can repair it. Otherwise accept it without rewriting "
+            "its structure or wording. Return strict JSON with accepted and issues.\n\n"
+            f"USER REQUEST:\n{original_user_prompt}\n\n"
+            f"N2 PLAN:\n{json.dumps(plan, ensure_ascii=False)}"
         )
         last_error = None
         for _ in range(2):
@@ -1628,10 +1622,8 @@ class ConversationService:
                 + original_user_prompt
                 + "\n\nNORM-GENERATED EXECUTION STEP:\n"
                 + item["description"]
-                + "\n\nVERIFICATION REQUIREMENT:\n"
-                + item["verify"]
                 + "\n\nEXECUTION (NOT PLANNING): This plan and its N1 verification are already complete. "
-                "Actively carry out this exact step and verify its result. The original user's "
+                "Actively carry out this exact step and independently check your work before submission. The original user's "
                 "request remains authoritative for the overall goal, but is not a fresh "
                 "instruction to plan or restart the project. Preserve completed prior steps; "
                 "do not repeat their work without specific contrary evidence. "
@@ -1701,6 +1693,34 @@ class ConversationService:
             ingrained_task_context=tuple(str(v) for v in ingrained_task_context if str(v).strip()),
         )
 
+    def _prepare_private_n1_intents(self, plan: TaskPlan, original_user_prompt: str) -> dict[str, str]:
+        """N1 independently interprets the *assignment*, before N2 is queued.
+
+        Never pass the planner's `verify` suggestions to this review. N1's
+        private interpretations go to PostgreSQL, not PromptJob metadata.
+        """
+        if self.n1_gatekeeper is None or not hasattr(self.n1_gatekeeper, "prepare_private_step_intents"):
+            raise RuntimeError("N1 independent pre-execution review is unavailable")
+        action_steps = [step for step in plan.steps[2:] if step.id != "final-verify"]
+        def assignment_only(description: str) -> str:
+            text = str(description)
+            if "NORM-GENERATED EXECUTION STEP:" in text:
+                text = text.split("NORM-GENERATED EXECUTION STEP:", 1)[1]
+            text = text.split("VERIFICATION REQUIREMENT:", 1)[0]
+            text = text.split("EXECUTION (NOT PLANNING):", 1)[0]
+            return text.strip()
+        steps = [{"id": step.id, "name": step.name,
+                  "description": assignment_only(step.description)}
+                 for step in action_steps]
+        judgments = self.n1_gatekeeper.prepare_private_step_intents(
+            original_request=original_user_prompt,
+            task_request=original_user_prompt,
+            steps=steps,
+        )
+        if not isinstance(judgments, dict) or set(judgments) != {step.id for step in action_steps}:
+            raise RuntimeError("N1 pre-execution review must cover each work step")
+        return judgments
+
     @staticmethod
     def _action_jobs_for_plan(
         plan: TaskPlan,
@@ -1732,7 +1752,8 @@ class ConversationService:
                 created_at=time.time(),
                 metadata={
                     "step_name": step.name,
-                    "verification": step.verify,
+                    "verification": "",
+                    "n1_private_prepared": True,
                     "prompt_origin": "norm_generated_step",
                     "context_id": plan.task_id,
                     "original_user_message_id": user_message_id,
@@ -1791,7 +1812,9 @@ class ConversationService:
             ingrained_detail_count=int(metadata.get("ingrained_detail_count") or 0),
             ingrained_task_context=list(metadata.get("ingrained_task_context") or []),
         )
+        private_intents = self._prepare_private_n1_intents(plan, task_user_prompt)
         self.durable.start_task(plan)
+        self.durable.save_n1_step_intents(job.task_id, private_intents)
         if hasattr(self.coordinator.live, "update_plan"):
             self.coordinator.live.update_plan(job.task_id, plan.title, plan.as_dict())
         else:
@@ -1970,7 +1993,9 @@ class ConversationService:
                 ingrained_detail_count=int(ingrained_state.get("captured") or 0),
                 ingrained_task_context=current_context,
             )
+            private_intents = self._prepare_private_n1_intents(plan, task_user_prompt)
             self.coordinator.start(plan)
+            self.durable.save_n1_step_intents(task_id, private_intents)
             planning_records = (
                 (plan.steps[0], plan_json, "Generated plan parsed and bounded to explicit actionable steps."),
                 (plan.steps[1], plan_verification, plan_verification),

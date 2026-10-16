@@ -32,6 +32,7 @@ from norm_runtime.about import format_about
 from norm_plugin_help import get_help
 from norm_voice_commands import run_voice_command
 from norm_vision_commands import run_vision_command
+from norm_pdf_commands import run_pdf_command
 from runtime_bootstrap import build_postgres_pool
 
 
@@ -525,6 +526,8 @@ def main() -> int:
             if text.startswith("/") and run_voice_command(text, ROOT):
                 continue
             if text.startswith("/") and run_vision_command(text, ROOT):
+                continue
+            if text.startswith("/") and run_pdf_command(text, ROOT):
                 continue
             if lowered == "/about":
                 try:
