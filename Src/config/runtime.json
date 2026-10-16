@@ -23,17 +23,33 @@
     "max_length_continuations_per_slice": 3,
     "max_oversize_recovery_cycles": 3
   },
+  "context_budget": {
+    "enabled": true,
+    "raw_evidence_fraction": 0.2,
+    "safety_fraction": 0.08,
+    "compact_state_max_fraction": 0.3,
+    "max_raw_evidence_items": 1,
+    "estimated_chars_per_token": 3.5,
+    "estimated_text_bytes_per_token": 3.0,
+    "min_raw_evidence_tokens": 1024,
+    "max_raw_evidence_tokens": 32768,
+    "min_safety_tokens": 2048,
+    "max_retained_chars_per_piece": 5000,
+    "min_stream_bytes": 16384,
+    "checkpoint_remaining_fraction": 0.05,
+    "checkpoint_archive_messages": 8
+  },
   "ollama": {},
   "agents": {
     "n1": {
       "enabled": true,
       "candidate_limit": 12,
-      "semantic_match_floor": 0.45,
+      "semantic_match_floor": 0.65,
       "loop_repeat_threshold": 3,
       "reasoning_loop_threshold": 3,
       "reasoning_similarity_floor": 0.78,
       "ingress": {
-        "num_predict": 3600,
+        "num_predict": 7500,
         "think": true,
         "temperature": 0.0,
         "timeout_seconds": 720
@@ -45,40 +61,52 @@
         "timeout_seconds": 720
       },
       "final_review": {
-        "num_predict": 5000,
+        "num_predict": 7500,
         "think": true,
         "temperature": 0.0,
         "timeout_seconds": 720
       },
       "maintenance_review": {
-        "num_predict": 5000,
+        "num_predict": 7500,
         "think": true,
         "temperature": 0.0,
         "timeout_seconds": 720
       },
       "tool_loop_reset": {
-        "num_predict": 220,
+        "num_predict": 1440,
         "think": true,
         "temperature": 0.0,
         "timeout_seconds": 86400
       },
+      "sensitive_action": {
+        "num_predict": 500,
+        "think": true,
+        "temperature": 0.0,
+        "timeout_seconds": 180
+      },
       "reasoning_loop_judgment": {
-        "num_predict": 420,
+        "num_predict": 6400,
         "think": true,
         "temperature": 0.0,
         "timeout_seconds": 86400
       },
       "redis_reuse_decision": {
-        "num_predict": 420,
+        "num_predict": 3600,
         "think": true,
         "temperature": 0.0,
         "timeout_seconds": 86400
       },
       "verification_value": {
-        "num_predict": 700,
+        "num_predict": 5400,
         "think": true,
         "temperature": 0.0,
         "timeout_seconds": 86400
+      },
+      "checkpoint_distillation": {
+        "num_predict": 8000,
+        "think": true,
+        "temperature": 0.0,
+        "timeout_seconds": 720
       },
       "persistent_instructions": [
         "You are N1, Norm's gatekeeper and verifier. Do not take over N2's user-facing work; judge, constrain, verify, or route only as the active N1 call requests.",
@@ -100,7 +128,11 @@
   "tools": {
     "enabled": true,
     "allowed_roots": [
-      "{documents_root}"
+      "\\\\KH-CA8D\\Local1675",
+      "D:\\LOCAL_Share\\Code Projects",
+      "C:\\Norm\\docs",
+      "X:\\",
+      "C:\\Users\\KHzz\\Documents\\Norm"
     ],
     "backup_root": "{state_root}\\file-backups",
     "audit_log": "{runtime_root}\\logs\\tool-audit.jsonl",
@@ -151,8 +183,8 @@
     "background_context_chars": 32000,
     "scheduled_memory_interval_days": 7,
     "consolidation_check_seconds": 3600,
-    "condensation_model": "",
-    "condensation_backup_model": "",
+    "condensation_model": "Granite",
+    "condensation_backup_model": "north-mini-code",
     "consolidation_batch_chars": 14000,
     "consolidation_batch_target_chars": 1800,
     "consolidation_snapshot_target_chars": 6000,
@@ -167,7 +199,7 @@
     "recovery_cleanup_max_trees": 20,
     "destructive_memory_interval_days": 21,
     "consolidation_batch_accept_chars": 3400,
-    "consolidation_max_attempts": 4,
+    "consolidation_max_attempts": 1,
     "consolidation_snapshot_accept_chars": 9000,
     "consolidation_max_output_segments": 4
   },
@@ -229,7 +261,9 @@
     "history_retention_seconds": 1209600,
     "context_token_budget": 2500,
     "context_char_budget": 10000,
-    "emergency_row_cap": 512
+    "emergency_row_cap": 512,
+    "replay_payload_max_bytes": 393216,
+    "max_replay_records": 3
   },
   "model_runtime": {
     "default_context_length": 65536,
@@ -243,7 +277,7 @@
     "Take the time needed to get the task right; correctness, completeness, and verification outrank speed.",
     "Use available tools proactively when they can inspect, measure, retrieve, test, or verify a material fact. Do not guesstimate what can reasonably be checked.",
     "Do not replace missing evidence with convenient assumptions. Gather more evidence when practical, and clearly mark uncertainty when it cannot be resolved.",
-    "Improve efficiency through better planning, decomposition, reuse, caching, and targeted tool use—not by skipping necessary work or lowering verification rigor.",
+    "Improve efficiency through better planning, decomposition, reuse, caching, and targeted tool useâ€”not by skipping necessary work or lowering verification rigor.",
     "Before finishing, verify important claims and results against observed evidence and the user's actual constraints.",
     "All timestamps must be timezone-aware. When no timezone is specified, use America/New_York (EST/EDT as applicable); do not emit ambiguous naive local timestamps. Internal storage may remain timezone-aware UTC, but human-facing timestamps and memory summaries default to America/New_York.",
     "All network service endpoints must come from the settings-resolved runtime topology; do not invent localhost, 127.0.0.1, ports, database names, or users. Use the configured endpoint first. Localhost is permitted only when that service is explicitly configured as loopback or as an explicit fallback. Any fallback/network probe must be non-interactive and fail within 5 seconds; for psql/PostgreSQL CLI use connect_timeout=5 and -w so authentication can never block waiting for input. If the configured authority route is unavailable, fail clearly rather than silently bypassing it.",

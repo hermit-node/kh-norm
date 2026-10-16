@@ -227,6 +227,10 @@ class OllamaClient:
                 return int(self.model_context_overrides[key])
         return self.context_length
 
+    def effective_context_length(self, model: str | None = None) -> int | None:
+        """Public runtime-owned context budget for the active/selected model."""
+        return self._context_for_model(model)
+
     @staticmethod
     def _context_error_details(body: str) -> tuple[int, int, str] | None:
         try:
@@ -568,6 +572,7 @@ class OllamaClient:
         seen_calls: set[str] = set()
         done_reason = ""
         eval_count = 0
+        prompt_eval_count = 0
         cancel_event = Event()
         call_id = id(cancel_event)
         with self._active_lock:
@@ -589,6 +594,7 @@ class OllamaClient:
                     if data.get("done"):
                         done_reason = str(data.get("done_reason") or "")
                         eval_count = int(data.get("eval_count") or 0)
+                        prompt_eval_count = int(data.get("prompt_eval_count") or 0)
                     message = data.get("message") or {}
                     thinking = str(message.get("thinking", ""))
                     content = str(message.get("content", ""))
@@ -628,6 +634,7 @@ class OllamaClient:
             "tool_calls": tool_calls,
             "done_reason": done_reason,
             "eval_count": eval_count,
+            "prompt_eval_count": prompt_eval_count,
         }
 
     def vision_result(

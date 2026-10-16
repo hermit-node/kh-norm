@@ -295,6 +295,24 @@ class PostgresTaskLog:
                 )
             """).format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
             cur.execute(sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {}.task_context_slices (
+                    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                    task_id text NOT NULL REFERENCES {}.task_runs(task_id) ON DELETE CASCADE,
+                    step_id text NOT NULL,
+                    slice_index integer NOT NULL,
+                    reason text NOT NULL DEFAULT '',
+                    messages jsonb NOT NULL DEFAULT '[]'::jsonb,
+                    prompt_eval_count integer NOT NULL DEFAULT 0,
+                    eval_count integer NOT NULL DEFAULT 0,
+                    context_limit_tokens integer NOT NULL DEFAULT 0,
+                    created_at timestamptz NOT NULL DEFAULT now(),
+                    UNIQUE(task_id, step_id, slice_index)
+                )
+            """).format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
+            cur.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {}.task_context_slices(task_id, step_id, slice_index)").format(
+                sql.Identifier(f"idx_{self.schema}_task_context_slices"), sql.Identifier(self.schema)
+            ))
+            cur.execute(sql.SQL("""
                 CREATE TABLE IF NOT EXISTS {}.task_evidence_archive (
                     archive_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                     source_evidence_id bigint NOT NULL UNIQUE,
@@ -378,7 +396,7 @@ class PostgresTaskLog:
                     created_at timestamptz NOT NULL DEFAULT now()
                 )
             """).format(sql.Identifier(self.schema)))
-            for table in ("task_steps", "task_evidence", "task_step_segments", "task_thinking_segments", "task_recovery_notes", "task_evidence_archive"):
+            for table in ("task_steps", "task_evidence", "task_step_segments", "task_thinking_segments", "task_recovery_notes", "task_context_slices", "task_evidence_archive"):
                 cur.execute(sql.SQL("ALTER TABLE {}.{} ADD COLUMN IF NOT EXISTS node_uuid uuid").format(sql.Identifier(self.schema), sql.Identifier(table)))
             cur.execute(sql.SQL("ALTER TABLE {}.task_runs ADD COLUMN IF NOT EXISTS parent_task_uuid uuid").format(sql.Identifier(self.schema)))
             cur.execute(sql.SQL("ALTER TABLE {}.task_runs ADD COLUMN IF NOT EXISTS parent_node_uuid uuid").format(sql.Identifier(self.schema)))
@@ -473,7 +491,7 @@ class PostgresTaskLog:
         for task_id,task_uuid,plan,task_kind,parent_task_id,parent_step_id in rows:
             data=plan if isinstance(plan,dict) else {}
             self._sync_plan_nodes(cur,str(task_id),str(task_uuid),data,str(task_kind or 'root'))
-        for table in ("task_steps", "task_evidence", "task_step_segments", "task_thinking_segments", "task_recovery_notes", "task_evidence_archive"):
+        for table in ("task_steps", "task_evidence", "task_step_segments", "task_thinking_segments", "task_recovery_notes", "task_context_slices", "task_evidence_archive"):
             cur.execute(sql.SQL("SELECT DISTINCT x.task_id,x.step_id,tr.task_uuid::text,tr.task_kind FROM {}.{} x JOIN {}.task_runs tr ON tr.task_id=x.task_id LEFT JOIN {}.task_nodes n ON n.task_id=x.task_id AND n.legacy_step_id=x.step_id WHERE n.node_id IS NULL").format(sql.Identifier(self.schema),sql.Identifier(table),sql.Identifier(self.schema),sql.Identifier(self.schema)))
             for legacy_task,legacy_step,task_uuid,task_kind in cur.fetchall():
                 cur.execute(sql.SQL("SELECT COALESCE(MAX(ordinal),-1)+1 FROM {}.task_nodes WHERE task_id=%s").format(sql.Identifier(self.schema)), (legacy_task,))
@@ -955,6 +973,85 @@ class PostgresTaskLog:
             row = cur.fetchone()
         return str(row[0] or "") if row else ""
 
+    def record_context_slice(
+        self,
+        task_id: str,
+        step_id: str,
+        messages: list[dict],
+        *,
+        reason: str = "",
+        prompt_eval_count: int = 0,
+        eval_count: int = 0,
+        context_limit_tokens: int = 0,
+    ) -> int:
+        """Archive the lossless recent execution context before a continuation yield.
+
+        This is not the working checkpoint. PostgreSQL keeps the recoverable/raw
+        context; N1 separately distills the small continuation checkpoint N2 will
+        actually receive after the existing queue requeues the same step.
+        """
+        payload = list(messages or [])
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL(
+                "SELECT COALESCE(MAX(slice_index),0)+1 FROM {}.task_context_slices WHERE task_id=%s AND step_id=%s"
+            ).format(sql.Identifier(self.schema)), (task_id, step_id))
+            slice_index = int(cur.fetchone()[0])
+            node_uuid = self._node_uuid_cur(cur, task_id, step_id)
+            cur.execute(sql.SQL("""
+                INSERT INTO {}.task_context_slices(
+                    task_id,step_id,node_uuid,slice_index,reason,messages,prompt_eval_count,eval_count,context_limit_tokens
+                ) VALUES (%s,%s,%s::uuid,%s,%s,%s,%s,%s,%s)
+            """).format(sql.Identifier(self.schema)), (
+                task_id, step_id, node_uuid, slice_index, str(reason or ""), Jsonb(payload),
+                max(0, int(prompt_eval_count or 0)), max(0, int(eval_count or 0)),
+                max(0, int(context_limit_tokens or 0)),
+            ))
+            cur.execute(sql.SQL("UPDATE {}.task_runs SET updated_at=now() WHERE task_id=%s").format(
+                sql.Identifier(self.schema)
+            ), (task_id,))
+        return slice_index
+
+    def context_slice(self, task_id: str, step_id: str, slice_index: int) -> dict | None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                SELECT slice_index,reason,messages,prompt_eval_count,eval_count,context_limit_tokens,created_at
+                FROM {}.task_context_slices
+                WHERE task_id=%s AND step_id=%s AND slice_index=%s
+            """).format(sql.Identifier(self.schema)), (task_id, step_id, int(slice_index)))
+            row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "slice_index": int(row[0]),
+            "reason": str(row[1] or ""),
+            "messages": list(row[2] or []),
+            "prompt_eval_count": int(row[3] or 0),
+            "eval_count": int(row[4] or 0),
+            "context_limit_tokens": int(row[5] or 0),
+            "created_at": row[6].isoformat(),
+        }
+
+    def latest_context_slice(self, task_id: str, step_id: str) -> dict | None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                SELECT slice_index,reason,messages,prompt_eval_count,eval_count,context_limit_tokens,created_at
+                FROM {}.task_context_slices
+                WHERE task_id=%s AND step_id=%s
+                ORDER BY slice_index DESC LIMIT 1
+            """).format(sql.Identifier(self.schema)), (task_id, step_id))
+            row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "slice_index": int(row[0]),
+            "reason": str(row[1] or ""),
+            "messages": list(row[2] or []),
+            "prompt_eval_count": int(row[3] or 0),
+            "eval_count": int(row[4] or 0),
+            "context_limit_tokens": int(row[5] or 0),
+            "created_at": row[6].isoformat(),
+        }
+
     def recovery_note_task_ids(self) -> list[str]:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(sql.SQL("SELECT DISTINCT task_id FROM {}.task_recovery_notes ORDER BY task_id").format(
@@ -1391,6 +1488,7 @@ class PostgresTaskLog:
         tool = str(record.get("tool") or "").strip()
         target = str(record.get("target") or "").strip()
         description = str(record.get("description") or "").strip()
+        scope = str(record.get("scope") or "").strip()
         value = str(record.get("value") or "").strip()
         num_checks = max(1, int(record.get("num_checks") or 1))
         previous_value = str(record.get("previous_value") or "")
@@ -1412,7 +1510,10 @@ class PostgresTaskLog:
                 WHERE record_id=%s
             """).format(sql.Identifier(self.schema)), (incoming_id,))
             existing = cur.fetchone()
-            if existing is None:
+            if existing is None and not scope:
+                # Scoped hot records (for example distinct file chunks) deliberately
+                # keep their record IDs separate. Unscoped facts retain the historical
+                # semantic-folding behavior used before scoped replay payloads existed.
                 cur.execute(sql.SQL("""
                     SELECT record_id,tool,target,description,value,num_checks,previous_value,
                            changed_at,last_verified_at,first_migrated_at,last_migrated_at

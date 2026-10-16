@@ -1,7 +1,7 @@
 {
   "package_schema": 1,
   "name": "Norm",
-  "version": "0.54.1a",
+  "version": "0.54.2",
   "package_type": "portable-source",
   "source_dir": "core",
   "entrypoint": "core/norm_main.py",
@@ -242,8 +242,8 @@
   },
   "public_plugin_install": {
     "policy": "hash installed managed plugin src first; if target SHA matches, leave src untouched and refresh only changed trusted metadata; otherwise repair Norm src from packaged release, re-hash, then use pinned public source only if packaged repair still fails; missing plugins prefer public source",
-    "package_url": "https://raw.githubusercontent.com/hermit-node/kh-norm/main/Norm-0.54.1a-portable-source.zip",
-    "package_version": "0.54.1a",
+    "package_url": "https://raw.githubusercontent.com/hermit-node/kh-norm/main/Norm-0.54.2-portable-source.zip",
+    "package_version": "0.54.2",
     "subtrees": [
       "plugins/vision_parse",
       "plugins/web_browser",
@@ -274,10 +274,10 @@
     "semantics": "12 newest backup sets per backup class/location; a backup ZIP plus its .sha256 companion counts as one set"
   },
   "n1_control_loop": {
-    "flow": "user -> N1 ingress review -> N2 -> N1 tool gate/reuse -> N2 -> N1 final review -> user",
+    "flow": "user -> N1 ingress review -> N2 -> N1 tool gate/verification-pool sufficiency -> N2 -> N1 final review -> user",
     "ingress": "N1 may attach advisory guidance but cannot rewrite or block the exact user turn",
     "routing": "N2 proposes subject decomposition/thread placement; N1 accepts or retries before persistence",
-    "tool_gate": "N1 may execute, reuse verified evidence, or block repeated identical paths",
+    "tool_gate": "For information requests N1 judges whether relevant live Redis verification-pool evidence is sufficient; sufficient evidence is replayed to N2, otherwise the source executes fresh. Repeated non-information paths remain loop-guarded.",
     "final": "N1 accepts/retries; N2 performs any repair; N1 does not rewrite the final answer",
     "runtime_config": {
       "ingress": {
@@ -381,5 +381,41 @@
     "source": "PostgreSQL durable conversation messages with role=user only",
     "tool": "plugin_voice_profile__main__build_from_chat_history",
     "persona_policy": "voice-only; never writes operator-authored user persona"
+  },
+  "chunked_evidence": {
+    "authority": "config/runtime.json:context_budget",
+    "scope": "large default text read_file results delivered to N2",
+    "context_partition": "measure current system/messages/tool schemas, reserve current N2 num_predict output plus safety, then target raw_evidence_fraction of remaining usable input",
+    "raw_evidence_fraction": 0.2,
+    "max_raw_evidence_items_per_n2_turn": 1,
+    "compact_state_max_fraction": 0.3,
+    "addressing": "stable byte ranges within one source-fingerprint-locked stream; N2 may request any one numbered piece",
+    "seams": "{0:1} start, {n:n+1} internal, {N:0} end",
+    "eviction": "after N2 consumes a chunk and emits its next tool call, raw text is replaced in active model history by compact provenance + retained facts; full raw tool evidence remains durable out of context",
+    "n1_verification": "Chunked read_file calls use the same live Redis verification pool. N1 sees bounded candidate metadata/canonical values, judges sufficiency, and may replay exactly one prior raw chunk payload from Redis; canonical values are never substituted for requested file bytes. If prior evidence is insufficient or unavailable, the source is read fresh.",
+    "source_change": "source_fingerprint mismatch invalidates the active stream and requires a fresh read",
+    "context_headroom_checkpoint": {
+      "remaining_fraction": 0.05,
+      "counter_source": "Ollama prompt_eval_count plus estimated newly visible assistant payload; no full prompt rescan per turn",
+      "lossless_archive": "norm_runtime.task_context_slices stores the recent execution slice in PostgreSQL before continuation",
+      "distillation": "N1 converts the durable slice into task-applicable continuation state only",
+      "resume": "existing PromptQueue.yield_job requeues the same task/step with distilled job.context; never a synthetic user prompt",
+      "stream_cursor": "chunked evidence stream states are carried in existing job metadata across the requeue"
+    }
+  },
+  "verification_pool_replay": {
+    "authority": "Redis live verification pool: compact metadata in norm:validation:pool plus raw payloads in the companion norm:validation:pool:replay hash, both keyed by the same record_id; no parallel in-process raw-result cache",
+    "decision_owner": "N1 judges whether one or more relevant prior observations are sufficiently applicable/current for N2's present information request; cost is not a decision criterion",
+    "freshness": "age alone does not determine staleness; N1 reasons from source volatility, requested freshness, known mutations/invalidation, scope, contradictions, and evidence completeness",
+    "candidate_context": "N1 scans only the compact metadata hash and receives bounded metadata/canonical values, age/check count, scope, and replay availability; raw replay payloads are fetched from the companion hash only after selection",
+    "replay": "after N1 selects sufficient evidence, the exact hot replay payload is fetched from Redis and supplied to N2; N2 need not know whether evidence was replayed or freshly observed",
+    "multi_record": "N1 may select up to validation_pool.max_replay_records relevant small observations; read_file remains limited to one raw evidence payload per N2 turn",
+    "payload_limit": "validation_pool.replay_payload_max_bytes bounds each private hot replay payload; oversized/unavailable payloads force fresh source execution rather than bloating N1 context",
+    "mutation": "known mutations invalidate affected Redis validation targets immediately; a moved/unreachable locator does not retroactively invalidate already observed cached content",
+    "durability": "PostgreSQL retains durable validation/history/checkpoint state; private replay payloads are Redis-hot evidence and are not copied into long-term validation history",
+    "config": {
+      "replay_payload_max_bytes": 393216,
+      "max_replay_records": 3
+    }
   }
 }

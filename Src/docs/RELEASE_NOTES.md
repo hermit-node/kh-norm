@@ -1,3 +1,37 @@
+0.54.2 — 2026-10-07 — Recovery scope and action-boundary protected-literal guard
+
+- Removed the oversize-recovery fallback that converted every unnumbered task into synthetic `scope_items=[1]`. Ordinary unscoped work now stays unscoped, while real single-item scopes retain the existing maximum of four semantic subchecks.
+- Recovery-analysis child instructions now show the actual parent scope and state the four-subcheck limit only when the parent is genuinely scoped to one numbered item.
+- The existing upstream protected-literal transformation is unchanged. N1 no longer uses `observe_n2_turn()` for this policy; that observer is reserved for genuine reasoning/tool loops.
+- Protected-literal checks now occur only at the concrete tool-action boundary. The first denied action returns only `The Bird says No. The Worm won't Go.`; a later retry may receive a short goal-preserving alternative. Direct PostgreSQL pool/query/execute tools remain allowed.
+- The guard uses a cheap local prefilter before its semantic N1 judgment, and its counters/history are process-local RAM only; they are never restored from Redis or PostgreSQL after restart.
+
+0.54.2b — 2026-10-06 — Redis verification-pool evidence replay
+
+- Made the existing Redis live verification pool the sole hot reusable-evidence cache; removed the redundant process-local raw-result cache.
+- N1 now judges evidence sufficiency rather than using age/duplicate-call rules: source volatility, requested freshness, known mutations, scope, contradictions, and completeness determine whether prior observations are sufficient.
+- A reuse decision now returns the actual selected Redis replay payload to N2. N2 is no longer told to "use prior evidence" that may have been evicted from its active context.
+- Information-only repeats bypass the generic loop-reset blocker. Repeated non-information/reasoning paths retain the existing loop protections.
+- Added private, bounded replay payloads in a companion Redis hash plus scoped observation IDs in the verification metadata. N1 sees only bounded metadata/canonical values during its decision; payloads are fetched afterward.
+- Preserved the one-large-chunk-per-N2-turn rule. Chunk reads may replay exactly one previously observed raw chunk when N1 judges it sufficient; otherwise the source is read fresh.
+- Kept PostgreSQL as durable validation/history/checkpoint storage; Redis replay payloads remain hot evidence and are not copied into long-term validation history.
+- Added regression coverage for Redis replay semantics, same-value refresh/change invalidation, multi-observation sufficiency, mutation invalidation, and chunk replay after a same-step requeue.
+
+0.54.2a — 2026-10-06 — Adaptive single-chunk evidence context
+
+- Added runtime-owned context budgeting for large default text `read_file` results. Before the read executes, Norm estimates current N2 system/message/tool-schema usage, reserves the current N2 output allowance plus a safety margin, and targets 20% of the remaining usable input budget for one raw evidence chunk.
+- Enforced one raw evidence chunk per N2 turn. Large reads return a source-fingerprint-locked stream with numbered pieces and seam markers (`{0:1}`, `{n:n+1}`, `{N:0}`); N2 may request any one piece by `stream_id` + `piece`, including non-sequential jumps.
+- Added `retain` to streamed reads. Once N2 consumes a chunk and emits its next tool call, useful compact facts are retained with source/piece provenance while the prior raw chunk is evicted from active model history. Full raw tool evidence remains durable outside the model context.
+- Bounded retained per-piece facts against the configured compact-state partition so accumulated summaries cannot silently consume the raw-evidence slot.
+- Stream reconstruction is byte-addressed and source-fingerprint checked. If the file changes mid-stream, the stream is invalidated instead of stitching incompatible pieces together.
+- Chunked `read_file` calls still check in with N1/Redis, but Redis canonical values are never substituted for requested raw bytes. Streamed-read check-in is deterministic source-fingerprint metadata, avoiding the former N1 `verification_value` model pass over huge file contents.
+- Added `config/runtime.json:context_budget` for the adaptive fraction, safety reserve, compact-state fraction, token/byte estimation, and retention caps. Existing live runtime values continue to migrate through Installer 1.6.12's snapshot-and-merge JSON path.
+
+- Added a 5% N2 context-headroom checkpoint threshold driven by Ollama's returned `prompt_eval_count` plus only the newly visible assistant payload; hidden thinking tokens are not treated as persistent next-turn context, and Norm does not re-tokenize/rescan the whole prompt every turn.
+- At the headroom threshold, the recent execution slice is archived losslessly to PostgreSQL `norm_runtime.task_context_slices`. N1 then reads the durable copy and distills only task-applicable continuation state (completed work, verified facts, settled decisions, do-not-repeat items, open work, next action, and evidence cursor).
+- The existing checkpoint/yield/requeue lifecycle remains authoritative. The distilled checkpoint is placed in `job.context` for the same task/step; it is explicitly an internal continuation and never becomes a synthetic user prompt.
+- Active chunk-stream cursor/state is persisted in existing requeue metadata, so a checkpoint can resume the same source-fingerprint-locked piece map without replaying evicted raw chunks.
+
 0.54.1a — 2026-10-06 — Runtime profiles and read-only Codex reasoning
 
 - Added `config/profiles.json` with distinct user, N1, and N2 persona/voice slots. Direct persona is operator-authored; corpus-derived persona/voice profiles are supplemental and remain runtime-owned across model switches.

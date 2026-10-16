@@ -2,7 +2,25 @@
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.54.1a / Installer 1.6.12-unified** package only. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.54.2 / Installer 1.6.12-unified** package only. Version history belongs only in RELEASE_NOTES.md.
+
+### Recovery scope + action-boundary protected-literal guard (0.54.2)
+
+Unnumbered oversized work remains genuinely unscoped during recovery; Norm no longer invents `scope_items=[1]`, so atomic-item decomposition limits cannot be triggered by a synthetic scope. Sensitive literals continue to be transformed before N1/N2 see evidence. N1 does not police N2's general reasoning about passwords, credentials, or surrounding code. Only a concrete proposed action that plausibly attempts to recover or bypass a transformed literal is sent through the semantic guard. The first denied attempt receives only `The Bird says No. The Worm won't Go.`; repeated attempts may receive a short safe workaround, such as using Norm's direct PostgreSQL query capability instead of constructing a credential-bearing connection. The guard's counters/history are in-process only and reset on restart.
+
+### Redis verification-pool evidence replay (0.54.2b)
+
+Redis's existing live verification pool is the sole hot reusable-evidence cache. For each information request, N1 receives only bounded candidate metadata/canonical values and decides whether the relevant previous observation or observations are sufficiently applicable/current for N2's present need. Age is evidence, not a TTL: static documents may remain sufficient while live chat/process/latest-state requests may justify a refresh even when recent; known mutations invalidate affected targets immediately.
+
+When N1 judges prior evidence sufficient, Norm fetches the selected private replay payload from the companion Redis replay hash only after that decision and supplies the actual evidence to N2. N2 is not told to "use prior evidence" and does not need to know whether the source was replayed or queried again. If evidence is incomplete, stale, contradictory, structurally mismatched, unavailable, or otherwise insufficient, the source executes fresh and the verification pool is refreshed. The former separate in-process raw-result cache was removed. Large `read_file` evidence still obeys the one-raw-chunk-per-N2-turn invariant. PostgreSQL remains the durable history/checkpoint layer; Redis replay payloads are hot evidence only.
+
+### Adaptive chunked evidence context (0.54.2a)
+
+Large default text reads use a context-budgeted evidence stream instead of accumulating raw tool results in N2 history. The runtime reserves N2 output + safety first, assigns about one fifth of the remaining usable context to one raw chunk, and never delivers more than one raw evidence chunk in an N2 turn. A stream returns `stream_id`, numbered `piece`, byte range, estimated piece count, and seam markers. N2 can jump directly to any one piece. Before a later tool call, N2 can place compact facts in the read's `retain` field; the consumed raw chunk is then replaced in active context by compact provenance/facts while the original tool evidence remains durable.
+
+`config/runtime.json:[context_budget]` owns this policy. The active stream's byte map remains stable for that source fingerprint; a file change invalidates the stream.
+
+Context headroom uses Ollama's own `prompt_eval_count` rather than rescanning the full prompt each turn. At the default 5% remaining threshold, Norm archives the recent execution slice to PostgreSQL, N1 distills only what is applicable to finishing the same step, and the existing checkpoint/requeue path restarts N2 from that compact continuation. Requeued slices remain Norm-internal continuations, never synthetic user prompts.
 
 ### Runtime profiles and Codex reasoning (0.54.1a)
 

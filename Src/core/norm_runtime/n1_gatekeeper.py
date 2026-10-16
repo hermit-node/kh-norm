@@ -39,6 +39,23 @@ _CACHEABLE_PLUGIN_FUNCTIONS = {
     "compose_context", "active_profile", "validate_backup_setup",
 }
 
+# Model-facing evidence may intentionally differ from literal source material where
+# sensitive values are transformed upstream. N1 never receives the literal value. It
+# knows only that a transformed placeholder represents withheld source material, and
+# intervenes only when a concrete proposed action tries to recover or bypass it.
+_BIRD_REDIRECT = "The Bird says No. The Worm won't Go."
+_SECRET_TERM_RE = re.compile(r"(?i)\b(?:password|passwd|pwd|credential|secret|token|api[_ -]?key|access[_ -]?key|private[_ -]?key|authorization)\b")
+_SECRET_VALUE_INTENT_RE = re.compile(
+    r"(?i)(?:\b(?:actual|literal|raw|hidden|real|exact|underlying)\b.{0,80}\b(?:password|passwd|pwd|credential|secret|token|api[_ -]?key|access[_ -]?key|private[_ -]?key)\b"
+    r"|\b(?:password|passwd|pwd|credential|secret|token|api[_ -]?key|access[_ -]?key|private[_ -]?key)\b.{0,80}\b(?:value|reveal|recover|extract|obtain|show|expose|reconstruct|guess|discover|bypass|unredact)\b"
+    r"|\b(?:what is|show me|give me|find the|search for the|locate the)\b.{0,80}\b(?:password|passwd|pwd|credential|secret|token|api[_ -]?key|access[_ -]?key|private[_ -]?key)\b"
+    r"|\b(?:password|passwd|pwd|credential|secret|token)\b.{0,80}\b(?:did not work|didn't work|does not work|doesn't work|failed|invalid)\b)"
+)
+_SENSITIVE_DECLINE_RE = re.compile(
+    r"(?i)\b(?:do not|don't|dont|no need to|without|avoid|stop trying to|will not|won't)\b.{0,100}\b(?:password|passwd|pwd|credential|secret|token|api[_ -]?key|access[_ -]?key|private[_ -]?key)\b"
+)
+_DB_CAPABILITY_FUNCTIONS = {"postgres_pool", "postgres_query", "postgres_execute"}
+
 
 @dataclass
 class GateOutcome:
@@ -51,6 +68,8 @@ class GateOutcome:
     note: str = ""
     reset_instruction: str = ""
     signature: str = ""
+    scope: str = ""
+    streamed_read: bool = False
 
 
 class N1Gatekeeper:
@@ -81,7 +100,8 @@ class N1Gatekeeper:
         ingress_review_timeout_seconds: float = 720.0,
         final_num_predict: int = 5000,
         final_review_timeout_seconds: float = 720.0,
-        raw_result_cache_entries: int = 128,
+        replay_payload_max_bytes: int = 393216,
+        max_replay_records: int = 3,
         turn_history_entries: int = 256,
         request_state_entries: int = 4096,
         profiles: dict[str, Any] | None = None,
@@ -101,16 +121,17 @@ class N1Gatekeeper:
         self.ingress_review_timeout_seconds = max(1.0, float(ingress_review_timeout_seconds))
         self.final_num_predict = max(1, int(final_num_predict))
         self.final_review_timeout_seconds = max(1.0, float(final_review_timeout_seconds))
-        self.raw_result_cache_entries = max(8, int(raw_result_cache_entries))
+        self.replay_payload_max_bytes = max(4096, int(replay_payload_max_bytes))
+        self.max_replay_records = max(1, min(12, int(max_replay_records)))
         self.turn_history_entries = max(32, int(turn_history_entries))
         self.request_state_entries = max(256, int(request_state_entries))
         self.profiles = dict(profiles or {})
         self._lock = Lock()
         self._request_counts: OrderedDict[str, int] = OrderedDict()
-        self._raw_results: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._loop_reset_emitted: OrderedDict[str, None] = OrderedDict()
         self._turn_history: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
         self._turn_loop_judgments: OrderedDict[str, None] = OrderedDict()
+        self._sensitive_probe_counts: OrderedDict[str, int] = OrderedDict()
         self._maintenance_judgments = {"total": 0, "accept": 0, "retry": 0, "destructive_accept": 0, "processing_failed": 0, "review_failure_pass": 0}
         self._ingress_reviews = {"total": 0, "success": 0, "failed": 0}
         self._routing_reviews = {"total": 0, "accept": 0, "retry": 0, "processing_failed": 0}
@@ -331,6 +352,111 @@ class N1Gatekeeper:
                 "processing_failed": True,
             }
 
+    def distill_continuation_checkpoint(
+        self,
+        *,
+        original_goal: str,
+        step_prompt: str,
+        archived_messages: list[dict[str, Any]],
+        retained_evidence: str = "",
+        archive_reference: str = "",
+    ) -> str:
+        """Turn lossless PostgreSQL execution context into N2's small working continuation.
+
+        The archived/raw slice remains authoritative history. This output is deliberately
+        lossy and task-applicable: only what the next execution slice needs to finish
+        the same step should survive. It is never represented as a new user prompt.
+        """
+        schema = {
+            "type": "object",
+            "properties": {
+                "goal": {"type": "string"},
+                "completed": {"type": "array", "items": {"type": "string"}},
+                "facts": {"type": "array", "items": {"type": "string"}},
+                "decisions": {"type": "array", "items": {"type": "string"}},
+                "do_not_repeat": {"type": "array", "items": {"type": "string"}},
+                "open_work": {"type": "array", "items": {"type": "string"}},
+                "next_action": {"type": "string"},
+                "evidence_cursor": {"type": "string"},
+            },
+            "required": [
+                "goal", "completed", "facts", "decisions", "do_not_repeat",
+                "open_work", "next_action", "evidence_cursor"
+            ],
+            "additionalProperties": False,
+        }
+        context_json = json.dumps(list(archived_messages or []), ensure_ascii=False, separators=(",", ":"))
+        prompt = (
+            "You are N1 performing continuation-context distillation for the SAME existing Norm step. "
+            "Do not continue the task, do not call tools, do not answer the user, and do not invent facts. "
+            "PostgreSQL retains the lossless execution context below. Produce only the SparkNotes/applicable working state "
+            "that a fresh N2 slice needs to finish the same task correctly. Preserve settled decisions, verified facts, "
+            "completed side effects that must not be repeated, unresolved work, and exact evidence/file/chunk cursors. "
+            "Discard raw bulk data, repeated chatter, obsolete hypotheses, and details irrelevant to finishing the task. "
+            "A requeued slice is an internal continuation, NOT a new user turn. Return strict JSON only.\n\n"
+            f"ORIGINAL TASK GOAL:\n{str(original_goal or '').strip()}\n\n"
+            f"CURRENT STEP PROMPT:\n{str(step_prompt or '').strip()}\n\n"
+            + (f"COMPACT RETAINED EVIDENCE:\n{str(retained_evidence).strip()}\n\n" if retained_evidence else "")
+            + (f"POSTGRESQL ARCHIVE REFERENCE: {archive_reference}\n\n" if archive_reference else "")
+            + f"LOSSLESS RECENT EXECUTION FROM POSTGRESQL:\n{context_json}"
+        )
+        profile = self._profile(
+            "checkpoint_distillation",
+            num_predict=5000,
+            timeout_seconds=min(720.0, float(getattr(self.client, "timeout_seconds", None) or 720.0)),
+        )
+        raw = self.client.generate(
+            prompt,
+            think=profile["think"],
+            temperature=profile["temperature"],
+            num_predict=profile["num_predict"],
+            response_format=schema,
+            emit_stream=False,
+            timeout_seconds=profile["timeout_seconds"],
+        )
+        parsed = OllamaClient.parse_json(raw)
+
+        def clean_list(name: str, limit: int = 16) -> list[str]:
+            values = parsed.get(name)
+            if not isinstance(values, list):
+                return []
+            out: list[str] = []
+            for value in values[:limit]:
+                text = " ".join(str(value or "").strip().split())
+                if text:
+                    out.append(text[:1200])
+            return out
+
+        goal = " ".join(str(parsed.get("goal") or original_goal or "").strip().split())[:2000]
+        completed = clean_list("completed")
+        facts = clean_list("facts")
+        decisions = clean_list("decisions")
+        do_not_repeat = clean_list("do_not_repeat")
+        open_work = clean_list("open_work")
+        next_action = " ".join(str(parsed.get("next_action") or "").strip().split())[:2000]
+        evidence_cursor = " ".join(str(parsed.get("evidence_cursor") or "").strip().split())[:2000]
+
+        lines = [
+            "NORM INTERNAL STEP CONTINUATION",
+            "This is an internally requeued slice of the same step, not a new user request.",
+            f"Goal: {goal}",
+        ]
+        if archive_reference:
+            lines.append(f"Lossless PostgreSQL context: {archive_reference}")
+        sections = (
+            ("Completed", completed), ("Applicable facts", facts), ("Settled decisions", decisions),
+            ("Do not repeat", do_not_repeat), ("Open work", open_work),
+        )
+        for title, values in sections:
+            if values:
+                lines.append(title + ":")
+                lines.extend(f"- {value}" for value in values)
+        if evidence_cursor:
+            lines.append("Evidence cursor: " + evidence_cursor)
+        if next_action:
+            lines.append("Next action: " + next_action)
+        return "\n".join(lines).strip()
+
     def record_final_review_failure_pass(self) -> None:
         with self._lock:
             self._final_reviews["review_failure_pass"] += 1
@@ -350,9 +476,9 @@ class N1Gatekeeper:
             "- You are N2, the working/reasoning agent. Propose normal native tools when you need them.\n"
             "- For every information-gathering tool proposal, include n1_need (the fact/information you need) and n1_target (the stable object/resource being checked).\n"
             "- Do NOT call verification_preflight, verification_history, or verification_checkin. N1 owns Redis validation, reuse/recheck decisions, and check-in.\n"
-            "- N1 may satisfy your request from an existing verified observation instead of invoking the proposed tool. Treat that returned value as the tool answer and continue.\n"
+            "- N1 decides whether the relevant live Redis evidence is sufficient for your current information request. If it is, N1 supplies the prior observed result(s) directly; you do not need to know whether the source was re-queried.\n"
             "- When N1 does invoke a tool, you receive the executor's raw result unchanged.\n"
-            "- If N1 issues a loop-reset instruction, stop repeating the same reasoning/tool path and continue from the evidence already supplied."
+            "- Information requests are not loop-blocked merely because they repeat; N1 resolves them through evidence sufficiency. Loop-reset instructions apply to genuinely repetitive non-information/reasoning paths."
         )
 
     def instrument_schemas(self, schemas: list[dict]) -> list[dict]:
@@ -437,6 +563,224 @@ class N1Gatekeeper:
             need = self._fallback_need(name, clean)
         return clean, target, need
 
+    @staticmethod
+    def _request_scope(name: str, arguments: dict[str, Any]) -> str:
+        """Stable request scope used to retain multiple answers for one target in Redis."""
+        scoped = dict(arguments or {})
+        scoped.pop("n1_need", None)
+        scoped.pop("n1_target", None)
+        payload = json.dumps(redact(scoped), ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        full = f"{name}:{payload}"
+        if len(full) <= 4000:
+            return full
+        digest = hashlib.sha256(full.encode("utf-8", errors="replace")).hexdigest()
+        return full[:3920] + f"...#sha256={digest}"
+
+    def _replay_payload(self, result: dict[str, Any]) -> tuple[dict[str, Any] | None, int]:
+        try:
+            encoded = json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        except Exception:
+            return None, 0
+        if len(encoded) > self.replay_payload_max_bytes:
+            return None, len(encoded)
+        return copy.deepcopy(result), len(encoded)
+
+    @staticmethod
+    def _candidate_prompt_view(row: dict[str, Any]) -> dict[str, Any]:
+        value = str(row.get("value") or "")
+        if len(value) > 2000:
+            value = value[:2000] + "...[truncated]"
+        return {
+            "record_id": str(row.get("record_id") or ""),
+            "tool": str(row.get("tool") or ""),
+            "target": str(row.get("target") or "")[:1000],
+            "description": str(row.get("description") or "")[:1200],
+            "scope": str(row.get("scope") or "")[:1600],
+            "value": value,
+            "num_checks": int(row.get("num_checks") or 0),
+            "previous_value": str(row.get("previous_value") or "")[:1000],
+            "changed_at": str(row.get("changed_at") or ""),
+            "last_verified_at": str(row.get("last_verified_at") or ""),
+            "age_seconds": row.get("age_seconds"),
+            "replay_available": bool(row.get("replay_available")),
+            "replay_bytes": int(row.get("replay_bytes") or 0),
+            "description_match": float(row.get("description_match") or 0.0),
+        }
+
+    @staticmethod
+    def _combine_replays(name: str, results: list[dict[str, Any]]) -> dict[str, Any]:
+        if len(results) == 1:
+            return copy.deepcopy(results[0])
+        return {
+            "ok": all(bool(item.get("ok")) for item in results),
+            "tool": name,
+            "results": [copy.deepcopy(item) for item in results],
+        }
+
+    def _replay_matches_request(
+        self, *, name: str, arguments: dict[str, Any], payload: dict[str, Any], streamed_read: bool
+    ) -> bool:
+        """Structural guard only; N1 still owns the semantic freshness/sufficiency judgment."""
+        if name != "read_file":
+            return True
+        requested_path = str(arguments.get("path") or "").strip()
+        observed_path = str(payload.get("path") or "").strip()
+        if requested_path and observed_path:
+            if self._normalized_target_key(requested_path) != self._normalized_target_key(observed_path):
+                return False
+        if "start_byte" in arguments:
+            try:
+                if int(payload.get("start_byte") or 0) != int(arguments.get("start_byte") or 0):
+                    return False
+            except (TypeError, ValueError):
+                return False
+        if streamed_read:
+            if str(payload.get("mode") or "") != "text":
+                return False
+            if not isinstance(payload.get("content"), str):
+                return False
+            if not str(payload.get("source_fingerprint") or ""):
+                return False
+        return True
+
+    @staticmethod
+    def _database_capability_tool(name: str) -> bool:
+        function_name = str(name or "").rsplit("__", 1)[-1]
+        return function_name in _DB_CAPABILITY_FUNCTIONS
+
+    @staticmethod
+    def _looks_like_sensitive_value_probe(*parts: object) -> bool:
+        text = " ".join(str(part or "") for part in parts)
+        if not (_SECRET_TERM_RE.search(text) and _SECRET_VALUE_INTENT_RE.search(text)):
+            return False
+        # Do not trap N2 after it accepts the redirect and explicitly says it can
+        # proceed without the literal credential.
+        if _SENSITIVE_DECLINE_RE.search(text) and not re.search(
+            r"(?i)\b(?:did not work|didn't work|does not work|doesn't work|failed|invalid)\b", text
+        ):
+            return False
+        return True
+
+    @staticmethod
+    def _looks_like_manual_database_connection_attempt(name: str, arguments: dict[str, Any]) -> bool:
+        if str(name or "") != "run_command":
+            return False
+        rendered = json.dumps(redact(arguments), ensure_ascii=False, sort_keys=True, default=str).casefold()
+        # Database access is already a first-class capability. Redirect actual shell-
+        # created connections, but do not block harmless commands such as printing a
+        # psycopg/psql version.
+        if re.search(r"\bpsycopg2?\.connect\s*\(", rendered):
+            return True
+        if "postgresql://" in rendered or "postgres://" in rendered:
+            return True
+        if re.search(r"\bpsql\b", rendered) and re.search(r"(?:\s-h\b|\s-d\b|\s-u\b|host=|dbname=|user=)", rendered):
+            return True
+        return False
+
+    def _remember_sensitive_probe(self, key: str) -> int:
+        with self._lock:
+            count = int(self._sensitive_probe_counts.get(key, 0)) + 1
+            self._sensitive_probe_counts[key] = count
+            self._sensitive_probe_counts.move_to_end(key)
+            while len(self._sensitive_probe_counts) > self.request_state_entries:
+                self._sensitive_probe_counts.popitem(last=False)
+            return count
+
+    def _judge_sensitive_action(
+        self, *, name: str, need: str, target: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Judge only the concrete proposed action, never N2's ambient reasoning."""
+        if self._database_capability_tool(name):
+            return {"block": False, "database_goal": True, "alternative": ""}
+
+        rendered_arguments = json.dumps(redact(arguments), ensure_ascii=False, sort_keys=True, default=str)
+        fallback_block = (
+            self._looks_like_sensitive_value_probe(need, target, rendered_arguments)
+            or self._looks_like_manual_database_connection_attempt(name, arguments)
+        )
+        if not fallback_block:
+            return {"block": False, "database_goal": False, "alternative": ""}
+
+        prompt = (
+            "You are N1 at Norm's action boundary. Sensitive literal values may have been transformed upstream "
+            "before either model sees them. A placeholder such as [redacted] means a real source literal exists "
+            "but is intentionally unavailable to N2. Judge ONLY the concrete proposed tool action below. "
+            "Do not inspect or speculate about N2's private reasoning.\n\n"
+            "BLOCK only when this action's objective is to recover, reconstruct, infer, expose, search for an "
+            "untransformed copy of, or otherwise bypass a transformed secret literal. Normal source inspection, "
+            "data-flow tracing, credential architecture analysis, refactoring, file reads, and file writes that "
+            "work around the placeholder must be ALLOWED.\n\n"
+            "If blocked, decide whether the underlying goal is PostgreSQL/database access that can be satisfied "
+            "through Norm's existing direct database capability. Also provide one short safe alternative that "
+            "preserves the user's goal without recovering the hidden value. Do not describe how the redaction works "
+            "and do not suggest another recovery technique. Return strict JSON only.\n\n"
+            + json.dumps({
+                "tool": name,
+                "needed_fact_or_purpose": need,
+                "target": target,
+                "arguments": redact(arguments),
+            }, ensure_ascii=False, sort_keys=True, default=str)
+        )
+        schema = {
+            "type": "object",
+            "properties": {
+                "block": {"type": "boolean"},
+                "database_goal": {"type": "boolean"},
+                "alternative": {"type": "string"},
+            },
+            "required": ["block", "database_goal", "alternative"],
+            "additionalProperties": False,
+        }
+        try:
+            profile = self._profile(
+                "sensitive_action",
+                num_predict=500,
+                timeout_seconds=180.0,
+            )
+            raw = self.client.generate(
+                prompt,
+                think=profile["think"],
+                temperature=profile["temperature"],
+                num_predict=profile["num_predict"],
+                response_format=schema,
+                emit_stream=False,
+                timeout_seconds=profile["timeout_seconds"],
+            )
+            parsed = OllamaClient.parse_json(raw)
+            return {
+                "block": bool(parsed.get("block")),
+                "database_goal": bool(parsed.get("database_goal")),
+                "alternative": str(parsed.get("alternative") or "").strip(),
+            }
+        except Exception:
+            logging.exception("N1 sensitive-action judgment failed; using narrow deterministic fallback")
+            return {
+                "block": bool(fallback_block),
+                "database_goal": bool(self._looks_like_manual_database_connection_attempt(name, arguments)),
+                "alternative": "",
+            }
+
+    def _consume_sensitive_probe_block(
+        self, *, task_id: str, step_id: str, name: str, need: str, target: str, arguments: dict[str, Any]
+    ) -> str:
+        decision = self._judge_sensitive_action(name=name, need=need, target=target, arguments=arguments)
+        if not bool(decision.get("block")):
+            return ""
+        key = f"{task_id}\n{step_id}"
+        count = self._remember_sensitive_probe(key)
+        if count == 1:
+            return _BIRD_REDIRECT
+
+        alternative = str(decision.get("alternative") or "").strip()
+        if bool(decision.get("database_goal")):
+            fallback = (
+                "Direct PostgreSQL access is already available; use the database query capability "
+                "instead of recovering the credential or constructing another connection."
+            )
+        else:
+            fallback = "Work around the transformed value and continue with the surrounding task."
+        return f"{_BIRD_REDIRECT} {alternative or fallback}".strip()
+
     def _remember_request(self, signature: str) -> int:
         with self._lock:
             count = int(self._request_counts.get(signature, 0)) + 1
@@ -447,21 +791,6 @@ class N1Gatekeeper:
                 self._loop_reset_emitted.pop(expired, None)
             return count
 
-    def _cached_raw(self, signature: str) -> dict[str, Any] | None:
-        with self._lock:
-            value = self._raw_results.get(signature)
-            if value is None:
-                return None
-            self._raw_results.move_to_end(signature)
-            return copy.deepcopy(value.get("result") if isinstance(value, dict) else value)
-
-    def _store_raw(self, signature: str, target: str, result: dict[str, Any]) -> None:
-        with self._lock:
-            self._raw_results[signature] = {"target": str(target or ""), "result": copy.deepcopy(result)}
-            self._raw_results.move_to_end(signature)
-            while len(self._raw_results) > self.raw_result_cache_entries:
-                self._raw_results.popitem(last=False)
-
     def _normalized_target_key(self, target: str) -> str:
         normalizer = getattr(self.live, "_normalize_validation_target", None)
         if callable(normalizer):
@@ -470,19 +799,6 @@ class N1Gatekeeper:
             except Exception:
                 pass
         return " ".join(str(target or "").strip().split()).casefold()
-
-    def _invalidate_local_target(self, target: str) -> int:
-        normalized = self._normalized_target_key(target)
-        if not normalized:
-            return 0
-        removed = 0
-        with self._lock:
-            for signature, item in list(self._raw_results.items()):
-                item_target = self._normalized_target_key(str(item.get("target") or "")) if isinstance(item, dict) else ""
-                if item_target == normalized:
-                    self._raw_results.pop(signature, None)
-                    removed += 1
-        return removed
 
     @staticmethod
     def _parent_target(target: str) -> str:
@@ -509,16 +825,14 @@ class N1Gatekeeper:
                 if candidate and key and key not in seen:
                     seen.add(key)
                     unique.append(candidate)
-        local = 0
         redis_count = 0
         for target in unique:
-            local += self._invalidate_local_target(target)
             if hasattr(self.live, "invalidate_validation_target"):
                 try:
                     redis_count += int(self.live.invalidate_validation_target(target) or 0)
                 except Exception:
                     logging.exception("N1 Redis target invalidation failed target=%s", target)
-        return {"local": local, "redis": redis_count, "targets": len(unique)}
+        return {"redis": redis_count, "targets": len(unique)}
 
     def _loop_reset(self, *, signature: str, count: int, name: str, target: str, need: str) -> str:
         if count < self.loop_repeat_threshold:
@@ -711,6 +1025,12 @@ class N1Gatekeeper:
         }
         key = f"{task_id}\n{step_id}"
         history = self._record_turn(key, turn)
+        compact_calls = turn.get("calls") or []
+
+        if compact_calls and all(self.information_tool(str(item.get("tool") or "")) for item in compact_calls):
+            # Information repetition is resolved at the Redis verification boundary.
+            # N2 gets evidence, not a "use prior evidence" loop-reset instruction.
+            return ""
         if not self._turn_loop_suspected(history):
             return ""
         return self._judge_turn_loop(task_id=task_id, step_id=step_id, history=history)
@@ -723,21 +1043,33 @@ class N1Gatekeeper:
         target: str,
         need: str,
         candidates: list[dict],
-    ) -> tuple[str, str, str]:
-        """Return (decision, record_id, reason). Fail-open to fresh execution."""
-        if not candidates:
-            return "execute", "", "no live Redis candidate"
+    ) -> tuple[str, list[str], str]:
+        """Return (decision, record_ids, reason). Fail-open to fresh execution.
+
+        Redis is the hot evidence pool. N1 decides whether the available prior
+        answer set is sufficiently complete and current for N2's present request.
+        Cost/latency is intentionally not part of the judgment.
+        """
+        replayable = [row for row in candidates if bool(row.get("replay_available"))]
+        if not replayable:
+            return "execute", [], "no replayable live Redis candidate"
+        prompt_candidates = [self._candidate_prompt_view(row) for row in replayable]
+        single_payload_required = name == "read_file"
         prompt = (
-            "You are N1, Norm's tool gatekeeper. N2 wants information and proposed a tool. Decide whether the existing LIVE Redis verification record already answers the requested fact or whether the tool should execute again. "
-            "The records shown are hot Redis observations, not archival PostgreSQL history. Favor reuse when the same target/fact is already established, especially after repeated checks. Execute when the requested fact is materially different, the requested scope/arguments differ, or the fact is intrinsically volatile enough that a fresh observation is justified. "
-            "Do not invent facts. Return strict JSON only: decision ('reuse' or 'execute'), record_id (required for reuse, blank for execute), reason (one short sentence).\n\n"
+            "You are N1, Norm's information gatekeeper. N2 asked for information and proposed a tool. "
+            "The LIVE Redis verification records below are prior observed answers. Decide only whether those prior observations are sufficiently complete and current to answer N2's request with high confidence, or whether the source must be observed again. "
+            "Do NOT optimize for cost, speed, tool count, or convenience. Age by itself is not staleness: reason about whether the underlying value could materially have changed and whether the current wording requires fresh state. A static document/file observation can remain sufficient when nothing suggests mutation; a live chat, process state, current status, or explicitly latest/current request may justify a new observation even when recent. Known mutations are invalidated elsewhere before this decision. "
+            "You may use more than one prior record when their combined evidence is needed, but select only records whose replay_available=true. "
+            + ("For read_file, choose at most one record because Norm permits only one raw evidence payload in N2 context at a time. " if single_payload_required else f"Select at most {self.max_replay_records} records. ")
+            + "If the prior evidence is incomplete, contradictory, materially stale, or you are not confident it is sufficient, choose execute. "
+            "Return strict JSON only: decision ('reuse' or 'execute'), record_ids (array; empty for execute), reason (one short sentence).\n\n"
             + json.dumps(
                 {
                     "proposed_tool": name,
                     "arguments": redact(arguments),
                     "target": target,
                     "needed_fact": need,
-                    "redis_candidates": candidates,
+                    "redis_candidates": prompt_candidates,
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -748,10 +1080,10 @@ class N1Gatekeeper:
             "type": "object",
             "properties": {
                 "decision": {"type": "string", "enum": ["reuse", "execute"]},
-                "record_id": {"type": "string"},
+                "record_ids": {"type": "array", "items": {"type": "string"}},
                 "reason": {"type": "string"},
             },
-            "required": ["decision", "record_id", "reason"],
+            "required": ["decision", "record_ids", "reason"],
             "additionalProperties": False,
         }
         try:
@@ -762,15 +1094,24 @@ class N1Gatekeeper:
             )
             parsed = OllamaClient.parse_json(raw)
             decision = str(parsed.get("decision") or "execute").strip().lower()
-            record_id = str(parsed.get("record_id") or "").strip()
             reason = str(parsed.get("reason") or "").strip()
-            allowed = {str(row.get("record_id") or "") for row in candidates}
-            if decision == "reuse" and record_id in allowed:
-                return "reuse", record_id, reason or "N1 selected an existing live verified observation."
-            return "execute", "", reason or "N1 requested a fresh observation."
+            requested = parsed.get("record_ids") or []
+            if not isinstance(requested, list):
+                requested = []
+            allowed = {str(row.get("record_id") or "") for row in replayable}
+            selected: list[str] = []
+            for value in requested:
+                record_id = str(value or "").strip()
+                if record_id and record_id in allowed and record_id not in selected:
+                    selected.append(record_id)
+            cap = 1 if single_payload_required else self.max_replay_records
+            selected = selected[:cap]
+            if decision == "reuse" and selected:
+                return "reuse", selected, reason or "N1 judged the live Redis evidence sufficient."
+            return "execute", [], reason or "N1 judged a fresh observation necessary."
         except Exception:
-            logging.exception("N1 Redis reuse decision failed; allowing fresh tool execution")
-            return "execute", "", "N1 decision failed; fresh execution allowed"
+            logging.exception("N1 Redis sufficiency decision failed; allowing fresh tool execution")
+            return "execute", [], "N1 sufficiency decision failed; fresh execution allowed"
 
 
     def judge_memory_condensation(
@@ -904,14 +1245,47 @@ class N1Gatekeeper:
             self._maintenance_judgments["review_failure_pass"] += 1
 
     def before_tool(self, *, task_id: str, step_id: str, name: str, arguments: dict[str, Any]) -> GateOutcome:
-        clean, target, need = self._clean_request(name, arguments)
+        supplied = dict(arguments or {})
+        streamed_read = bool(supplied.pop("_norm_chunked_evidence", False))
+        clean, target, need = self._clean_request(name, supplied)
+        scope = self._request_scope(name, clean)
         signature = self._request_signature(task_id, step_id, name, clean)
         count = self._remember_request(signature)
-        reset = self._loop_reset(signature=signature, count=count, name=name, target=target, need=need)
+        is_information = self.information_tool(name)
+        # Information repetition is resolved by the Redis sufficiency judgment. The
+        # old loop-reset path is reserved for repeated non-information actions.
+        reset = "" if is_information else self._loop_reset(
+            signature=signature, count=count, name=name, target=target, need=need
+        )
 
         if not self.enabled:
-            return GateOutcome(True, clean, target=target, need=need, signature=signature, reset_instruction=reset)
-        if not self.information_tool(name):
+            return GateOutcome(
+                True, clean, target=target, need=need, signature=signature, scope=scope,
+                reset_instruction=reset, streamed_read=streamed_read,
+            )
+
+        sensitive_redirect = self._consume_sensitive_probe_block(
+            task_id=task_id, step_id=step_id, name=name, need=need, target=target, arguments=clean
+        )
+        if sensitive_redirect:
+            return GateOutcome(
+                False,
+                clean,
+                result={
+                    "ok": False,
+                    "tool": name,
+                    "n1_redirected": True,
+                    "error": sensitive_redirect,
+                },
+                target=target,
+                need=need,
+                note="N1 blocked only this concrete attempt to recover or bypass a transformed sensitive literal.",
+                reset_instruction="",
+                signature=signature,
+                scope=scope,
+                streamed_read=streamed_read,
+            )
+        if not is_information:
             if count >= self.loop_repeat_threshold:
                 return GateOutcome(
                     False,
@@ -920,29 +1294,18 @@ class N1Gatekeeper:
                         "ok": False,
                         "tool": name,
                         "n1_loop_blocked": True,
-                        "error": "N1 blocked a repeated identical tool request at the loop threshold; use existing results or change approach.",
+                        "error": "N1 blocked a repeated identical non-information tool request at the loop threshold; change approach.",
                     },
                     target=target,
                     need=need,
                     note="repeated identical non-cacheable tool request blocked by N1",
                     reset_instruction=reset,
                     signature=signature,
+                    scope=scope,
                 )
-            return GateOutcome(True, clean, target=target, need=need, signature=signature, reset_instruction=reset)
-
-        # Exact same request inside this runtime/task/step: preserve and return the
-        # original raw executor response without reinvoking the tool.
-        raw_cached = self._cached_raw(signature)
-        if raw_cached is not None:
             return GateOutcome(
-                False,
-                clean,
-                result=raw_cached,
-                target=target,
-                need=need,
-                note="N1 reused the prior raw result for the identical request; tool not reinvoked.",
+                True, clean, target=target, need=need, signature=signature, scope=scope,
                 reset_instruction=reset,
-                signature=signature,
             )
 
         try:
@@ -960,28 +1323,29 @@ class N1Gatekeeper:
             candidates = []
 
         useful = [row for row in candidates if float(row.get("description_match") or 0.0) >= self.semantic_match_floor]
-        decision, record_id, reason = self._decide_reuse(
+        decision, record_ids, reason = self._decide_reuse(
             name=name,
             arguments=clean,
             target=target,
             need=need,
             candidates=useful,
         )
-        if decision == "reuse":
-            candidate = next((row for row in useful if str(row.get("record_id") or "") == record_id), None)
-            if candidate is not None:
-                result = {
-                    "ok": True,
-                    "tool": name,
-                    "n1_reused": True,
-                    "source": "redis_validation_pool",
-                    "target": candidate.get("target"),
-                    "description": candidate.get("description"),
-                    "value": candidate.get("value"),
-                    "num_checks": candidate.get("num_checks"),
-                    "previous_value": candidate.get("previous_value"),
-                    "changed_at": candidate.get("changed_at"),
-                }
+        if decision == "reuse" and hasattr(self.live, "validation_replay"):
+            replayed: list[dict[str, Any]] = []
+            try:
+                for record_id in record_ids:
+                    payload = self.live.validation_replay(record_id)
+                    if not isinstance(payload, dict) or not self._replay_matches_request(
+                        name=name, arguments=clean, payload=payload, streamed_read=streamed_read
+                    ):
+                        replayed = []
+                        break
+                    replayed.append(payload)
+            except Exception:
+                logging.exception("N1 Redis replay fetch failed; allowing fresh tool execution")
+                replayed = []
+            if replayed:
+                result = self._combine_replays(name, replayed)
                 return GateOutcome(
                     False,
                     clean,
@@ -990,8 +1354,10 @@ class N1Gatekeeper:
                     need=need,
                     candidates=useful,
                     note=reason,
-                    reset_instruction=reset,
+                    reset_instruction="",
                     signature=signature,
+                    scope=scope,
+                    streamed_read=streamed_read,
                 )
 
         return GateOutcome(
@@ -1001,9 +1367,23 @@ class N1Gatekeeper:
             need=need,
             candidates=useful,
             note=reason,
-            reset_instruction=reset,
+            reset_instruction="",
             signature=signature,
+            scope=scope,
+            streamed_read=streamed_read,
         )
+
+    @staticmethod
+    def _canonical_streamed_read_value(result: dict[str, Any]) -> str:
+        observed = {
+            key: result.get(key)
+            for key in (
+                "path", "sha256", "source_fingerprint", "size", "source_size_bytes", "mode",
+                "start_byte", "next_byte", "returned_bytes", "truncated",
+            )
+            if key in result
+        }
+        return json.dumps(observed, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
 
     def _canonical_value(self, *, name: str, target: str, need: str, result: dict[str, Any]) -> str:
         prompt = (
@@ -1044,8 +1424,6 @@ class N1Gatekeeper:
         result: dict[str, Any],
     ) -> dict[str, Any]:
         """Record a fresh result. Return gate metadata; never modify result."""
-        if outcome.signature and self.information_tool(name):
-            self._store_raw(outcome.signature, outcome.target, result)
         meta: dict[str, Any] = {
             "executed": True,
             "target": outcome.target,
@@ -1069,14 +1447,23 @@ class N1Gatekeeper:
             # in the Redis answer-reuse pool.
             return meta
         try:
-            value = self._canonical_value(name=name, target=outcome.target, need=outcome.need, result=result)
+            value = (
+                self._canonical_streamed_read_value(result)
+                if name == "read_file" and outcome.streamed_read
+                else self._canonical_value(name=name, target=outcome.target, need=outcome.need, result=result)
+            )
             if not value:
                 return meta
             candidates = list(outcome.candidates or [])
             best = candidates[0] if candidates else None
             record_id = "new"
-            if best is not None and float(best.get("description_match") or 0.0) >= self.semantic_match_floor:
+            if (
+                best is not None
+                and float(best.get("description_match") or 0.0) >= self.semantic_match_floor
+                and str(best.get("scope") or "") == outcome.scope
+            ):
                 record_id = str(best.get("record_id") or "new") or "new"
+            replay_result, replay_bytes = self._replay_payload(result)
             recorded = self.live.record_global_validations(
                 task_id,
                 step_id,
@@ -1086,7 +1473,10 @@ class N1Gatekeeper:
                         "tool": name,
                         "target": outcome.target,
                         "description": outcome.need,
+                        "scope": outcome.scope,
                         "value": value,
+                        "replay_result": replay_result,
+                        "replay_bytes": replay_bytes,
                     }
                 ],
             )

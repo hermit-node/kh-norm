@@ -16,6 +16,7 @@ import psycopg
 import redis
 
 from .history_maintenance import DeepHistoryMaintainer
+from .chunked_evidence import ChunkedEvidenceManager
 from .maintenance_model_client import MaintenanceModelClient
 from .model_runtime_policy import agent_persistent_instructions
 from .temp_cleanup import cleanup_task_temp, cleanup_temp_root
@@ -2094,7 +2095,10 @@ class PromptWorker:
         scope = self._scope_items_from_text(job.prompt)
         if not scope:
             scope = self._scope_items_from_text(str(metadata.get("step_name") or ""))
-        return scope or [1]
+        # No numbered scope is still a valid recovery scope. Do not manufacture
+        # item 1: doing so falsely turns ordinary unscoped work into an atomic
+        # item and activates single-item recovery limits that the user never set.
+        return scope
 
     @staticmethod
     def _step_result_content(text: str) -> str:
@@ -2313,6 +2317,12 @@ class PromptWorker:
         feedback = str((job.metadata or {}).get("oversize_analysis_feedback") or "").strip()
         if feedback:
             material += "\nRECOVERY ANALYSIS FEEDBACK FROM PRIOR INVALID CHILD:\n" + feedback
+        scope_example = parent_scope[:1] if parent_scope else []
+        unit_limit_instruction = (
+            "Because this parent is explicitly scoped to one numbered item, use at most 4 semantic subchecks. "
+            if len(parent_scope) == 1
+            else "Use 2-8 remaining_units when decomposition is warranted. "
+        )
         instruction = (
             "Analyze the durable work from an oversized parent step and design a recovery decomposition. "
             "Do not redo the parent task. Identify what useful work is already complete, what remains unresolved, "
@@ -2321,9 +2331,10 @@ class PromptWorker:
             "Do not end with progress commentary, an intention to inspect more material, or a statement of what you will do next. "
             "Use the available tools first if needed, then finish by returning JSON only with this shape: "
             '{"useful_points":["..."],"completed_work":["..."],'
-            '"remaining_units":[{"name":"...","instruction":"...","verify":"...","scope_items":[17]}],'
+            f'"remaining_units":[{{"name":"...","instruction":"...","verify":"...","scope_items":{json.dumps(scope_example)}}}],'
             '"merge_requirements":["..."]}. '
-            "Use 2-8 remaining_units when decomposition is warranted. Units must be semantically meaningful, not arbitrary token ranges. "
+            + unit_limit_instruction
+            + "Units must be semantically meaningful, not arbitrary token ranges. "
             "If IMMUTABLE PARENT SCOPE ITEMS are present, EVERY work unit must include scope_items and those items must be a subset of the parent scope. "
             "Never move later workflow into a child: no global selection, final synthesis, or sibling-range work unless it is already inside this parent's own instruction and scope. "
             "When a range is too large, prefer processing the earliest unresolved item or a smaller prefix first; the owning parent can advance its cursor afterward. "
@@ -3061,6 +3072,15 @@ class PromptWorker:
         request_type = normalize_request_type(job.request_type)
         long_form = request_type == "conclusion" or bool(metadata.get("is_final_candidate")) or bool(re.search(r"\bexactly\s+\d+\b", prompt, re.I))
         output_budget = int(metadata.get("num_predict") or (27000 if long_form else 16000))
+        chunk_manager = ChunkedEvidenceManager(self._runtime_config().get("context_budget") or {})
+        restored_streams = chunk_manager.restore_streams((metadata.get("chunked_evidence_streams") or {}))
+        if restored_streams:
+            logging.info(
+                "Restored chunked evidence stream cursor(s) task=%s step=%s streams=%s",
+                job.task_id, job.step_id, restored_streams,
+            )
+        active_raw_stream_id = ""
+        active_raw_piece = 0
         while step_rounds < step_limit and task_rounds < task_limit:
             new_context = self._consume_context_injections(job)
             if new_context:
@@ -3098,6 +3118,7 @@ class PromptWorker:
             content = str(response.get("content", ""))
             thinking = str(response.get("thinking", ""))
             done_reason = str(response.get("done_reason") or "")
+            headroom = self._context_headroom_state(response)
             thinking_index = self._persist_thinking_now(job, thinking, int(response.get("eval_count") or 0))
             turn_reset = ""
             if self.n1_gatekeeper is not None:
@@ -3110,6 +3131,13 @@ class PromptWorker:
                 )
             if content:
                 last_content = content
+            if not calls and turn_reset.startswith("The Bird says No."):
+                # A sensitive-value probe can end as prose instead of another tool
+                # call. Give N1's opaque redirect back to N2 rather than accepting
+                # that dead-end as the step result. Do not explain the boundary.
+                messages.append(redact({"role": "assistant", "content": content}))
+                messages.append({"role": "user", "content": "[N1 INTERVENTION]\n" + turn_reset})
+                continue
             if not calls:
                 if done_reason == "length":
                     evidence.extend(self._verify_pending(job, pending_verification, tools))
@@ -3202,10 +3230,122 @@ class PromptWorker:
             messages.append(
                 redact({"role": "assistant", "content": content, "tool_calls": calls})
             )
+            # Freeze the exact recent context before raw-chunk eviction. PostgreSQL
+            # is the lossless record; the active messages list may be compacted next.
+            lossless_checkpoint_messages = (
+                json.loads(json.dumps(messages[-32:], ensure_ascii=False))
+                if bool(headroom.get("checkpoint"))
+                else []
+            )
             n1_interventions: list[str] = [turn_reset] if turn_reset else []
+
+            # A raw evidence chunk lives for exactly one N2 model turn.  Once N2
+            # emits its next tool call(s), it has consumed that chunk.  Commit a
+            # compact fact note (explicit `retain` wins; otherwise use N2's prose)
+            # and replace the old raw tool payload with a provenance stub before
+            # any new tool result can enter context.
+            if active_raw_stream_id:
+                active_stream = chunk_manager.get(active_raw_stream_id)
+                retained_candidate = str(content or "").strip()
+                for pending_call in calls:
+                    pending_fn = pending_call.get("function") if isinstance(pending_call, dict) else None
+                    if not isinstance(pending_fn, dict) or str(pending_fn.get("name") or "") != "read_file":
+                        continue
+                    pending_args = pending_fn.get("arguments", {})
+                    if isinstance(pending_args, str):
+                        try:
+                            pending_args = json.loads(pending_args)
+                        except json.JSONDecodeError:
+                            pending_args = {}
+                    if not isinstance(pending_args, dict):
+                        continue
+                    if str(pending_args.get("stream_id") or "") == active_raw_stream_id:
+                        explicit_retain = str(pending_args.get("retain") or "").strip()
+                        if explicit_retain:
+                            retained_candidate = explicit_retain
+                            break
+                if active_stream is not None and active_raw_piece > 0:
+                    retained = chunk_manager.retain(active_stream, active_raw_piece, retained_candidate)
+                    chunk_manager.evict_tool_message(
+                        messages, stream=active_stream, piece=active_raw_piece, retained=retained
+                    )
+                    for prior_item in reversed(evidence):
+                        prior_result = prior_item.get("result") if isinstance(prior_item, dict) else None
+                        prior_meta = prior_result.get("chunk_stream") if isinstance(prior_result, dict) else None
+                        if not isinstance(prior_meta, dict):
+                            continue
+                        if (
+                            str(prior_meta.get("stream_id") or "") == active_stream.stream_id
+                            and int(prior_meta.get("piece") or 0) == active_raw_piece
+                        ):
+                            prior_item["result"] = chunk_manager.compact_result_for_active_evidence(
+                                prior_result, retained
+                            )
+                            break
+                    if retained:
+                        retention_item = redact({
+                            "tool": "chunk_retention",
+                            "arguments": {
+                                "stream_id": active_stream.stream_id,
+                                "piece": active_raw_piece,
+                            },
+                            "result": {
+                                "ok": True,
+                                "path": active_stream.path,
+                                "source_fingerprint": active_stream.source_fingerprint,
+                                "chunk_stream": {
+                                    "stream_id": active_stream.stream_id,
+                                    "piece": active_raw_piece,
+                                    "estimated_pieces": active_stream.estimated_pieces,
+                                    "seam_before": chunk_manager.seam_before(active_raw_piece),
+                                    "seam_after": chunk_manager.seam_after(active_raw_piece, active_stream.estimated_pieces),
+                                },
+                                "retained_facts": retained,
+                            },
+                            "deterministic_verification": False,
+                        })
+                        evidence.append(retention_item)
+                        self._persist_evidence_now(job, [retention_item])
+                active_raw_stream_id = ""
+                active_raw_piece = 0
+
+            if bool(headroom.get("checkpoint")):
+                evidence.extend(self._verify_pending(job, pending_verification, tools))
+                checkpoint, resume_metadata = self._distilled_continuation_checkpoint(
+                    job,
+                    prompt,
+                    lossless_checkpoint_messages or messages,
+                    reason="context_headroom_checkpoint",
+                    headroom=headroom,
+                    chunk_manager=chunk_manager,
+                    step_rounds=step_rounds,
+                    task_rounds=task_rounds,
+                )
+                logging.info(
+                    "N2 context headroom reached checkpoint threshold task=%s step=%s remaining=%.3f%% prompt_tokens=%s generated_tokens=%s limit=%s",
+                    job.task_id, job.step_id, float(headroom.get("remaining_fraction") or 0.0) * 100.0,
+                    int(headroom.get("prompt_eval_count") or 0), int(headroom.get("eval_count") or 0),
+                    int(headroom.get("context_limit_tokens") or 0),
+                )
+                return {
+                    "yielded": True,
+                    "checkpoint": checkpoint,
+                    "reason": "context_headroom_checkpoint",
+                    "step_rounds": step_rounds,
+                    "task_rounds": task_rounds,
+                    "evidence": evidence,
+                    "resume_metadata": resume_metadata,
+                }
+
+            raw_chunk_delivered_this_turn = False
             for call in calls:
                 function = call.get("function") if isinstance(call, dict) else None
                 gate_meta: dict = {}
+                chunk_stream = None
+                chunk_piece: int | None = None
+                chunk_budget = None
+                chunk_candidate = False
+                precomputed_result: dict | None = None
                 if not isinstance(function, dict):
                     name = "invalid_tool_call"
                     arguments = {}
@@ -3218,7 +3358,105 @@ class PromptWorker:
                             arguments = json.loads(arguments)
                         except json.JSONDecodeError:
                             arguments = {}
-                    if not isinstance(name, str) or not isinstance(arguments, dict):
+                    if isinstance(name, str) and isinstance(arguments, dict) and name == "read_file" and chunk_manager.enabled:
+                        requested = dict(arguments)
+                        stream_id = str(requested.pop("stream_id", "") or "").strip()
+                        piece_raw = requested.pop("piece", None)
+                        requested.pop("retain", None)
+                        if raw_chunk_delivered_this_turn:
+                            precomputed_result = {
+                                "ok": False,
+                                "tool": "read_file",
+                                "error": "only one raw evidence chunk may be delivered per N2 turn",
+                                **({"stream_id": stream_id} if stream_id else {}),
+                            }
+                        elif stream_id:
+                            chunk_stream = chunk_manager.get(stream_id)
+                            if chunk_stream is None:
+                                precomputed_result = {
+                                    "ok": False,
+                                    "tool": "read_file",
+                                    "error": "unknown or expired evidence stream_id; start a fresh read_file request",
+                                    "stream_id": stream_id,
+                                }
+                            elif raw_chunk_delivered_this_turn:
+                                precomputed_result = {
+                                    "ok": False,
+                                    "tool": "read_file",
+                                    "error": "only one raw evidence chunk may be delivered per N2 turn",
+                                    "stream_id": stream_id,
+                                }
+                            elif piece_raw is None:
+                                precomputed_result = {
+                                    "ok": False,
+                                    "tool": "read_file",
+                                    "error": "piece is required when stream_id is supplied",
+                                    "stream_id": stream_id,
+                                }
+                            else:
+                                try:
+                                    chunk_piece = int(piece_raw)
+                                    piece_args = chunk_manager.piece_arguments(chunk_stream, chunk_piece)
+                                except (TypeError, ValueError) as exc:
+                                    precomputed_result = {
+                                        "ok": False,
+                                        "tool": "read_file",
+                                        "error": str(exc),
+                                        "stream_id": stream_id,
+                                    }
+                                else:
+                                    requested["path"] = chunk_stream.path
+                                    requested.pop("start_line", None)
+                                    requested.pop("end_line", None)
+                                    requested.update(piece_args)
+                                    requested["mode"] = "text"
+                                    requested["_norm_chunked_evidence"] = True
+                                    arguments = requested
+                        elif piece_raw is not None:
+                            precomputed_result = {
+                                "ok": False,
+                                "tool": "read_file",
+                                "error": "stream_id is required when requesting a numbered evidence piece",
+                            }
+                        else:
+                            archive_action = str(requested.get("archive_action") or "auto").strip().lower()
+                            mode = str(requested.get("mode") or "text").strip().lower()
+                            explicit_range = any(key in requested for key in ("start_byte", "start_line", "end_line"))
+                            chunk_candidate = mode == "text" and archive_action in {"", "auto"} and not explicit_range
+                            if chunk_candidate and raw_chunk_delivered_this_turn:
+                                precomputed_result = {
+                                    "ok": False,
+                                    "tool": "read_file",
+                                    "error": "only one raw evidence chunk may be delivered per N2 turn",
+                                }
+                            elif chunk_candidate:
+                                resolver = getattr(self.client, "effective_context_length", None)
+                                context_limit = resolver() if callable(resolver) else getattr(self.client, "context_length", None)
+                                context_limit = int(context_limit or 65536)
+                                chunk_budget = chunk_manager.budget(
+                                    context_limit_tokens=context_limit,
+                                    output_reserve_tokens=output_budget,
+                                    system_instructions=str(getattr(self.client, "system_instructions", "") or ""),
+                                    messages=messages,
+                                    tool_schemas=native_schemas,
+                                    max_chunk_bytes=getattr(tools, "read_chunk_max_bytes", None),
+                                )
+                                requested_max = requested.get("max_bytes")
+                                adaptive_max = int(chunk_budget.raw_evidence_target_bytes)
+                                if requested_max is not None:
+                                    try:
+                                        adaptive_max = min(adaptive_max, max(1024, int(requested_max)))
+                                    except (TypeError, ValueError):
+                                        pass
+                                requested["start_byte"] = 0
+                                requested["max_bytes"] = adaptive_max
+                                requested["mode"] = "text"
+                                requested["_norm_chunked_evidence"] = True
+                                arguments = requested
+
+                    if precomputed_result is not None:
+                        result = precomputed_result
+                    elif not isinstance(name, str) or not isinstance(arguments, dict):
                         result = {"ok": False, "error": "invalid tool name or arguments"}
                     elif turn_reset and self.n1_gatekeeper is not None:
                         # N1 judged the entire N2 turn to be a reasoning rabbit hole.
@@ -3272,6 +3510,54 @@ class PromptWorker:
                             n1_interventions.append(outcome.reset_instruction)
                     else:
                         result = tools.execute(name, arguments)
+
+                    if (
+                        name == "read_file"
+                        and chunk_manager.enabled
+                        and isinstance(result, dict)
+                        and result.get("ok")
+                        and str(result.get("mode") or "") == "text"
+                    ):
+                        if chunk_stream is not None and chunk_piece is not None:
+                            observed_fingerprint = str(result.get("source_fingerprint") or "")
+                            if observed_fingerprint and observed_fingerprint != chunk_stream.source_fingerprint:
+                                result = {
+                                    "ok": False,
+                                    "tool": "read_file",
+                                    "path": chunk_stream.path,
+                                    "error": "source changed while evidence stream was active; restart with a fresh read_file request",
+                                    "stream_id": chunk_stream.stream_id,
+                                    "expected_source_fingerprint": chunk_stream.source_fingerprint,
+                                    "observed_source_fingerprint": observed_fingerprint,
+                                }
+                                chunk_manager.streams.pop(chunk_stream.stream_id, None)
+                                chunk_stream = None
+                                chunk_piece = None
+                            else:
+                                result = chunk_manager.wrap_result(result, chunk_stream, chunk_piece)
+                                raw_chunk_delivered_this_turn = True
+                                active_raw_stream_id = chunk_stream.stream_id
+                                active_raw_piece = chunk_piece
+                        elif (
+                            chunk_candidate
+                            and chunk_budget is not None
+                            and (
+                                bool(result.get("truncated"))
+                                or int(result.get("returned_bytes") or 0) >= chunk_manager.min_stream_bytes
+                            )
+                        ):
+                            chunk_stream = chunk_manager.create_stream(
+                                path=str(result.get("path") or arguments.get("path") or ""),
+                                source_fingerprint=str(result.get("source_fingerprint") or ""),
+                                source_size_bytes=int(result.get("source_size_bytes") or result.get("size") or 0),
+                                chunk_bytes=max(1, int(arguments.get("max_bytes") or result.get("returned_bytes") or 1)),
+                                budget=chunk_budget,
+                            )
+                            chunk_piece = 1
+                            result = chunk_manager.wrap_result(result, chunk_stream, chunk_piece)
+                            raw_chunk_delivered_this_turn = True
+                            active_raw_stream_id = chunk_stream.stream_id
+                            active_raw_piece = chunk_piece
 
                 evidence_item = redact({"tool": str(name), "arguments": arguments, "result": result, "n1_gatekeeper": gate_meta})
                 evidence.append(evidence_item)
@@ -3341,6 +3627,7 @@ class PromptWorker:
             "step_rounds": step_rounds,
             "task_rounds": task_rounds,
             "evidence": evidence,
+            "resume_metadata": {"chunked_evidence_streams": chunk_manager.snapshot_streams()},
         }
 
     def _verify_pending(self, job: PromptJob, pending: dict[str, str], tools) -> list[dict]:
@@ -3384,13 +3671,19 @@ class PromptWorker:
                         compact_args[key] = arguments[key]
             compact_result = {}
             if isinstance(result, dict):
-                for key in (
-                    "ok", "path", "paths", "sha256", "file_mutation", "created", "error", "staged", "staged_path", "note_path",
-                    "attempts", "answer", "content", "text", "summary", "analysis", "observations", "data", "items",
+                is_chunked = isinstance(result.get("chunk_stream"), dict)
+                keys = (
+                    "ok", "path", "paths", "sha256", "source_fingerprint", "file_mutation", "created", "error", "staged", "staged_path", "note_path",
+                    "attempts", "answer", "text", "summary", "analysis", "observations", "data", "items",
                     "image_count", "output_dir", "analysis_json", "geometry_overlay", "horizontal_consensus", "profile",
                     "device", "width", "height", "reconstruction_similarity", "artifact_fraction", "resource_status", "storage_context",
-                    "command", "cwd", "exit_code", "stdout", "stderr", "timed_out", "timeout_seconds", "duration_seconds"
-                ):
+                    "command", "cwd", "exit_code", "stdout", "stderr", "timed_out", "timeout_seconds", "duration_seconds",
+                    "returned_bytes", "start_byte", "next_byte", "truncated", "chunk_stream", "context_budget",
+                    "chunk_evicted", "retained_facts", "raw_chunk_in_durable_evidence"
+                )
+                if not is_chunked:
+                    keys = (*keys, "content")
+                for key in keys:
                     if key in result:
                         value = result[key]
                         if isinstance(value, str) and len(value) > 12000:
@@ -3505,6 +3798,108 @@ class PromptWorker:
             evidence.extend(correction_evidence)
         raise VerifierProtocolError("skeptical verifier rejected the result after three correction cycles")
 
+    def _context_headroom_state(self, response: dict) -> dict[str, float | int | bool]:
+        """Use Ollama's own token counters; never rescan/re-tokenize the prompt here."""
+        cfg = self._runtime_config().get("context_budget", {}) or {}
+        threshold = min(0.25, max(0.0, float(cfg.get("checkpoint_remaining_fraction", 0.05))))
+        resolver = getattr(self.client, "effective_context_length", None)
+        limit = resolver() if callable(resolver) else getattr(self.client, "context_length", None)
+        limit = max(1, int(limit or 65536))
+        prompt_tokens = max(0, int(response.get("prompt_eval_count") or 0))
+        generated_tokens = max(0, int(response.get("eval_count") or 0))
+        # eval_count includes hidden reasoning that is not replayed into the next
+        # N2 prompt. Use Ollama's authoritative prompt count plus only the new
+        # visible assistant payload as a cheap forward estimate; do not rescan the
+        # existing context every turn.
+        chars_per_token = max(1.0, float(cfg.get("estimated_chars_per_token", 3.5)))
+        visible_payload = json.dumps({
+            "content": str(response.get("content") or ""),
+            "tool_calls": response.get("tool_calls") or [],
+        }, ensure_ascii=False, separators=(",", ":"), default=str)
+        visible_tokens = max(0, int((len(visible_payload) + chars_per_token - 1) // chars_per_token))
+        used = prompt_tokens + visible_tokens
+        remaining = max(0, limit - used)
+        remaining_fraction = remaining / limit
+        return {
+            "context_limit_tokens": limit,
+            "prompt_eval_count": prompt_tokens,
+            "eval_count": generated_tokens,
+            "visible_output_estimated_tokens": visible_tokens,
+            "used_tokens": used,
+            "remaining_tokens": remaining,
+            "remaining_fraction": remaining_fraction,
+            "threshold_fraction": threshold,
+            "checkpoint": bool(prompt_tokens and remaining_fraction <= threshold),
+        }
+
+    def _distilled_continuation_checkpoint(
+        self,
+        job: PromptJob,
+        prompt: str,
+        archived_messages: list[dict],
+        *,
+        reason: str,
+        headroom: dict,
+        chunk_manager: ChunkedEvidenceManager,
+        step_rounds: int,
+        task_rounds: int,
+    ) -> tuple[str, dict]:
+        """Archive lossless recent context in PostgreSQL, then ask N1 for the applicable continuation."""
+        cfg = self._runtime_config().get("context_budget", {}) or {}
+        tail_count = max(1, min(32, int(cfg.get("checkpoint_archive_messages", 8))))
+        tail = list(archived_messages[-tail_count:])
+        archive_reference = ""
+        slice_index = 0
+        source_messages = tail
+        if self.durable is not None and hasattr(self.durable, "record_context_slice"):
+            slice_index = self.durable.record_context_slice(
+                job.task_id,
+                job.step_id,
+                tail,
+                reason=reason,
+                prompt_eval_count=int(headroom.get("prompt_eval_count") or 0),
+                eval_count=int(headroom.get("eval_count") or 0),
+                context_limit_tokens=int(headroom.get("context_limit_tokens") or 0),
+            )
+            archive_reference = (
+                f"norm_runtime.task_context_slices task_id={job.task_id} "
+                f"step_id={job.step_id} slice_index={slice_index}"
+            )
+            if hasattr(self.durable, "context_slice"):
+                archived = self.durable.context_slice(job.task_id, job.step_id, slice_index)
+                if isinstance(archived, dict) and isinstance(archived.get("messages"), list):
+                    source_messages = list(archived["messages"])
+
+        retained = chunk_manager.retained_summary()
+        checkpoint = ""
+        if self.n1_gatekeeper is not None and hasattr(self.n1_gatekeeper, "distill_continuation_checkpoint"):
+            try:
+                checkpoint = self.n1_gatekeeper.distill_continuation_checkpoint(
+                    original_goal=job.prompt,
+                    step_prompt=prompt,
+                    archived_messages=source_messages,
+                    retained_evidence=retained,
+                    archive_reference=archive_reference,
+                ).strip()
+            except Exception:
+                logging.exception(
+                    "N1 continuation distillation failed task=%s step=%s; falling back to bounded recent context",
+                    job.task_id, job.step_id,
+                )
+        if not checkpoint:
+            checkpoint = self._continuation_checkpoint(
+                job, prompt, source_messages, reason, step_rounds, task_rounds
+            )
+        if retained and "Retained chunk evidence:" not in checkpoint:
+            checkpoint += "\n\nRetained chunk evidence:\n" + retained
+        resume_metadata = {
+            "chunked_evidence_streams": chunk_manager.snapshot_streams(),
+            "context_checkpoint_remaining_fraction": float(headroom.get("remaining_fraction") or 0.0),
+        }
+        if slice_index:
+            resume_metadata["postgres_context_slice_index"] = slice_index
+        return checkpoint, resume_metadata
+
     @staticmethod
     def _continuation_checkpoint(
         job: PromptJob,
@@ -3520,7 +3915,7 @@ class PromptWorker:
         if len(tail) > 12_000:
             tail = tail[-12_000:]
         return (
-            f"CONTINUATION CHECKPOINT\nOriginal goal: {job.prompt}"
+            f"CONTINUATION CHECKPOINT\nThis is an internal continuation of the same step, not a new user request.\nOriginal goal: {job.prompt}"
             f"\nYield reason: {reason}"
             f"\nStep rounds used: {step_rounds}"
             f"\nTask rounds used: {task_rounds}"

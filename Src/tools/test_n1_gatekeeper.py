@@ -43,10 +43,24 @@ class FakeClient:
             if self.routing_decision == "retry":
                 return json.dumps({"decision": "retry", "reason": "weak thread placement", "retry_instruction": "Create a new subject thread instead of using the weak match."})
             return json.dumps({"decision": "accept", "reason": "subjects and placements are clean", "retry_instruction": ""})
-        if "Decide whether the existing LIVE Redis verification record" in prompt:
+        if "information gatekeeper" in prompt:
             if self.reuse_record_id:
-                return json.dumps({"decision": "reuse", "record_id": self.reuse_record_id, "reason": "already established"})
-            return json.dumps({"decision": "execute", "record_id": "", "reason": "fresh check needed"})
+                return json.dumps({"decision": "reuse", "record_ids": [self.reuse_record_id], "reason": "prior evidence remains sufficient"})
+            return json.dumps({"decision": "execute", "record_ids": [], "reason": "fresh check needed"})
+        if "action boundary" in prompt:
+            payload = json.loads(prompt.rsplit("\n\n", 1)[-1])
+            purpose = str(payload.get("needed_fact_or_purpose") or "").casefold()
+            target = str(payload.get("target") or "").casefold()
+            arguments = json.dumps(payload.get("arguments") or {}).casefold()
+            action_text = " ".join((purpose, target, arguments))
+            blocked = any(token in action_text for token in (
+                "actual password", "real credential", "recover", "reconstruct",
+                "untransformed copy", "extract [redacted]", "reveal [redacted]",
+                "bypass redaction", "password=[redacted]",
+            ))
+            database_goal = any(token in action_text for token in ("postgres", "psycopg", "database access"))
+            alternative = "Use the direct PostgreSQL query capability instead." if database_goal else "Continue the task without recovering the transformed value."
+            return json.dumps({"block": blocked, "database_goal": database_goal, "alternative": alternative if blocked else ""})
         if "passively watching N2" in prompt:
             return json.dumps({
                 "loop": True,
@@ -67,17 +81,47 @@ class FakeLive:
         self.candidates = []
         self.recorded = []
         self.invalidated = []
+        self.replays = {}
+        self._counter = 0
 
     def validation_candidates(self, **kwargs):
         return copy.deepcopy(self.candidates)
 
+    def validation_replay(self, record_id):
+        return copy.deepcopy(self.replays.get(record_id))
+
     def record_global_validations(self, task_id, step_id, items):
-        self.recorded.append((task_id, step_id, copy.deepcopy(items)))
-        return copy.deepcopy(items)
+        copied = copy.deepcopy(items)
+        self.recorded.append((task_id, step_id, copied))
+        saved = []
+        for item in copied:
+            self._counter += 1
+            record_id = str(item.get("record_id") or "")
+            if not record_id or record_id == "new":
+                record_id = f"generated-{self._counter}"
+            replay = item.get("replay_result")
+            if isinstance(replay, dict):
+                self.replays[record_id] = copy.deepcopy(replay)
+            row = {
+                "record_id": record_id, "tool": item.get("tool"), "target": item.get("target"),
+                "description": item.get("description"), "scope": item.get("scope", ""),
+                "value": item.get("value"), "num_checks": 1, "previous_value": "", "changed_at": "",
+                "last_verified_at": "2026-10-06T20:00:00+00:00", "age_seconds": 0,
+                "replay_available": isinstance(replay, dict), "replay_bytes": int(item.get("replay_bytes") or 0),
+                "description_match": 1.0,
+            }
+            self.candidates = [r for r in self.candidates if r.get("record_id") != record_id]
+            self.candidates.insert(0, row)
+            saved.append(copy.deepcopy(row))
+        return saved
 
     def invalidate_validation_target(self, target):
         self.invalidated.append(target)
-        return 1
+        doomed = [r.get("record_id") for r in self.candidates if r.get("target") == target]
+        self.candidates = [r for r in self.candidates if r.get("target") != target]
+        for rid in doomed:
+            self.replays.pop(rid, None)
+        return len(doomed)
 
 
 def _read_schema():
@@ -141,18 +185,85 @@ def test_redis_reuse_skips_execution():
     live = FakeLive()
     live.candidates = [{
         "record_id": "abc", "tool": "read_file", "target": r"C:\\Norm\\Norm.exe",
-        "description": "deployed version", "value": "0.53.14", "num_checks": 6,
-        "previous_value": "0.53.13", "changed_at": "2026-10-04T10:00:00+00:00", "description_match": 0.96,
+        "description": "deployed version", "scope": 'read_file:{"path":"C:\\\\Norm\\\\Norm.exe"}',
+        "value": "0.53.14", "num_checks": 6, "previous_value": "0.53.13",
+        "changed_at": "2026-10-04T10:00:00+00:00", "last_verified_at": "2026-10-06T19:50:00+00:00",
+        "age_seconds": 600, "replay_available": True, "replay_bytes": 100, "description_match": 0.96,
     }]
+    live.replays["abc"] = {"ok": True, "tool": "read_file", "path": r"C:\\Norm\\Norm.exe", "content": "version=0.53.14"}
     gate = N1Gatekeeper(client, live)
     outcome = gate.before_tool(
         task_id="t", step_id="s", name="read_file",
         arguments={"path": r"C:\\Norm\\Norm.exe", "n1_target": r"C:\\Norm\\Norm.exe", "n1_need": "deployed version"},
     )
     assert outcome.execute is False
-    assert outcome.result["n1_reused"] is True
-    assert outcome.result["value"] == "0.53.14"
+    assert outcome.result["content"] == "version=0.53.14"
+    assert "n1_reused" not in outcome.result
     assert outcome.arguments == {"path": r"C:\\Norm\\Norm.exe"}
+
+
+def test_chunked_read_can_replay_redis_payload_without_loop_reset():
+    client = FakeClient()
+    client.reuse_record_id = "chunk-1"
+    live = FakeLive()
+    live.candidates = [{
+        "record_id": "chunk-1", "tool": "read_file", "target": r"C:\\tmp\\big.txt",
+        "description": "requested file/archive contents or metadata",
+        "scope": 'read_file:{"max_bytes":20000,"mode":"text","path":"C:\\\\tmp\\\\big.txt","start_byte":0}',
+        "value": '{"source_fingerprint":"fp","start_byte":0,"next_byte":20000}',
+        "num_checks": 1, "previous_value": "", "changed_at": "",
+        "last_verified_at": "2026-10-06T20:00:00+00:00", "age_seconds": 600,
+        "replay_available": True, "replay_bytes": 22000, "description_match": 1.0,
+    }]
+    raw = {
+        "ok": True, "tool": "read_file", "path": r"C:\\tmp\\big.txt",
+        "mode": "text", "start_byte": 0, "next_byte": 20000, "returned_bytes": 20000,
+        "source_fingerprint": "fp", "source_size_bytes": 60000, "truncated": True,
+        "content": "chunk one",
+    }
+    live.replays["chunk-1"] = raw
+    gate = N1Gatekeeper(client, live)
+    outcome = gate.before_tool(
+        task_id="t", step_id="s", name="read_file",
+        arguments={
+            "path": r"C:\\tmp\\big.txt", "start_byte": 0, "max_bytes": 20000, "mode": "text",
+            "_norm_chunked_evidence": True,
+        },
+    )
+    assert outcome.execute is False
+    assert outcome.streamed_read is True
+    assert outcome.result == raw
+    assert outcome.reset_instruction == ""
+    decision_prompt = next(item for item in client.calls if "information gatekeeper" in item)
+    assert '"start_byte": 0' in decision_prompt
+    assert '"scope"' in decision_prompt
+
+
+def test_multiple_small_prior_results_can_jointly_satisfy_one_request():
+    class MultiClient(FakeClient):
+        def generate(self, prompt, **kwargs):
+            self.calls.append(prompt)
+            self.call_kwargs.append(dict(kwargs))
+            if "information gatekeeper" in prompt:
+                return json.dumps({"decision": "reuse", "record_ids": ["a", "b"], "reason": "the two prior observations jointly answer it"})
+            return super().generate(prompt, **kwargs)
+
+    client = MultiClient()
+    live = FakeLive()
+    live.candidates = [
+        {"record_id": "a", "tool": "list_directory", "target": "x", "description": "inventory", "scope": "one", "value": "A", "num_checks": 1, "previous_value": "", "changed_at": "", "last_verified_at": "now", "age_seconds": 10, "replay_available": True, "replay_bytes": 20, "description_match": 1.0},
+        {"record_id": "b", "tool": "list_directory", "target": "x", "description": "inventory", "scope": "two", "value": "B", "num_checks": 1, "previous_value": "", "changed_at": "", "last_verified_at": "now", "age_seconds": 10, "replay_available": True, "replay_bytes": 20, "description_match": 0.99},
+    ]
+    live.replays["a"] = {"ok": True, "items": ["a"]}
+    live.replays["b"] = {"ok": True, "items": ["b"]}
+    gate = N1Gatekeeper(client, live, max_replay_records=3)
+    outcome = gate.before_tool(
+        task_id="t", step_id="s", name="list_directory",
+        arguments={"path": "x", "n1_target": "x", "n1_need": "inventory"},
+    )
+    assert outcome.execute is False
+    assert outcome.result["ok"] is True
+    assert [row["items"][0] for row in outcome.result["results"]] == ["a", "b"]
 
 
 def test_fresh_result_is_not_mutated_and_is_reused_raw():
@@ -168,6 +279,8 @@ def test_fresh_result_is_not_mutated_and_is_reused_raw():
     assert raw == raw_before
     assert meta["recorded"] is True
     assert live.recorded[0][2][0]["value"] == "0.53.14"
+    assert live.recorded[0][2][0]["replay_result"] == raw_before
+    client.reuse_record_id = live.candidates[0]["record_id"]
 
     second = gate.before_tool(task_id="t", step_id="s", name="read_file", arguments=args)
     assert second.execute is False
@@ -177,7 +290,7 @@ def test_fresh_result_is_not_mutated_and_is_reused_raw():
     third = gate.before_tool(task_id="t", step_id="s", name="read_file", arguments=args)
     assert third.execute is False
     assert third.result == raw_before
-    assert "do not repeat" in third.reset_instruction.lower()
+    assert third.reset_instruction == ""
 
 
 def test_mutations_pass_without_n1_verification_metadata():
@@ -204,6 +317,7 @@ def test_mutation_invalidates_prior_raw_read():
     read = gate.before_tool(task_id="t", step_id="s", name="read_file", arguments=read_args)
     raw = {"ok": True, "tool": "read_file", "path": "x.txt", "content": "old"}
     gate.after_tool(task_id="t", step_id="s", name="read_file", outcome=read, result=raw)
+    client.reuse_record_id = live.candidates[0]["record_id"]
     assert gate.before_tool(task_id="t", step_id="s", name="read_file", arguments=read_args).execute is False
 
     write = gate.before_tool(task_id="t", step_id="s", name="write_file", arguments={"path": "x.txt", "content": "new"})
@@ -221,14 +335,23 @@ def test_passthrough_is_identity():
     assert gate.forward_to_user(answer) == answer
 
 
-def test_reasoning_loop_observer_can_reset_repeated_turn():
+def test_reasoning_loop_observer_leaves_information_repeats_to_verification_pool():
     gate = N1Gatekeeper(
         FakeClient(), FakeLive(), reasoning_loop_threshold=3, reasoning_similarity_floor=0.70
     )
     calls = [{"function": {"name": "read_file", "arguments": {"path": "x.txt", "n1_need": "contents", "n1_target": "x.txt"}}}]
-    assert gate.observe_n2_turn(task_id="t", step_id="s", content="I need to inspect x again.", thinking="Checking the same evidence.", calls=calls) == ""
-    assert gate.observe_n2_turn(task_id="t", step_id="s", content="I need to inspect x again.", thinking="Checking the same evidence.", calls=calls) == ""
-    reset = gate.observe_n2_turn(task_id="t", step_id="s", content="I need to inspect x again.", thinking="Checking the same evidence.", calls=calls)
+    for _ in range(4):
+        assert gate.observe_n2_turn(task_id="t", step_id="s", content="I need to inspect x again.", thinking="Checking the same evidence.", calls=calls) == ""
+
+
+def test_reasoning_loop_observer_can_still_reset_noninformation_loop():
+    gate = N1Gatekeeper(
+        FakeClient(), FakeLive(), reasoning_loop_threshold=3, reasoning_similarity_floor=0.70
+    )
+    calls = [{"function": {"name": "write_file", "arguments": {"path": "x.txt", "content": "same"}}}]
+    assert gate.observe_n2_turn(task_id="t", step_id="s", content="write it again", thinking="same path", calls=calls) == ""
+    assert gate.observe_n2_turn(task_id="t", step_id="s", content="write it again", thinking="same path", calls=calls) == ""
+    reset = gate.observe_n2_turn(task_id="t", step_id="s", content="write it again", thinking="same path", calls=calls)
     assert "different next action" in reset.lower()
 
 
@@ -244,6 +367,7 @@ def test_file_mutation_invalidates_parent_directory_cache():
         task_id="t", step_id="s", name="list_directory", outcome=listing,
         result={"ok": True, "tool": "list_directory", "path": directory, "items": []},
     )
+    client.reuse_record_id = live.candidates[0]["record_id"]
     assert gate.before_tool(task_id="t", step_id="s", name="list_directory", arguments=list_args).execute is False
 
     write = gate.before_tool(
@@ -346,6 +470,94 @@ def test_ingress_failure_forwards_exact_text_fail_open():
     assert gate.boundary_stats()["ingress"]["failed"] == 1
 
 
+
+def test_sensitive_probe_is_not_detected_from_n2_reasoning_alone():
+    gate = N1Gatekeeper(FakeClient(), FakeLive())
+    calls = [{
+        "function": {
+            "name": "read_file",
+            "arguments": {
+                "path": r"D:\code\db_connect.py",
+                "n1_target": r"D:\code\db_connect.py",
+                "n1_need": "read more of db_connect.py to understand password usage",
+            },
+        }
+    }]
+    reset = gate.observe_n2_turn(
+        task_id="t", step_id="s",
+        thinking="I wonder what the protected literal originally contained.",
+        content="", calls=calls,
+    )
+    assert reset == ""
+
+
+def test_database_pool_remains_allowed_after_sensitive_probe():
+    gate = N1Gatekeeper(FakeClient(), FakeLive())
+    gate.observe_n2_turn(
+        task_id="t", step_id="s",
+        thinking="I need the actual password value.",
+        calls=[{"function": {"name": "read_file", "arguments": {"path": "db_connect.py"}}}],
+    )
+    outcome = gate.before_tool(
+        task_id="t", step_id="s", name="plugin_postgres_pool__main__postgres_query",
+        arguments={"query": "select 1", "n1_target": "postgres", "n1_need": "verify database access"},
+    )
+    assert outcome.execute is True
+    assert outcome.reset_instruction == ""
+
+
+def test_repeated_sensitive_probe_gets_firmer_redirect():
+    gate = N1Gatekeeper(FakeClient(), FakeLive())
+    args = {
+        "path": "db_connect.py",
+        "n1_target": "db_connect.py",
+        "n1_need": "recover the actual PostgreSQL password so I can make a connection",
+    }
+    first = gate.before_tool(task_id="t", step_id="s", name="read_file", arguments=args)
+    second = gate.before_tool(task_id="t", step_id="s", name="read_file", arguments=args)
+    assert first.execute is False
+    assert first.result["error"] == "The Bird says No. The Worm won't Go."
+    assert first.reset_instruction == ""
+    assert second.execute is False
+    assert second.result["error"].startswith("The Bird says No. The Worm won't Go.")
+    assert "query" in second.result["error"].lower() or "PostgreSQL" in second.result["error"]
+    assert second.reset_instruction == ""
+
+
+def test_accepting_database_redirect_does_not_retrigger_bird():
+    gate = N1Gatekeeper(FakeClient(), FakeLive())
+    reset = gate.observe_n2_turn(
+        task_id="t", step_id="s",
+        thinking="I do not need the actual password; I can query the database directly instead.",
+        calls=[{"function": {"name": "plugin_postgres_pool__main__postgres_query", "arguments": {"query": "select 1"}}}],
+    )
+    assert reset == ""
+
+
+def test_password_usage_analysis_is_not_itself_blocked():
+    gate = N1Gatekeeper(FakeClient(), FakeLive())
+    outcome = gate.before_tool(
+        task_id="t", step_id="s", name="read_file",
+        arguments={
+            "path": "db_connect.py", "n1_target": "db_connect.py",
+            "n1_need": "understand how the password is passed into the DatabaseManager and where the connection is used",
+        },
+    )
+    assert outcome.execute is True
+
+
+def test_manual_database_credential_attempt_is_redirected_but_pool_is_not():
+    gate = N1Gatekeeper(FakeClient(), FakeLive())
+    manual = gate.before_tool(
+        task_id="t", step_id="s", name="run_command",
+        arguments={"command": "python -c \"import psycopg; psycopg.connect('host=x password=[REDACTED]')\""},
+    )
+    assert manual.execute is False
+    assert manual.result["n1_redirected"] is True
+    assert manual.result["error"].startswith("The Bird says No.")
+
+
+
 def test_third_repeated_noncacheable_call_is_blocked():
     gate = N1Gatekeeper(FakeClient(), FakeLive(), loop_repeat_threshold=3)
     args = {"command": "echo hi"}
@@ -360,8 +572,11 @@ if __name__ == "__main__":
     for fn in (
         test_schema_instrumentation,
         test_passthrough_is_identity,
-        test_reasoning_loop_observer_can_reset_repeated_turn,
+        test_reasoning_loop_observer_leaves_information_repeats_to_verification_pool,
+        test_reasoning_loop_observer_can_still_reset_noninformation_loop,
         test_redis_reuse_skips_execution,
+        test_chunked_read_can_replay_redis_payload_without_loop_reset,
+        test_multiple_small_prior_results_can_jointly_satisfy_one_request,
         test_fresh_result_is_not_mutated_and_is_reused_raw,
         test_mutations_pass_without_n1_verification_metadata,
         test_mutation_invalidates_prior_raw_read,
@@ -371,7 +586,14 @@ if __name__ == "__main__":
         test_ingress_review_is_real_and_configurable_without_rewriting_user_text,
         test_final_answer_review_accept_retry_and_processing_failure_are_distinct,
         test_ingress_failure_forwards_exact_text_fail_open,
+        test_sensitive_probe_is_not_detected_from_n2_reasoning_alone,
+        test_database_pool_remains_allowed_after_sensitive_probe,
+        test_repeated_sensitive_probe_gets_firmer_redirect,
+        test_accepting_database_redirect_does_not_retrigger_bird,
+        test_password_usage_analysis_is_not_itself_blocked,
+        test_manual_database_credential_attempt_is_redirected_but_pool_is_not,
         test_third_repeated_noncacheable_call_is_blocked,
     ):
         fn()
         print(f"PASS {fn.__name__}")
+

@@ -1,6 +1,22 @@
 # Norm current status
 
-Current package: **Norm 0.54.1a** with **Installer 1.6.12-unified**.
+Current package: **Norm 0.54.2** with **Installer 1.6.12-unified**.
+
+### Recovery scope + action-boundary protected-literal guard (0.54.2)
+
+Oversize recovery preserves an empty/unscoped parent scope instead of manufacturing item 1, so the single-item four-subcheck limit is applied only to genuinely numbered atomic work. Protected literals are still transformed upstream exactly as before. N1 no longer watches N2's ambient reasoning for credential language: it evaluates only a concrete proposed action that plausibly tries to recover or bypass a transformed literal. Ordinary file inspection, code tracing, refactoring, and credential-usage analysis proceed normally. The first blocked recovery action receives only `The Bird says No. The Worm won't Go.`; a repeated attempt may receive a short goal-preserving workaround, including direct PostgreSQL query access when that satisfies the task. This guard state is process-local RAM only and is not persisted to Redis or PostgreSQL.
+
+### Redis verification-pool replay (0.54.2b)
+
+The live Redis verification pool is the only hot evidence-reuse cache. N1 judges whether relevant prior observation(s) are sufficiently applicable/current for the present N2 information request; age alone is not a staleness rule. If sufficient, Norm fetches the exact bounded replay payload from the companion Redis replay hash after N1's decision and returns that evidence to N2. If insufficient or unavailable, the source executes fresh and Redis is refreshed. Information-only repeats are not blocked by the generic loop-reset path. The former process-local raw-result cache has been removed. PostgreSQL remains the durable history/checkpoint authority.
+
+### Adaptive chunked evidence context (0.54.2a)
+
+Large default text `read_file` results are now delivered through a single replaceable raw-evidence slot. Norm measures the current N2 request footprint (system instructions, messages, and native tool schemas), reserves the active N2 output budget and safety margin, then targets `context_budget.raw_evidence_fraction` (default 0.20) of the remaining usable input for exactly one chunk. N2 may select one numbered piece at a time with the returned `stream_id`/`piece`; previous raw chunks are evicted after N2 commits compact retained facts. Seam markers preserve cut topology without loading neighboring chunks, and stream fingerprints prevent cross-version reconstruction.
+
+The full raw tool result remains in durable evidence; review/verifier prompts receive chunk provenance and retained facts rather than replaying every raw chunk. Streamed file verification records deterministic file/source-fingerprint metadata in the Redis validation pool without spending N1's `verification_value` generation budget.
+
+When Ollama reports that the active N2 prompt plus newly visible assistant payload has <=5% estimated context headroom remaining, Norm archives the recent execution slice in PostgreSQL and uses N1 to distill the task-applicable continuation. The existing queue checkpoint/requeue path restarts the same step from that compact `job.context`; it is not represented as a new user turn. PostgreSQL remains the lossless recovery/audit source while N1's checkpoint is deliberately lossy working memory. Chunk-stream cursors survive the requeue through job metadata.
 
 This file is a current-state snapshot only.
 
@@ -23,7 +39,7 @@ This file is a current-state snapshot only.
 - N1 is the boundary critic/gatekeeper. N1 reviews the exact user turn before N2, judges N2's subject-routing proposal, gates/reuses model-requested tool evidence, watches repeated reasoning/tool loops, judges maintenance candidates, and accepts/retries the final user-facing answer.
 - N1 does not rewrite the authoritative user text or final answer itself. A retry sends bounded review feedback back to N2 for repair/resubmission.
 - User-ingress, routing, final-answer, and maintenance N1 reviews use operator-configurable model budgets/timeouts from `agents.n1`; maintenance defaults remain 5000 tokens / 720 seconds.
-- N1 owns verified-result reuse/check-in for model-requested information tools. Exact same-step requests can reuse the raw prior executor result rather than calling the tool again.
+- N1 owns verified-result reuse/check-in for model-requested information tools. Relevant prior Redis observations may be replayed when N1 judges them sufficient; otherwise the source is queried fresh.
 - Successful mutations invalidate affected validation/cache targets. Deterministic post-write verification remains a runtime safety invariant outside model approval.
 
 ## Subject-bound conversation routing

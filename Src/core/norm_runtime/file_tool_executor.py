@@ -187,7 +187,7 @@ class FileToolExecutor:
             "Never dump .env or credential files. Load credentials internally and pass them through process environment variables; never echo literal secrets.\n"
             "Available tools:\n"
             "- list_directory(path): bounded directory listing.\n"
-            "- read_file(path, ...): streams bounded UTF-8/bytes from normal files. Archive files are recognized and default to a non-extracting manifest. Use archive_action=read_member/hash_member/compare_directory for selective archive work; the archive adapter prefers the local 7-Zip CLI and never extracts implicitly.\n"
+            "- read_file(path, ...): streams bounded UTF-8/bytes from normal files. Large default text reads are context-budgeted automatically. When a result includes chunk_stream, N2 receives exactly ONE raw piece for that turn; before requesting another piece, preserve useful facts in the next call's retain field, then request exactly one piece using the returned stream_id + piece number. Piece numbers may jump; never request neighbors or multiple pieces merely for convenience. Seam markers such as {0:1}, {1:2}, and {15:0} identify boundaries while prior raw pieces are evicted from active context. Archive files are recognized and default to a non-extracting manifest. Use archive_action=read_member/hash_member/compare_directory for selective archive work; the archive adapter prefers the local 7-Zip CLI and never extracts implicitly.\n"
             "- append_task_note(content, category?): append durable internal Markdown notes in automatically rotated <=5 MiB chunks for the active task.\n"
             "- make_directory(path): creates a directory inside an allowed root.\n"
             "- write_file(path, content, expected_sha256?, reproducible?, retention?, user_requested?, recipe?): creates a UTF-8 file; mark explicit user outputs user_requested=true/retention=durable; mark easy-to-recreate helpers reproducible=true/retention=ephemeral. Existing files "
@@ -238,6 +238,9 @@ class FileToolExecutor:
                     "end_line": {"type": "integer", "minimum": 1},
                     "start_byte": {"type": "integer", "minimum": 0},
                     "max_bytes": {"type": "integer", "minimum": 1},
+                    "stream_id": {"type": "string", "description": "Runtime evidence-stream identifier returned by a prior large read_file result. Supply this only when requesting another numbered piece from that stream."},
+                    "piece": {"type": "integer", "minimum": 1, "description": "Exactly one numbered evidence piece to fetch from stream_id. May jump to any valid piece; never request multiple pieces in one turn."},
+                    "retain": {"type": "string", "description": "Compact facts, decisions, or open questions worth keeping from the previously consumed piece before its raw text is evicted from N2 context."},
                     "mode": {"type": "string", "enum": ["text", "bytes_base64"]},
                     "include_sha256": {"type": "boolean", "description": "Force a full-file SHA-256 scan. Large sources omit it by default to preserve streaming behavior."},
                     "archive_action": {"type": "string", "enum": ["auto", "list", "read_member", "hash_member", "compare_directory"], "description": "Archive-aware action. auto/list returns tree+sizes first; compare_directory hashes members only when tree+sizes are a likely exact match."},
