@@ -2,11 +2,13 @@
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.53.22 / Installer 1.6.10-unified** package only. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.53.22b / Installer 1.6.10-unified** package only. Version history belongs only in RELEASE_NOTES.md.
 
-### N1-gated memory maintenance (0.53.22)
+### N1-gated memory maintenance (0.53.22b)
 
 Scheduled memory has two independent modes. The weekly 7-day pass is reductive: N2 ranks and rewrites, preserving important/current information and shrinking less-important context. N1 judges each N2 candidate and decides accept/retry. Up to four attempts are allowed; <=1,800 characters is the ideal early-stop size and 3,400 characters is the practical batch ceiling. The 21-day long-cycle pass is destructive: N2 may propose removal of obsolete/useless memory, but N1 must approve destruction before the record is omitted.
+
+N1 maintenance review limits are operator-configurable in `config/runtime.json`: `agents.n1.maintenance_num_predict` controls the per-review output allowance (default 5000) and `agents.n1.maintenance_review_timeout_seconds` controls the per-review wall-clock timeout (default 720 seconds / 12 minutes). These are runtime settings, not compile-time constants.
 
 
 ## Runtime layout

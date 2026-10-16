@@ -31,7 +31,9 @@
       "semantic_match_floor": 0.45,
       "loop_repeat_threshold": 3,
       "reasoning_loop_threshold": 3,
-      "reasoning_similarity_floor": 0.78
+      "reasoning_similarity_floor": 0.78,
+      "maintenance_num_predict": 5000,
+      "maintenance_review_timeout_seconds": 720
     },
     "n2": {}
   },
@@ -143,7 +145,7 @@
     "Take the time needed to get the task right; correctness, completeness, and verification outrank speed.",
     "Use available tools proactively when they can inspect, measure, retrieve, test, or verify a material fact. Do not guesstimate what can reasonably be checked.",
     "Do not replace missing evidence with convenient assumptions. Gather more evidence when practical, and clearly mark uncertainty when it cannot be resolved.",
-    "Improve efficiency through better planning, decomposition, reuse, caching, and targeted tool useâ€”not by skipping necessary work or lowering verification rigor.",
+    "Improve efficiency through better planning, decomposition, reuse, caching, and targeted tool use\u00e2\u20ac\u201dnot by skipping necessary work or lowering verification rigor.",
     "Before finishing, verify important claims and results against observed evidence and the user's actual constraints.",
     "All timestamps must be timezone-aware. When no timezone is specified, use America/New_York (EST/EDT as applicable); do not emit ambiguous naive local timestamps. Internal storage may remain timezone-aware UTC, but human-facing timestamps and memory summaries default to America/New_York.",
     "All network service endpoints must come from the settings-resolved runtime topology; do not invent localhost, 127.0.0.1, ports, database names, or users. Use the configured endpoint first. Localhost is permitted only when that service is explicitly configured as loopback or as an explicit fallback. Any fallback/network probe must be non-interactive and fail within 5 seconds; for psql/PostgreSQL CLI use connect_timeout=5 and -w so authentication can never block waiting for input. If the configured authority route is unavailable, fail clearly rather than silently bypassing it.",

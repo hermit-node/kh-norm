@@ -232,6 +232,7 @@ class OllamaClient:
         temperature: float = 0.2,
         response_format: str | dict | None = None,
         emit_stream: bool = True,
+        timeout_seconds: float | None = None,
     ) -> str:
         options: dict[str, object] = {"temperature": temperature}
         if num_predict is not None:
@@ -263,7 +264,8 @@ class OllamaClient:
         if emit_stream:
             self._emit("model_start", thinking=think)
         try:
-            with request.urlopen(req, timeout=self.timeout_seconds) as response:
+            call_timeout = self.timeout_seconds if timeout_seconds is None else float(timeout_seconds)
+            with request.urlopen(req, timeout=call_timeout) as response:
                 with self._active_lock:
                     self._active[call_id] = (cancel_event, response)
                 if cancel_event.is_set():

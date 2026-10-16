@@ -75,6 +75,8 @@ class N1Gatekeeper:
         loop_repeat_threshold: int = 3,
         reasoning_loop_threshold: int = 3,
         reasoning_similarity_floor: float = 0.78,
+        maintenance_num_predict: int = 5000,
+        maintenance_review_timeout_seconds: float = 720.0,
         raw_result_cache_entries: int = 128,
         turn_history_entries: int = 256,
         request_state_entries: int = 4096,
@@ -88,6 +90,8 @@ class N1Gatekeeper:
         self.loop_repeat_threshold = max(2, int(loop_repeat_threshold))
         self.reasoning_loop_threshold = max(3, int(reasoning_loop_threshold))
         self.reasoning_similarity_floor = max(0.50, min(0.98, float(reasoning_similarity_floor)))
+        self.maintenance_num_predict = max(1, int(maintenance_num_predict))
+        self.maintenance_review_timeout_seconds = max(1.0, float(maintenance_review_timeout_seconds))
         self.raw_result_cache_entries = max(8, int(raw_result_cache_entries))
         self.turn_history_entries = max(32, int(turn_history_entries))
         self.request_state_entries = max(256, int(request_state_entries))
@@ -634,8 +638,9 @@ class N1Gatekeeper:
         }
         try:
             raw = self.client.generate(
-                prompt, think=True, temperature=0.0, num_predict=500,
+                prompt, think=True, temperature=0.0, num_predict=self.maintenance_num_predict,
                 response_format=schema, emit_stream=False,
+                timeout_seconds=self.maintenance_review_timeout_seconds,
             )
             parsed = OllamaClient.parse_json(raw)
             decision = str(parsed.get("decision") or "retry").strip().lower()

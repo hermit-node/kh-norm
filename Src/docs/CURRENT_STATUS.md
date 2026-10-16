@@ -1,6 +1,6 @@
 # Norm current status
 
-Current package: **Norm 0.53.22** with **Installer 1.6.10-unified**.
+Current package: **Norm 0.53.22b** with **Installer 1.6.10-unified**.
 
 This file is a current-state snapshot only.
 
@@ -34,6 +34,7 @@ This file is a current-state snapshot only.
 - Destructive long-cycle maintenance runs on an independent 21-day clock. N2 may propose that obsolete/useless compact history be discarded entirely; N1 must approve each destruction.
 - A destructive run also satisfies that week's reductive clock, preventing an immediate second maintenance run.
 - N1 maintenance judgment counters are exposed in maintenance result details/logging.
+- N1 maintenance review allowance and timeout are runtime-configurable under `agents.n1`: `maintenance_num_predict` defaults to 5000 and `maintenance_review_timeout_seconds` defaults to 720 seconds.
 
 ## Session model and operator help
 

@@ -1,5 +1,11 @@
 # Norm release notes
 
+## 0.53.22b — 2026-10-05 — Configurable N1 maintenance review budget
+
+- N1 maintenance review output allowance is now runtime-configurable with `agents.n1.maintenance_num_predict`; default is 5,000 tokens instead of the prior hardcoded 500-token limit that frequently caused `ModelOutputTruncated` during maintenance judgments.
+- N1 maintenance review wall-clock timeout is independently runtime-configurable with `agents.n1.maintenance_review_timeout_seconds`; default is 720 seconds (12 minutes). The override applies only to maintenance judgment calls and does not change N1's normal tool-gate timeout behavior.
+- Effective N1 maintenance review allowance and timeout are logged at startup so the active values are observable. Changing either setting requires only editing `config/runtime.json` and restarting Norm; no rebuild is required.
+
 ## 0.53.22 — 2026-10-05 — N1-gated reductive/destructive memory maintenance
 
 - Scheduled memory maintenance now uses independent clocks: a **7-day reductive pass** and a **21-day destructive pass**. When both are due, the destructive pass runs and also satisfies that week's reductive maintenance; the old alternating regular/full every seven days behavior is removed.

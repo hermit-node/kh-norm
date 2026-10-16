@@ -16,10 +16,12 @@ from norm_runtime.n1_gatekeeper import N1Gatekeeper
 class FakeClient:
     def __init__(self):
         self.calls = []
+        self.call_kwargs = []
         self.reuse_record_id = ""
 
     def generate(self, prompt, **kwargs):
         self.calls.append(prompt)
+        self.call_kwargs.append(dict(kwargs))
         if "Decide whether the existing LIVE Redis verification record" in prompt:
             if self.reuse_record_id:
                 return json.dumps({"decision": "reuse", "record_id": self.reuse_record_id, "reason": "already established"})
@@ -231,6 +233,22 @@ def test_memory_condensation_judgment_and_final_bound():
     assert stats["destructive_accept"] == 0
 
 
+
+def test_memory_condensation_uses_configurable_budget_and_timeout():
+    client = FakeClient()
+    gate = N1Gatekeeper(
+        client, FakeLive(), maintenance_num_predict=4321,
+        maintenance_review_timeout_seconds=654,
+    )
+    gate.judge_memory_condensation(
+        mode="reductive", source_text="source", candidate="candidate",
+        attempt=1, max_attempts=4, ideal_chars=1800, acceptable_chars=3400,
+    )
+    kwargs = client.call_kwargs[-1]
+    assert kwargs["num_predict"] == 4321
+    assert kwargs["timeout_seconds"] == 654.0
+
+
 def test_third_repeated_noncacheable_call_is_blocked():
     gate = N1Gatekeeper(FakeClient(), FakeLive(), loop_repeat_threshold=3)
     args = {"command": "echo hi"}
@@ -252,6 +270,7 @@ if __name__ == "__main__":
         test_mutation_invalidates_prior_raw_read,
         test_file_mutation_invalidates_parent_directory_cache,
         test_memory_condensation_judgment_and_final_bound,
+        test_memory_condensation_uses_configurable_budget_and_timeout,
         test_third_repeated_noncacheable_call_is_blocked,
     ):
         fn()
