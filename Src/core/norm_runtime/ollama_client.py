@@ -4,12 +4,14 @@ from .secret_redaction import redact
 
 import base64
 import json
+import logging
 import re
 import time
 import zlib
 from pathlib import Path
 from threading import Event, Lock
 from typing import Callable
+from urllib import error as urlerror
 from urllib import request
 
 
@@ -193,10 +195,105 @@ class OllamaClient:
                     pass
         return len(active)
 
+    @staticmethod
+    def _http_request_summary(req: request.Request) -> dict[str, object]:
+        """Return safe structural metadata for an Ollama HTTP request.
+
+        Never include prompt/message/tool contents here: HTTP diagnostics may be
+        persisted in operator logs.  The response body is retained separately
+        because Ollama's error JSON is the authoritative reason for a 4xx/5xx.
+        """
+        raw = getattr(req, "data", None)
+        summary: dict[str, object] = {"request_bytes": len(raw or b"")}
+        if not raw:
+            return summary
+        try:
+            payload = json.loads(raw.decode("utf-8", errors="replace"))
+        except Exception:
+            summary["request_json"] = False
+            return summary
+        summary["request_json"] = True
+        if not isinstance(payload, dict):
+            return summary
+        for key in ("stream", "think", "keep_alive"):
+            if key in payload:
+                summary[key] = payload.get(key)
+        messages = payload.get("messages")
+        if isinstance(messages, list):
+            summary["message_count"] = len(messages)
+            summary["message_roles"] = [
+                str(item.get("role") or "")
+                for item in messages
+                if isinstance(item, dict)
+            ][:32]
+        tools = payload.get("tools")
+        if isinstance(tools, list):
+            summary["tool_count"] = len(tools)
+            names: list[str] = []
+            for item in tools[:64]:
+                if not isinstance(item, dict):
+                    continue
+                function = item.get("function")
+                if isinstance(function, dict):
+                    name = str(function.get("name") or "").strip()
+                    if name:
+                        names.append(name)
+            summary["tool_names"] = names
+        options = payload.get("options")
+        if isinstance(options, dict):
+            for key in ("num_predict", "temperature"):
+                if key in options:
+                    summary[key] = options.get(key)
+        return summary
+
+    def _urlopen(self, req: request.Request, *, timeout: float | None, endpoint: str):
+        """Open an Ollama request while preserving authoritative HTTP error text.
+
+        urllib's HTTPError carries the response body, but the previous client let
+        that exception escape unread, discarding Ollama's diagnostic JSON.  Read
+        and redact it here, persist it through Norm's normal runtime logger, and
+        include it in the raised error so recovery/troubleshooting receives it.
+        """
+        try:
+            return request.urlopen(req, timeout=timeout)
+        except urlerror.HTTPError as exc:
+            try:
+                raw_body = exc.read()
+            except Exception as read_exc:
+                body = f"<failed to read Ollama error body: {type(read_exc).__name__}: {read_exc}>"
+            else:
+                body = raw_body.decode("utf-8", errors="replace") if raw_body else "<empty response body>"
+            safe_body = str(redact(body))
+            truncated = False
+            if len(safe_body) > 16384:
+                safe_body = safe_body[:16384] + "...<truncated>"
+                truncated = True
+            summary = self._http_request_summary(req)
+            content_type = ""
+            try:
+                content_type = str(exc.headers.get("Content-Type") or "") if exc.headers else ""
+            except Exception:
+                content_type = ""
+            logging.error(
+                "Ollama HTTP error endpoint=%s model=%s status=%s reason=%s content_type=%s request=%s response_body=%s truncated=%s",
+                endpoint,
+                self.model,
+                exc.code,
+                exc.reason,
+                content_type,
+                json.dumps(redact(summary), ensure_ascii=False, sort_keys=True, default=str),
+                safe_body,
+                truncated,
+            )
+            raise RuntimeError(
+                f"Ollama HTTP {exc.code} {exc.reason} endpoint={endpoint} model={self.model}; "
+                f"response_body={safe_body}"
+            ) from exc
+
     def list_models(self) -> list[str]:
         req = request.Request(f"{self.base_url}/api/tags", method="GET")
         timeout = 30.0 if self.timeout_seconds is None else min(30.0, float(self.timeout_seconds))
-        with request.urlopen(req, timeout=timeout) as response:
+        with self._urlopen(req, timeout=timeout, endpoint="/api/tags") as response:
             payload = json.loads(response.read().decode("utf-8"))
         names = []
         for item in list(payload.get("models") or []):
@@ -265,7 +362,7 @@ class OllamaClient:
             self._emit("model_start", thinking=think)
         try:
             call_timeout = self.timeout_seconds if timeout_seconds is None else float(timeout_seconds)
-            with request.urlopen(req, timeout=call_timeout) as response:
+            with self._urlopen(req, timeout=call_timeout, endpoint="/api/generate") as response:
                 with self._active_lock:
                     self._active[call_id] = (cancel_event, response)
                 if cancel_event.is_set():
@@ -391,7 +488,7 @@ class OllamaClient:
             self._active[call_id] = (cancel_event, None)
         self._emit("model_start", thinking=think, tool_mode=True)
         try:
-            with request.urlopen(req, timeout=self.timeout_seconds) as response:
+            with self._urlopen(req, timeout=self.timeout_seconds, endpoint="/api/chat") as response:
                 with self._active_lock:
                     self._active[call_id] = (cancel_event, response)
                 for raw_line in response:
@@ -489,7 +586,7 @@ class OllamaClient:
             self._active[call_id] = (cancel_event, None)
         self._emit("model_start", thinking=think, vision=True, images=len(images))
         try:
-            with request.urlopen(req, timeout=self.timeout_seconds) as response:
+            with self._urlopen(req, timeout=self.timeout_seconds, endpoint="/api/chat") as response:
                 with self._active_lock:
                     self._active[call_id] = (cancel_event, response)
                 for raw_line in response:

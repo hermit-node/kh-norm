@@ -1,3 +1,9 @@
+0.54.0d — 2026-10-06 — Preserve Ollama HTTP error diagnostics
+- Ollama HTTP 4xx/5xx failures now read and retain the response body instead of losing Ollama's diagnostic JSON when urllib raises HTTPError.
+- Persistent runtime logging records endpoint, model, HTTP status/reason, content type, bounded/redacted response body, and structural request metadata (request bytes, message roles/count, tool names/count, thinking/stream flags, and generation options) without logging prompt or tool-result contents.
+- The raised runtime error also carries the bounded/redacted Ollama response body so Norm recovery/troubleshooting can reason from the authoritative server error instead of guessing from `HTTP Error 400: Bad Request`.
+- Response-body logging is capped at 16 KiB and marked when truncated. No tool-routing, retry-policy, model-selection, or filesystem-policy behavior changed in this diagnostic patch.
+
 0.54.0c ? 2026-10-05 ? Single-model maintenance writer/verifier
 - Maintenance condensation and maintenance verification now use the same active maintenance model client, matching the normal N1/N2 same-model pattern.
 - The configured maintenance chain stays synchronized by role: Granite/Granite, then north-mini-code/north-mini-code on failure, then norm/norm only as the final fallback.
