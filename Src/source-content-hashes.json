@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "release": "0.55.10r16-workspace-stability",
+  "release": "0.55.10r17-strict-recovery-ids",
   "baseline": "Norm-0.55.10r11r2-Browser-Postgres-Unified-Portable-Source(1).zip",
   "file_count": 440,
   "hash_algorithm": "sha256",
@@ -34,8 +34,8 @@
       "sha256": "b1caace3a4f4db1b3a5b455732dd1f49f89931a8e4da62804f3728968fc539b9"
     },
     "SOURCE_PACKAGE.md": {
-      "bytes": 37207,
-      "sha256": "aa8682182bb5c943fcfc40f2103e5d61415bbc130ce7b568375e15b478424be1"
+      "bytes": 37326,
+      "sha256": "7ca0576f67d7bd2532633136a3ba2bb0e0e624614d72dd103c5abed753b979d2"
     },
     "Safe-Shutdown-Norm.bat": {
       "bytes": 519,
@@ -63,7 +63,7 @@
     },
     "config/settings.ini": {
       "bytes": 3357,
-      "sha256": "264d8bb37bea567ce3b6725d818503ffcab3eea02547f931b63c01eb3d9c3d14"
+      "sha256": "431e67fcf1fe37c32cf1fe0bee0361e62f373e3fe0037ce0ff025aa35cbb5fe0"
     },
     "core/norm_main.py": {
       "bytes": 73014,
@@ -246,8 +246,8 @@
       "sha256": "a4945e1cd89f31d223af18445690b5266022c0ba8ce776966cd5a62d3ca0e647"
     },
     "core/norm_runtime/prompt_worker.py": {
-      "bytes": 387620,
-      "sha256": "4beb09e4501182c47c424a29cfec6f0af5b5bbeab2001808baa42df9b32ad11a"
+      "bytes": 388342,
+      "sha256": "30a833b71ed4e91ff6513c5399e0ceefeffdd7023674de22e37a85c5d9ef9df7"
     },
     "core/norm_runtime/protocol.py": {
       "bytes": 16553,
@@ -567,7 +567,7 @@
     },
     "package-manifest.json": {
       "bytes": 39801,
-      "sha256": "6a2a990afa9164e36c9437cfe1d014595f3aa82c8ad01cd3565a986df5feff17"
+      "sha256": "f2de6014db7cfb7392b0fbecda10f6f5f42c33f4d74e68251ca9fae9e984a583"
     },
     "plugins/README.md": {
       "bytes": 903,

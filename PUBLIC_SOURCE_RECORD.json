@@ -1,14 +1,14 @@
 {
-  "version": "0.55.10r16",
-  "variant": "Workspace-Stability",
-  "tag": "v0.55.10r16",
-  "source_archive_sha256": "031ba65bb2c7468bf14ceb750302a14aabda99b1f09083db95c677bd0caea9ab",
-  "source_archive": "0.55.10r16--Workspace-Stability--031ba65bb2c7.zip",
+  "version": "0.55.10r17",
+  "variant": "Strict-Recovery-IDs",
+  "tag": "v0.55.10r17",
+  "source_archive_sha256": "d3e7ffa279c92a06d0799da0dd2a80211d027454ab6a1713f7b7b138325b3d53",
+  "source_archive": "0.55.10r17--Strict-Recovery-IDs--d3e7ffa279c9.zip",
   "quality": "source-inventory-verified",
   "known_issues": [
-    "Normalized from 0.55.10r11r6-workspace-stability; old ZIP and mapping retained in the installer kit."
+    "Normalized from 0.55.10r11r7-strict-recovery-ids; old ZIP and mapping retained in the installer kit."
   ],
-  "published_source_files": 375,
+  "published_source_files": 377,
   "omitted_paths": [
     "backups/plugins-ini/plugins-20261014-151017-561326+0000-72956dfad8bb.ini",
     "config/plugins.ini",

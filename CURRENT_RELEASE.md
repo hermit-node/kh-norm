@@ -1,6 +1,6 @@
-# Norm 0.55.10r16 - Workspace-Stability
+# Norm 0.55.10r17 - Strict-Recovery-IDs
 
-Original archive SHA-256: 031ba65bb2c7468bf14ceb750302a14aabda99b1f09083db95c677bd0caea9ab
+Original archive SHA-256: d3e7ffa279c92a06d0799da0dd2a80211d027454ab6a1713f7b7b138325b3d53
 
 Historical assessment: source-inventory-verified
 
@@ -8,6 +8,6 @@ Omitted private paths: backups/plugins-ini/plugins-20261014-151017-561326+0000-7
 
 Sanitized paths: core/norm_main.py, core/norm_runtime/aiohttp_host.py
 
-Historical caveats: Normalized from 0.55.10r11r6-workspace-stability; old ZIP and mapping retained in the installer kit.
+Historical caveats: Normalized from 0.55.10r11r7-strict-recovery-ids; old ZIP and mapping retained in the installer kit.
 
 Public source snapshot is not identical to the original ZIP or guaranteed installable.

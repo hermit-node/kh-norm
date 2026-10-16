@@ -1,3 +1,6 @@
+## R11R7: strict recovery scope IDs (2026-10-15)
+See docs/R11R7_STRICT_SCOPE_IDS.md. No running Norm process changed.
+
 ## 0.55.10r11r6 - Workspace stability (2026-10-15)
 Source-only follow-up to r11r5, preserving Celery and all other changes. See docs/R11R6_WORKSPACE_VALIDATION.md for tests and limitations.
 

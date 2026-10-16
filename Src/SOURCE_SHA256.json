@@ -39,8 +39,8 @@
     },
     {
       "file": "SOURCE_PACKAGE.md",
-      "bytes": 37207,
-      "sha256": "aa8682182bb5c943fcfc40f2103e5d61415bbc130ce7b568375e15b478424be1"
+      "bytes": 37326,
+      "sha256": "7ca0576f67d7bd2532633136a3ba2bb0e0e624614d72dd103c5abed753b979d2"
     },
     {
       "file": "Safe-Shutdown-Norm.bat",
@@ -304,8 +304,8 @@
     },
     {
       "file": "core/norm_runtime/prompt_worker.py",
-      "bytes": 387620,
-      "sha256": "4beb09e4501182c47c424a29cfec6f0af5b5bbeab2001808baa42df9b32ad11a"
+      "bytes": 388342,
+      "sha256": "30a833b71ed4e91ff6513c5399e0ceefeffdd7023674de22e37a85c5d9ef9df7"
     },
     {
       "file": "core/norm_runtime/protocol.py",
@@ -710,7 +710,7 @@
     {
       "file": "package-manifest.json",
       "bytes": 39801,
-      "sha256": "6a2a990afa9164e36c9437cfe1d014595f3aa82c8ad01cd3565a986df5feff17"
+      "sha256": "f2de6014db7cfb7392b0fbecda10f6f5f42c33f4d74e68251ca9fae9e984a583"
     },
     {
       "file": "plugins/README.md",
@@ -1350,7 +1350,7 @@
     {
       "file": "source-content-hashes.json",
       "bytes": 69346,
-      "sha256": "43863983c4123fceaffb568e9fa8911cef17976c2c22b4f427caf7c7f6a9014e"
+      "sha256": "3153235f2bb159b5461f002253ab80778af467d113cf09f4e90207b375da4575"
     },
     {
       "file": "tools/7zip/7z.dll",

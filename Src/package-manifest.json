@@ -1,7 +1,7 @@
 {
   "package_schema": 1,
   "name": "Norm",
-  "version": "0.55.10r16-workspace-stability",
+  "version": "0.55.10r17-strict-recovery-ids",
   "package_type": "portable-source",
   "source_dir": "core",
   "entrypoint": "core/norm_main.py",
@@ -475,7 +475,7 @@
     "policy": "retain full generated original and submit shortest complete summary; no bypass of N1/N2 verification",
     "normal_output_child_tasks": "not included; deferred"
   },
-  "release_revision": "r16-workspace-stability",
+  "release_revision": "r17-strict-recovery-ids",
   "celery_tool_transport": {
     "transport": "Celery",
     "enabled_setting": "config/settings.ini:[celery].enabled",

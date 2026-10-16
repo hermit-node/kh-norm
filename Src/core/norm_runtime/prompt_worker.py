@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from .secret_redaction import redact
 
@@ -3575,7 +3575,13 @@ class PromptWorker:
     def _recovery_scope_items(self, job: PromptJob) -> list[int]:
         metadata = job.metadata or {}
         supplied = metadata.get("recovery_scope_items")
-        if isinstance(supplied, list) and (supplied or metadata.get("expected_result_kind") == "recovery_analysis"):
+        if isinstance(supplied, list) and (
+            supplied
+            or metadata.get("expected_result_kind") == "recovery_analysis"
+            or metadata.get("prompt_origin") == "runtime_oversize_recovery_unit"
+        ):
+            # An explicit [] in a recovery unit is an immutable empty scope,
+            # not permission to reinterpret incidental numbers in the prompt.
             return self._normalize_scope_items(supplied, field="recovery_scope_items")
         scope = self._scope_items_from_text(job.prompt)
         if not scope:
@@ -3824,6 +3830,10 @@ class PromptWorker:
             + unit_limit_instruction
             + "Units must be semantically meaningful, not arbitrary token ranges. "
             "If IMMUTABLE PARENT SCOPE ITEMS are present, EVERY work unit must include scope_items and those items must be a subset of the parent scope. "
+            "scope_items must be a JSON array of positive INTEGER item IDs only, not filenames, folders, drive-letter paths, or UNC paths. "
+            "When the parent scope contains item 1, use scope_items:[1] for that item. "
+            "Folder names, file paths, and UNC paths belong in instruction, not scope_items. "
+            "When no numbered parent scope exists, output scope_items as [] and describe the source paths in instruction. "
             "Never move later workflow into a child: no global selection, final synthesis, or sibling-range work unless it is already inside this parent's own instruction and scope. "
             "When a range is too large, prefer processing the earliest unresolved item or a smaller prefix first; the owning parent can advance its cursor afterward. "
             "Preserve global comparison/selection requirements for the owning parent merge rather than solving them independently in a narrower child."
