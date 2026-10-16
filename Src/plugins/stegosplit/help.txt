@@ -1,0 +1,1 @@
+StegoSplit: bare arbitrary text/file/256-bit credential encoding in TWO PNG shares. Use embed_text / extract_text or embed_file / extract_file; generate_base_image for a <=16-color polygonal everyday object. StegoServe handles company issuance and signed gateway policy. The general V3 codec is not the new 128-formula credential codec.

@@ -376,8 +376,8 @@ class Browser(QMainWindow):
 
     def _native_asset_progress(self,item):
         request=item.get('request')
-        if self._native_asset is item and request and request.receivedBytes()>24*1024*1024:
-            item['state']='failed';item['error']='Chromium asset exceeds 24 MiB'
+        if self._native_asset is item and request and request.receivedBytes()>256*1024*1024:
+            item['state']='failed';item['error']='Chromium asset exceeds 256 MiB'
             request.cancel()
 
     def _native_asset_changed(self,item,state):
@@ -387,7 +387,7 @@ class Browser(QMainWindow):
             try:
                 path=item['folder']/'asset.bin'
                 size=path.stat().st_size
-                if not 0<size<=24*1024*1024:raise ValueError('Empty/oversized asset')
+                if not 0<size<=256*1024*1024:raise ValueError('Empty/oversized asset')
                 item['state']='ready';item['length']=size
             except (OSError,ValueError) as exc:
                 item['state']='failed';item['error']='Chromium download output: '+str(exc)[:130]

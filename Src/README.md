@@ -1,3 +1,5 @@
+**r23 non-image ChatGPT exports:** Capture structured document/file IDs in addition to images; preserve downloaded PDF/ZIP/DOCX/XLSX files in ZIP and alongside PDF; honor 24 MiB image limit and 256 MiB file limit, with explicit missing-file errors for unresolvable `sandbox:` links. See `docs/R23_CHATGPT_FILE_ATTACHMENTS.md`. Source-only; not deployed.
+
 **r22 intermediate-step context:** New N2 steps already start fresh. Bound generic background rehydration on planned steps after the first (8,000 chars), and limit intermediate-step verification to current-step evidence while preserving full Redis/PG history and complete final verification. See `docs/R22_STEP_BOUNDARY_CONTEXT.md`; source-only, not deployed.
 
 **r21 media/export patch:** see `docs/R21_CHATGPT_MEDIA_EXPORT.md`; live Qt verification still required.

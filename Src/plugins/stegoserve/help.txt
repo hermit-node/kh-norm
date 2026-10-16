@@ -1,0 +1,2 @@
+StegoServe: Norm's provisioning/assignment backend. engine_status, profile_info, plan_batch, save_batch_plan, plan_rotation, gateway_preflight. Issue users and rotate company rotor round via local `admin_cli.py` with interactive passwords. Stego AuthGate is a separate standalone network gateway.
+save_gateway_config prepares a listener/blocking-port config, but does not open a port.

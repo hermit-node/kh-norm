@@ -182,6 +182,7 @@ class ExportPanel(QWidget):
            str(result.get('expected_assets'))+
            ' | Missing: '+str(result.get('missing_assets'))+
            '\nImages: '+str(result.get('image_assets_saved'))+' / '+str(result.get('image_assets_expected'))+
+           ' | Other files: '+str(result.get('nonimage_assets_saved',0))+' / '+str(result.get('nonimage_assets_expected',0))+
            (' | INCOMPLETE ASSETS' if result.get('assets_complete') is False else ''))
         self.last_export_path=result.get('path')
         self.open_folder.setEnabled(bool(self.last_export_path))

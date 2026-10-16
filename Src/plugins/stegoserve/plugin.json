@@ -1,0 +1,27 @@
+{
+  "schema_version": 2,
+  "name": "stegoserve",
+  "version": "0.6.0-norm-adapter",
+  "date": "2026-10-14",
+  "entrypoint": "src/main.py",
+  "description": "Norm company/user credential issuing and policy backend for standalone Stego AuthGate v0.6. Bulk issue/rotor rotation through explicit local operator CLI. Does not listen on network or run SSH forwarding.",
+  "capabilities": [
+    "plan user B-image issuance",
+    "persist password-free bulk plans",
+    "inspect up to 16 company formulas drawn from 128 independent compiled profiles",
+    "preflight signed gateway route configuration",
+    "operator-only Ed25519 issuer administration and revocation",
+    "bulk rotor round seed rotation with password-based reissuance"
+  ],
+  "dependencies": [
+    "stegosplit"
+  ],
+  "settings": {
+    "stegoserve": {
+      "enabled": true,
+      "backend_dir": "",
+      "operator_cli_only": true
+    }
+  },
+  "sha256": "6735b139f77b397d6bed333a679d00406736406e0a0755a68e3b0c4149d37b91"
+}

@@ -1,15 +1,15 @@
 {
-  "version": "0.55.10r22",
-  "variant": "Strict-Recovery-No-Celery-Browser-Assets-Step-Boundary",
-  "tag": "v0.55.10r22",
-  "source_archive_sha256": "34ce407123d4fa28dd01c442cbcbdcf86e599f9564923a9f1cee6fcfa6ec4d31",
-  "source_archive": "0.55.10r22--Strict-Recovery-No-Celery-Browser-Assets-Step-Boundary--34ce407123d4.zip",
+  "version": "0.55.10r23",
+  "variant": "Strict-Recovery-No-Celery-Browser-Files",
+  "tag": "v0.55.10r23",
+  "source_archive_sha256": "e04ff608ba34e20315f380f0a227152fd4b42755bae88101cc6248255960864d",
+  "source_archive": "0.55.10r23--Strict-Recovery-No-Celery-Browser-Files--e04ff608ba34.zip",
   "quality": "source-inventory-verified",
   "known_issues": [
-    "Release notes explicitly identify r21 as parent; no standalone r21 ZIP available in searched locations.",
-    "Compared with r20 as the closest available earlier sequential release, not the missing r21."
+    "Direct successor of r22; package notes claim a 256 MiB non-image per-file limit, 24 MiB image guard and 512 MiB total export budget.",
+    "Live signed-in Qt export behavior unverified."
   ],
-  "published_source_files": 375,
+  "published_source_files": 402,
   "omitted_paths": [
     "backups/plugins-ini/plugins-20261014-151017-561326+0000-72956dfad8bb.ini",
     "config/plugins.ini",
@@ -56,31 +56,6 @@
     "plugins/rotor5_cipher/src/_rotor5/__init__.py",
     "plugins/rotor5_cipher/src/_rotor5/core.py",
     "plugins/rotor5_cipher/src/main.py",
-    "plugins/stegoserve/README.md",
-    "plugins/stegoserve/help.txt",
-    "plugins/stegoserve/plugin.json",
-    "plugins/stegoserve/src/__init__.py",
-    "plugins/stegoserve/src/admin_cli.py",
-    "plugins/stegoserve/src/bridge.py",
-    "plugins/stegoserve/src/main.py",
-    "plugins/stegosplit/README.md",
-    "plugins/stegosplit/help.txt",
-    "plugins/stegosplit/plugin.json",
-    "plugins/stegosplit/src/_stegosplit_v3/__init__.py",
-    "plugins/stegosplit/src/_stegosplit_v3/cipher.cp314-win_amd64.pyd",
-    "plugins/stegosplit/src/_stegosplit_v3/compression.cp314-win_amd64.pyd",
-    "plugins/stegosplit/src/_stegosplit_v3/core.cp314-win_amd64.pyd",
-    "plugins/stegosplit/src/_stegosplit_v3/header.cp314-win_amd64.pyd",
-    "plugins/stegosplit/src/_stegosplit_v3/kdf.cp314-win_amd64.pyd",
-    "plugins/stegosplit/src/_stegosplit_v3/mapping.cp314-win_amd64.pyd",
-    "plugins/stegosplit/src/_stegosplit_v3/vector_codec.cp314-win_amd64.pyd",
-    "plugins/stegosplit/src/_stegosplit_v3/vector_lut.cp314-win_amd64.pyd",
-    "plugins/stegosplit/src/main.py",
-    "plugins/stegosplit/src/message_api.cp314-win_amd64.pyd",
-    "plugins/stegosplit/src/paired_credential.cp314-win_amd64.pyd",
-    "plugins/stegosplit/src/paired_identity.cp314-win_amd64.pyd",
-    "plugins/stegosplit/src/polygon_art.py",
-    "plugins/stegosplit/src/public_identity.cp314-win_amd64.pyd",
     "tools/test_stego_two_plugins.py"
   ],
   "sanitized_paths": [
@@ -89,5 +64,5 @@
   ],
   "archive_unchanged_locally": true,
   "source_only_git": true,
-  "stego_policy": "Frozen byte-exact already-public v0.53.20 Stego"
+  "stego_policy": "Shipped compiled Stego v3 and public wrappers, no legacy source"
 }

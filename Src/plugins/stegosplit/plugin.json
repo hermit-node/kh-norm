@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "name": "stegosplit",
+  "version": "0.5.0-norm-adapter",
+  "date": "2026-10-14",
+  "entrypoint": "src/main.py",
+  "description": "Bare StegoSplit: arbitrary encrypted text/file payloads in PNG pairs, 256-bit unlock-pair helpers, seeded <=16-color polygonal base PNG generation. Existing compiled V3 image codec.",
+  "capabilities": [
+    "encode/decode arbitrary text",
+    "encode/decode arbitrary binary files",
+    "inspect and rotate encrypted PNG pairs",
+    "256-bit unlock image pair",
+    "render reproducible flat-polygon base image with <=16 colors"
+  ],
+  "settings": {
+    "stegosplit": {
+      "enabled": true
+    }
+  },
+  "sha256": "3416149bb99c207f93b69d5a9d3643b99a7ce127cbda7d1e3c23f1deeffc59a7"
+}

@@ -182,7 +182,7 @@ def _asset_via_browser_native(url: str, destination: Path) -> int:
         file=Path(str(status.get('path') or '')).resolve()
         if not file.is_relative_to(allowed) or file.name!='asset.bin':
             raise RuntimeError('Native asset returned an invalid temporary location')
-        if not 0<length<=24*1024*1024 or not file.is_file() or file.stat().st_size!=length:
+        if not 0<length<=256*1024*1024 or not file.is_file() or file.stat().st_size!=length:
             raise RuntimeError('Native asset has inconsistent size')
         shutil.copyfile(file,destination)
         return length

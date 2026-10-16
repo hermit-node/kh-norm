@@ -1,6 +1,6 @@
 {
-  "package": "Norm-0.55.10r22-Strict-Recovery-No-Celery-Browser-Assets-Step-Boundary-Portable-Source",
-  "source_baseline": "Norm-0.55.10r21-Strict-Recovery-No-Celery-Browser-Assets-Portable-Source.zip",
+  "package": "Norm-0.55.10r23-Strict-Recovery-No-Celery-Browser-Files-Portable-Source",
+  "source_baseline": "Norm-0.55.10r22-Strict-Recovery-No-Celery-Browser-Assets-Step-Boundary-Portable-Source.zip",
   "files": [
     {
       "file": ".gitattributes",
@@ -24,8 +24,8 @@
     },
     {
       "file": "README.md",
-      "bytes": 36122,
-      "sha256": "bd4e854dbacf432b91b8a0f8b5487b6861b97da9863402b9922bc23883134fd4"
+      "bytes": 36477,
+      "sha256": "0ee1cdbc8c5750ed15a56226c86ec60778c0147744bbd2678751a48df0247d6a"
     },
     {
       "file": "Run-Norm-Terminals.bat",
@@ -39,8 +39,8 @@
     },
     {
       "file": "SOURCE_PACKAGE.md",
-      "bytes": 38958,
-      "sha256": "5fd84ff87d5d15af1c06e71bb02d2d1e714b3b7f8d7f5150902fb27d11d97197"
+      "bytes": 39492,
+      "sha256": "ab03ec9c9c823d7834ce664df2bc4d673403812ef85ebbf6ce7526901a47b4cc"
     },
     {
       "file": "Safe-Shutdown-Norm.bat",
@@ -468,6 +468,11 @@
       "sha256": "78001fa29e4ae6e90e8ee649e21d17cccd5d11ef856def24549e89e04be637d9"
     },
     {
+      "file": "docs/R23_CHATGPT_FILE_ATTACHMENTS.md",
+      "bytes": 3223,
+      "sha256": "8275bee8f35d55c3ddc6c1b2784ae216261afc32bcba4a6532b8a3773a35d601"
+    },
+    {
       "file": "docs/README.md",
       "bytes": 37906,
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
@@ -734,8 +739,8 @@
     },
     {
       "file": "package-manifest.json",
-      "bytes": 41447,
-      "sha256": "90c0070fecd1a7249a0ef1b3976547f3cb65689b7dd30a2a8ba8ea8b83e46f48"
+      "bytes": 41768,
+      "sha256": "c1a27d3b5f34e754e9e059ec6669e153c7a84222255e9b88b1f3ae29ed1467f5"
     },
     {
       "file": "plugins/README.md",
@@ -964,13 +969,13 @@
     },
     {
       "file": "plugins/norm_browser/src/extensions/convo_export/exporter.py",
-      "bytes": 19095,
-      "sha256": "ab1d123fe6843499cf633d39bed02e037d550cd0be417bc731e6a801887d57ad"
+      "bytes": 22671,
+      "sha256": "a662a295081a86437dd7512def8f4beeb53b2e9756d24eb7c63ab50411204946"
     },
     {
       "file": "plugins/norm_browser/src/main.py",
-      "bytes": 12934,
-      "sha256": "47cf0767812ee2d7995a00c015fa032c4dde6a1f9d7f3a8f9e859de2776fc7d1"
+      "bytes": 12935,
+      "sha256": "b219382855daf84e12d90f695104f0c5aa271f3f6b02ae87c4006d4226aa252f"
     },
     {
       "file": "plugins/opencode/README.md",
@@ -1034,8 +1039,8 @@
     },
     {
       "file": "plugins/rotor5_cipher/plugin.json",
-      "bytes": 566,
-      "sha256": "7af6db44055ec73545c9d159444be6981cdc516811f839e0d6b07b249d2e10ac"
+      "bytes": 638,
+      "sha256": "18b5f7b15bd651a57f5da60422b4e514223f3db0a779079cb1a32940cab02a64"
     },
     {
       "file": "plugins/rotor5_cipher/src/_rotor5/__init__.py",
@@ -1579,8 +1584,8 @@
     },
     {
       "file": "tools/shared_browser/app.py",
-      "bytes": 38568,
-      "sha256": "68d15514c33f5915ed7999466615beb38830b5ae4d11b216100ece48526b0992"
+      "bytes": 38571,
+      "sha256": "e60323a0be84b27b02a04522b5bfb1c8b659b86f4fefaa1bcfa011a302407c8f"
     },
     {
       "file": "tools/shared_browser/browser_cooperation.py",
@@ -1589,13 +1594,13 @@
     },
     {
       "file": "tools/shared_browser/browser_ui.py",
-      "bytes": 12608,
-      "sha256": "01d23635f9c68d826717f16a0193945b1018cab4f0bb9b88a81d4293b46daa98"
+      "bytes": 12734,
+      "sha256": "613404343aaa97fb4439c42051097c38c51de3651340b638d0bb9a27bc687a81"
     },
     {
       "file": "tools/shared_browser/conversation_js.py",
-      "bytes": 18969,
-      "sha256": "ac53cfdbf784afe480dedb28a079459dbf2c77abe8aa534e43c0dd0d62b9b897"
+      "bytes": 21380,
+      "sha256": "531e0ea357e4104dd7edde5183fe54c7e321d8ca6d60ba046923bdc7d1e5915f"
     },
     {
       "file": "tools/shared_browser/hybrid_ocr_pdf.py",
@@ -1851,6 +1856,11 @@
       "file": "tools/test_native_boot_visual_r2.py",
       "bytes": 3962,
       "sha256": "6a2bf2ea585feead40630a078f8938f1fb871055586138fa093f4ab6b777ce0d"
+    },
+    {
+      "file": "tools/test_nonimage_export_r23.py",
+      "bytes": 8708,
+      "sha256": "c6744f1000d1c2b61c36d39c6dbf5c31b298b46698163bbf9a54016d75d01571"
     },
     {
       "file": "tools/test_norm_shutdown_r9.py",

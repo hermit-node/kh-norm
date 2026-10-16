@@ -17,7 +17,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
-MAX_ASSET = 24 * 1024 * 1024
+MAX_ASSET = 256 * 1024 * 1024
+MAX_IMAGE_ASSET = 24 * 1024 * 1024
 MAX_TOTAL_ASSETS = 512 * 1024 * 1024
 
 
@@ -51,20 +52,20 @@ def _download(url: str, destination: Path):
     opener = build_opener(_RestrictedRedirect())
     with opener.open(Request(url, headers={'User-Agent': 'NormBrowser/0.1'}), timeout=18) as response:
         if int(response.headers.get('Content-Length') or 0) > MAX_ASSET:
-            raise ValueError('Asset exceeds 24 MiB limit')
+            raise ValueError('Asset exceeds 256 MiB limit')
         total=0
         with destination.open('wb') as output:
             while True:
                 chunk=response.read(min(65536, MAX_ASSET + 1 - total))
                 if not chunk:break
                 total+=len(chunk)
-                if total>MAX_ASSET:raise ValueError('Asset exceeds 24 MiB limit')
+                if total>MAX_ASSET:raise ValueError('Asset exceeds 256 MiB limit')
                 output.write(chunk)
     if total==0:raise ValueError('Zero-byte download')
     return total
 
 
-def _asset_suffix(raw: bytes, mime: str | None, url: str) -> str:
+def _asset_suffix(raw: bytes, mime: str | None, url: str, name: str='') -> str:
     """Name downloaded media from actual bytes rather than image pointer hints."""
     if raw.startswith(b'\xff\xd8\xff'):return '.jpg'
     if raw.startswith(b'\x89PNG\r\n\x1a\n'):return '.png'
@@ -72,11 +73,18 @@ def _asset_suffix(raw: bytes, mime: str | None, url: str) -> str:
     if len(raw)>=12 and raw[:4]==b'RIFF' and raw[8:12]==b'WEBP':return '.webp'
     if raw.startswith(b'%PDF-'):return '.pdf'
     ext=Path(urlsplit(url).path).suffix.lower()
+    named_ext=Path(name).suffix.lower()
     if ext in {'.png','.jpg','.jpeg','.gif','.webp','.svg','.pdf','.txt','.md','.zip',
                '.docx','.xlsx','.csv','.pptx','.json'}:return ext
     guess=mimetypes.guess_extension(str(mime or '').split(';')[0])
     if guess in {'.png','.jpg','.jpeg','.gif','.webp','.svg','.pdf','.txt','.md','.zip',
                '.docx','.xlsx','.csv','.pptx','.json'}:return guess
+    # Signed asset URLs often have no extension, and application/octet-stream
+    # gives no MIME hint. Reuse only a safe extension from ChatGPT's filename.
+    if named_ext in {'.png','.jpg','.jpeg','.gif','.webp','.svg','.pdf','.txt','.md','.zip',
+                     '.docx','.xlsx','.csv','.pptx','.json','.py','.js','.ts','.html',
+                     '.xml','.log','.yaml','.yml','.7z','.tar','.gz','.mp3','.mp4'}:
+        return named_ext
     return '.bin'
 
 
@@ -129,7 +137,7 @@ def _markdown(messages, title, options, manifest):
     return '\n'.join(lines).rstrip()+'\n'
 
 
-def _pdf(messages, title: str, destination: Path, options: dict, asset_dir: Path):
+def _pdf(messages, title: str, destination: Path, options: dict, asset_dir: Path, external_folder: str='assets'):
     try:
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4, letter
@@ -174,7 +182,8 @@ def _pdf(messages, title: str, destination: Path, options: dict, asset_dir: Path
                     except Exception:
                         story.append(Paragraph('[Image saved in assets: '+html.escape(str(local))+']',body))
                 elif local:
-                    story.append(Paragraph('[Attachment: '+html.escape(str(local))+']',body))
+                    referenced=external_folder+'/'+Path(str(local)).name
+                    story.append(Paragraph('[Attachment saved separately: '+html.escape(referenced)+']',body))
                 else:
                     story.append(Paragraph('[Attachment unavailable: '+html.escape(str(asset.get('name') or '?'))+']',body))
     doc.build(story)
@@ -208,6 +217,8 @@ def export_conversation(messages: list[dict], *, root: Path, title: str,
         for m in items for a in m.get('attachments') or []
         if a.get('kind')=='image' or str(a.get('mime') or '').startswith('image/')}
     expected_images=len(expected_image_keys)
+    expected_nonimages=sum(1 for m in items for a in m.get('attachments') or []
+                           if a.get('kind')!='image' and not str(a.get('mime') or '').startswith('image/'))
     manifest={'title':title,'source_url':source_url,'source':source,'complete':bool(complete),
               'selected_count':len(items),'created_at':datetime.now(timezone.utc).isoformat(),
               'format':fmt,'options':options,'missing_assets':[],'saved_assets':[],
@@ -215,8 +226,10 @@ def export_conversation(messages: list[dict], *, root: Path, title: str,
               'duplicate_references_removed':original_references-unique_refs,
               'attachment_resolution':attachment_resolution or {},
               'assets_complete':None,'warnings':[],
-              'image_assets_expected':0,'image_assets_saved':0}
+              'image_assets_expected':0,'image_assets_saved':0,
+              'nonimage_assets_expected':0,'nonimage_assets_saved':0}
     manifest['image_assets_expected']=expected_images if options.get('attachments',True) else 0
+    manifest['nonimage_assets_expected']=expected_nonimages if options.get('attachments',True) else 0
     try:
         seen={};count_bytes=0
         if options.get('attachments',True):
@@ -234,8 +247,11 @@ def export_conversation(messages: list[dict], *, root: Path, title: str,
                     key='id:'+asset_id if asset_id else 'url:'+url
                     if key in seen:
                         a['local_path']=seen[key];continue
-                    suffix=_asset_suffix(b'',a.get('mime'),url)
-                    local=f'assets/{i+1:05d}_{j+1:02d}{suffix}'
+                    suffix=_asset_suffix(b'',a.get('mime'),url,str(a.get('name') or ''))
+                    # Preserve a sanitized original name in non-image exports.
+                    original=Path(str(a.get('name') or 'attachment').replace('\\','/')).name
+                    prefix=_slug(Path(original).stem)[:70] if a.get('kind')!='image' else ''
+                    local=f'assets/{i+1:05d}_{j+1:02d}'+('_'+prefix if prefix else '')+suffix
                     file=temp/local
                     try:
                         if count_bytes>=MAX_TOTAL_ASSETS:raise ValueError('Export asset budget exhausted')
@@ -249,7 +265,7 @@ def export_conversation(messages: list[dict], *, root: Path, title: str,
                             except Exception as browser_error:
                                 raise RuntimeError('Direct fetch: '+str(direct_error)[:100]+
                                                    '; browser fetch: '+str(browser_error)[:110]) from browser_error
-                        if size<=0 or size>MAX_ASSET:raise ValueError('Asset size outside 1–24 MiB range')
+                        if size<=0 or size>MAX_ASSET:raise ValueError('Asset size outside 1–256 MiB range')
                         count_bytes+=size
                         if count_bytes>MAX_TOTAL_ASSETS:raise ValueError('Export asset budget exceeded')
                         with file.open('rb') as probe: signature=probe.read(24)
@@ -264,7 +280,16 @@ def export_conversation(messages: list[dict], *, root: Path, title: str,
                             'svg' in str(a.get('mime') or '').lower()
                         if expected_image and not (image_signature or svg_signature):
                             raise ValueError('Image URL returned bytes without a recognized image signature')
-                        inferred=_asset_suffix(signature,a.get('mime'),url)
+                        # Detect image bytes too: a signed endpoint may label a
+                        # PNG/JPEG as generic application/octet-stream.
+                        if size>MAX_IMAGE_ASSET and (expected_image or image_signature or svg_signature):
+                            raise ValueError('Image exceeds 24 MiB limit')
+                        # For files, reject a sign-in/error HTML document masquerading
+                        # as an attachment. Never call that a successful ZIP/PDF export.
+                        if not expected_image and signature.lstrip().lower().startswith(
+                            (b'<!doctype html',b'<html',b'{"error"',b'{"detail"')):
+                            raise ValueError('Asset endpoint returned an HTML/JSON error, not a file')
+                        inferred=_asset_suffix(signature,a.get('mime'),url,str(a.get('name') or ''))
                         if inferred!=suffix:
                             updated=file.with_suffix(inferred)
                             file.rename(updated);file=updated
@@ -272,6 +297,7 @@ def export_conversation(messages: list[dict], *, root: Path, title: str,
                         a['local_path']=local;seen[key]=local
                         manifest['saved_assets'].append({'path':local,'bytes':size,'id':asset_id,'kind':a.get('kind')})
                         if expected_image:manifest['image_assets_saved']+=1
+                        else:manifest['nonimage_assets_saved']+=1
                     except Exception as exc:
                         file.unlink(missing_ok=True)
                         manifest['missing_assets'].append({'message':i+1,'asset':j+1,
@@ -280,7 +306,7 @@ def export_conversation(messages: list[dict], *, root: Path, title: str,
         manifest['fidelity_complete']=bool(complete) and manifest['assets_complete'] is True
         if manifest['missing_assets']:
             missing=len(manifest['missing_assets'])
-            manifest['warnings'].append(f'{missing} attachment(s) not embedded; text coverage does not imply visual completeness')
+            manifest['warnings'].append(f'{missing} attachment(s) not saved; text coverage does not imply file completeness')
             if options.get('attachments',True) and not allow_incomplete_assets:
                 first=manifest['missing_assets'][0]
                 raise RuntimeError(f'{missing} of {unique_refs} attachments could not be included. '+
@@ -296,8 +322,25 @@ def export_conversation(messages: list[dict], *, root: Path, title: str,
         (temp/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf8')
         if fmt=='pdf':
             path=dest.with_suffix('.pdf')
-            _pdf(items,title,temp/'conversation.pdf',options,asset_dir)
+            # PDF pages can display images, but arbitrary ZIP/DOCX/XLSX bytes
+            # cannot be represented by a paragraph. Keep them as real files.
+            non_images=[a['local_path'] for m in items for a in m.get('attachments') or []
+                        if a.get('kind')!='image' and a.get('local_path')]
+            _pdf(items,title,temp/'conversation.pdf',options,asset_dir,base+'_assets')
             shutil.move(str(temp/'conversation.pdf'),path)
+            if non_images:
+                assets_name=base+'_assets'
+                sidecar=out/assets_name
+                sidecar.mkdir(exist_ok=False)
+                for local in sorted(set(non_images)):
+                    shutil.copy2(temp/local,sidecar/Path(local).name)
+                manifest['pdf_nonimage_sidecar']=assets_name
+                # Sidecar manifest explicitly ties the original file bytes to
+                # their conversational message reference and original filename.
+                (sidecar/'manifest.json').write_text(json.dumps({
+                    'pdf':path.name,'assets':[item for item in manifest['saved_assets']
+                                              if item['path'] in non_images],
+                },indent=2,ensure_ascii=False),encoding='utf8')
         elif fmt=='zip':
             path=dest.with_suffix('.zip')
             with zipfile.ZipFile(path,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=6) as z:
@@ -332,6 +375,9 @@ def export_conversation(messages: list[dict], *, root: Path, title: str,
                 'missing_assets':len(manifest['missing_assets']),
                 'image_assets_expected':manifest['image_assets_expected'],
                 'image_assets_saved':manifest['image_assets_saved'],
+                'nonimage_assets_expected':manifest['nonimage_assets_expected'],
+                'nonimage_assets_saved':manifest['nonimage_assets_saved'],
+                'pdf_nonimage_sidecar':manifest.get('pdf_nonimage_sidecar'),
                 'coverage':'api-selected-branch' if complete else 'partial-unverified'}
     finally:
         shutil.rmtree(temp,ignore_errors=True)

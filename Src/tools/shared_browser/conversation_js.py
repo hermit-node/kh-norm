@@ -23,16 +23,34 @@ START = r'''(() => {
     if (typeof p.content === 'string') return p.content;
     return '';
   };
+  // ChatGPT supplies non-image files through several message shapes, not
+  // exclusively metadata.attachments. Preserve the actual file ID; never
+  // invent a signed URL or assume a sandbox path is locally readable.
+  const fileRef = (value, messageId, defaultKind='file') => {
+    if (!value || typeof value!=='object') return null;
+    const inner=(value.file && typeof value.file==='object')?value.file:value;
+    const id=inner.file_id||value.file_id||inner.asset_pointer||value.asset_pointer||
+      inner.id||value.id||null;
+    const url=inner.download_url||value.download_url||inner.downloadUrl||value.downloadUrl||
+      inner.url||value.url||inner.public_url||value.public_url||null;
+    if (!id && !url) return null;
+    const mime=inner.mime_type||value.mime_type||inner.mime||value.mime||null;
+    return {kind:String(mime||'').startsWith('image/')?'image':defaultKind,
+      name:inner.file_name||value.file_name||inner.filename||value.filename||
+        inner.name||value.name||'attachment',
+      id:id?String(id).replace(/^sediment:\/\//,''):null,
+      url, mime, message_id:messageId};
+  };
   const toMsg = (m,idx,nodeId) => {
     m=m||{};
     const meta=m.metadata||{}, body=m.content||{}, parts=Array.isArray(body.parts)?body.parts:[];
     const attachments=[];
-    for (const a of Array.isArray(meta.attachments)?meta.attachments:[]) {
-      if (!a||typeof a!=='object') continue;
-      attachments.push({kind:(a.mime_type||'').startsWith('image/')?'image':'file',
-        name:a.name||a.file_name||'attachment',id:String(a.id||a.file_id||a.asset_pointer||'').replace(/^sediment:\/\//,'')||null,
-        url:a.download_url||a.downloadUrl||a.url||a.public_url||null,mime:a.mime_type||a.mime||null,
-        message_id:m.id||nodeId||null});
+    const messageId=m.id||nodeId||null;
+    for (const collection of [meta.attachments,meta.files,m.attachments]) {
+      for (const item of Array.isArray(collection)?collection:[]) {
+        const ref=fileRef(item,messageId);
+        if(ref) attachments.push(ref);
+      }
     }
     for (const p of parts) {
       if (p&&typeof p==='object'&&p.content_type==='image_asset_pointer') {
@@ -46,6 +64,11 @@ START = r'''(() => {
             url:image.public_url||image.content_url||image.thumbnail_url||null,mime:'image/*',
             message_id:m.id||nodeId||null});
         }
+      } else if (p&&typeof p==='object'&&(
+          ['file','file_asset_pointer','file_reference','document','uploaded_file','input_file','file_asset'].includes(p.content_type) ||
+          p.file_id || (p.file && typeof p.file==='object'))) {
+        const ref=fileRef(p,messageId);
+        if(ref) attachments.push(ref);
       }
     }
     // ChatGPT commonly lists the same image twice: metadata file_... and
@@ -65,6 +88,21 @@ START = r'''(() => {
     const distinctAttachments=[...canonical.values(),...anonymous];
     let content=parts.map(formatPart).filter(Boolean).join('\n\n');
     if (!content) content=text(body.text)||text(body.content)||text(body.result)||text(body.summary);
+    // Assistant-generated files can appear only as rendered sandbox links.
+    // Record unresolvable references instead of silently claiming completeness.
+    // An actual file ID in metadata takes precedence over the link placeholder.
+    if((m.author||{}).role==='assistant') {
+      const links=/\[([^\]\n]{1,150})\]\((sandbox:\/mnt\/data\/[^)\s]+)\)/g;
+      for(const hit of content.matchAll(links)) {
+        let base=hit[2].split('/').pop().split(/[?#]/)[0];
+        try {base=decodeURIComponent(base)} catch (_) {}
+        if(!/\.[a-zA-Z0-9]{1,8}$/.test(base)) continue;
+        if(distinctAttachments.some(a=>[a.name,a.file_name].includes(base))) continue;
+        distinctAttachments.push({kind:'file',name:base,id:null,url:null,mime:null,
+          message_id:messageId,source:'sandbox-link',
+          resolution_error:'ChatGPT sandbox link has no downloadable file ID in this message'});
+      }
+    }
     return {id:m.id||nodeId||String(idx),role:(m.author||{}).role||'unknown',
       model:meta.model_slug||meta.resolved_model_slug||'',timestamp:m.create_time||null,
       text:content,attachments:distinctAttachments,content_type:body.content_type||'text',position:idx};
@@ -196,11 +234,14 @@ START = r'''(() => {
         if (!groups.has(raw)) groups.set(raw,[]);
         groups.get(raw).push(a);
       }
-      snap.attachmentResolution={expected:groups.size,resolved:0,failed:0,
-        failures:[],references:allAssets.length,limited:groups.size>1500};
+      const unaddressable=allAssets.filter(a=>!a.id&&!a.url);
+      snap.attachmentResolution={expected:groups.size+unaddressable.length,resolved:0,
+        failed:unaddressable.length,failures:unaddressable.slice(0,40).map(a=>({
+          name:a.name||'attachment',reason:a.resolution_error||'No downloadable file URL or ID'})),
+        references:allAssets.length,limited:groups.size>1500};
       const entries=Array.from(groups.entries());
       if(entries.length>1500) {
-        snap.attachmentResolution.failed=entries.length;
+        snap.attachmentResolution.failed+=entries.length;
         snap.attachmentResolution.failures.push({reason:'Attachment safety limit exceeded (1500 distinct IDs)'});
       }
       for (let start=0;start<Math.min(entries.length,1500);start+=3) {
@@ -218,7 +259,7 @@ START = r'''(() => {
               if(messageId) queries.push('message_id='+encodeURIComponent(messageId));
               for (const query of queries) {
                 try {
-                  const info=await getJSON('/backend-api/files/download/'+encodeURIComponent(fileId)+'?'+query,headers);
+                  const info=await getJSON('/backend-api/files/download/'+encodeURIComponent(fileId)+'?'+query+'&inline=false',headers);
                   candidate=info?.download_url||info?.url||info?.downloadUrl||info?.public_url||
                     info?.data?.url||info?.data?.download_url;
                   if(candidate)break;
