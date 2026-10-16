@@ -939,9 +939,15 @@ class PromptWorker:
             else:
                 if hasattr(self.live, "working_memory"):
                     task_memory = self.live.working_memory(job.task_id)
-                if not task_memory.strip() and self.durable and hasattr(self.durable, "completed_step_context"):
+                # Redis working_memory() serializes {task_id, state, events} even
+                # when no progress events exist. Testing that JSON for an empty
+                # string made the durable *completed prior steps* disappear from
+                # almost every normal resume. These are complementary sources:
+                # Redis contains live events; PostgreSQL contains the verified
+                # results of earlier steps. Read the latter independently.
+                if self.durable and hasattr(self.durable, "completed_step_context"):
                     try:
-                        prior = self.durable.completed_step_context(job.task_id, job.step_id, max_chars=None)
+                        prior = self.durable.completed_step_context(job.task_id, job.step_id, max_chars=36000)
                     except psycopg.Error as exc:
                         resource_status = merge_resource_status(
                             resource_status,
@@ -1181,19 +1187,20 @@ class PromptWorker:
 
     @staticmethod
     def _compact_resume_requested(job: PromptJob) -> bool:
-        """Return True when a yielded step should resume from distilled context only.
+        """Compact only when the *latest* handoff supplied a distilled context.
 
-        0.54.2h already persisted distilled headroom checkpoints but did not add
-        ``compact_resume_context``. Its ``last_yield_reason`` and headroom-fraction
-        metadata are accepted as migration markers so an h task parked before an
-        upgrade gets the compact path on its first 0.54.2i resume.
+        A previous context-headroom checkpoint cannot force every subsequent
+        16-round requeue onto the compact path. 0.54.2h jobs are still supported
+        through their last_yield_reason marker. Manual failure resumes retain
+        their explicitly compact snapshot.
         """
         metadata = dict(job.metadata or {})
         if not str(job.context or "").strip():
             return False
-        return bool(metadata.get("compact_resume_context")) or (
-            str(metadata.get("last_yield_reason") or "").strip() == "context_headroom_checkpoint"
-            or "context_checkpoint_remaining_fraction" in metadata
+        reason = str(metadata.get("last_yield_reason") or "").strip()
+        return reason == "context_headroom_checkpoint" or (
+            bool(metadata.get("manual_failure_resume"))
+            and bool(metadata.get("compact_resume_context"))
         )
 
     def _typed_prompt(self, job: PromptJob, request_type: str, *, task_memory: str = "", prior: str = "", background: str = "", resource_status: dict | None = None) -> str:
@@ -1346,6 +1353,8 @@ class PromptWorker:
         return validate_final_candidate(payload)
 
     def _enqueue_final_verification(self, job: PromptJob, answer: str) -> None:
+        if "Full original report:" not in str(answer):
+            answer = self._prepare_final_report(job, answer)
         candidate = self._build_final_candidate(job, answer)
         message_id = str((job.metadata or {}).get("final_verification_node_id") or "")
         if not message_id and self.durable and hasattr(self.durable, "node_uuid"):
@@ -1429,7 +1438,10 @@ class PromptWorker:
             f"VERIFICATION ISSUES:\n{json.dumps(verification.get('issues', []), ensure_ascii=False)}\n\n"
             f"PRIOR COMPLETED TASK STATE/EVIDENCE:\n{prior}"
         )
-        corrected = self._generate_complete_text(prompt, think=False, num_predict=16000, temperature=0.1)
+        try:
+            corrected = self._generate_complete_text(prompt, think=False, num_predict=87400, temperature=0.1, job=job, stage="final-repair")
+        except ModelOutputTruncated:
+            corrected = self._prepare_final_report(job, str(candidate.get("user_reply") or ""), forced=True)
         if not corrected.strip():
             raise VerifierProtocolError("final candidate repair returned blank user_reply")
         return corrected.strip()
@@ -1444,7 +1456,10 @@ class PromptWorker:
             f"AUTHORITATIVE PRIMARY TASK REQUEST (for semantic fidelity only):\n{(job.metadata or {}).get('task_user_prompt') or (job.metadata or {}).get('original_user_prompt','')}\n\n"
             f"SUBMISSION N1 COULD NOT PROCESS:\n{candidate.get('user_reply','')}"
         )
-        corrected = self._generate_complete_text(prompt, think=False, num_predict=16000, temperature=0.0)
+        try:
+            corrected = self._generate_complete_text(prompt, think=False, num_predict=87400, temperature=0.0, job=job, stage="final-reviewability")
+        except ModelOutputTruncated:
+            corrected = self._prepare_final_report(job, str(candidate.get("user_reply") or ""), forced=True)
         if not corrected.strip():
             raise VerifierProtocolError("N1-processing-failure repair returned blank user_reply")
         return corrected.strip()
@@ -2606,6 +2621,7 @@ class PromptWorker:
         try:
             note = str(self.client.generate(prompt, think=True, num_predict=5000, temperature=0.1)).strip()
         except ModelOutputTruncated as exc:
+            self._store_output_overflow(job, "recovery-handoff-note", exc.partial)
             note = str(exc.partial or "").strip()
         if not note:
             note = (
@@ -2656,6 +2672,7 @@ class PromptWorker:
             try:
                 note = str(self.client.generate(prompt, think=True, num_predict=5000, temperature=0.1)).strip()
             except ModelOutputTruncated as exc:
+                self._store_output_overflow_for_ids(child_id, "work", "recovery-child-note", exc.partial)
                 note = str(exc.partial or "").strip()
             if not note:
                 note = content[:2200] + "\n...[raw result archived; middle omitted]...\n" + content[-2200:]
@@ -3087,7 +3104,80 @@ class PromptWorker:
             raise RuntimeError(f"child task {child_id} {status}: {detail}")
         raise RuntimeError(f"child task {child_id} resumed before reaching terminal state: {status}")
 
-    def _generate_complete_text(self, prompt: str, *, think: bool, num_predict: int, temperature: float, max_segments: int = 4, system_context: str = "") -> str:
+    def _store_output_overflow_for_ids(self, task_id: str, step_id: str, stage: str, generated: str) -> str:
+        """Preserve the actual generated text in Redis with readback verification."""
+        from .output_overflow import OverflowStore
+        overflow_cfg = self._runtime_config().get("output_overflow") or {}
+        store = OverflowStore(self.queue.r, ttl_seconds=int(overflow_cfg.get("redis_ttl_seconds", 86400)))
+        receipt = store.save(task_id, step_id, stage, generated)
+        logging.warning("Preserved truncated output task=%s step=%s stage=%s redis=%s chars=%s",
+                        task_id, step_id, stage, receipt.key, receipt.characters)
+        return receipt.handoff
+
+    def _store_output_overflow(self, job: PromptJob, stage: str, generated: str) -> str:
+        """A bounded preview/Redis locator; does not count as a completed answer."""
+        return self._store_output_overflow_for_ids(job.task_id, job.step_id, stage, generated)
+
+    def _prepare_final_report(self, job: PromptJob, answer: str, *, forced: bool = False) -> str:
+        """Archive a long final report; condense a Redis working copy at most 3 times.
+
+        Does not approve/reject N2's answer; normal verification follows.
+        """
+        from .output_overflow import OverflowStore, write_full_report, report_link
+        content = str(answer or "").strip()
+        limit = max(1000, int((self._runtime_config().get("output_overflow") or {}).get("final_reply_max_chars", 16000)))
+        if not content or (not forced and len(content) <= limit):
+            return content
+        root = Path(load_path_settings(self._runtime_root())["state_root"])
+        path = write_full_report(root, job.task_id, job.step_id, content)
+        store = OverflowStore(self.queue.r, ttl_seconds=int((self._runtime_config().get("output_overflow") or {}).get("redis_ttl_seconds", 86400)))
+        receipt = store.save(job.task_id, job.step_id, "original-final-report", content)
+        # Read the actual working copy back from Redis. Never discard the file.
+        original = store.load(receipt.key)
+        best = ""
+        source = original
+        for attempt in range(1, 4):
+            prompt = (
+                "Condense this COMPLETE, already-written user-facing report. Do not research, "
+                "modify files, claim new work, invent results, or omit material caveats. "
+                f"Target at most {limit} characters. This is condensation attempt {attempt}/3. "
+                "Return only a coherent, self-contained Markdown summary, without code fences. "
+                "The complete original will be linked separately.\n\n"
+                "FULL SOURCE OR PRIOR COMPLETE CONDENSATION:\n" + source
+            )
+            try:
+                candidate = self._generate_complete_text(prompt, think=False, num_predict=6000,
+                    temperature=0.0, max_segments=1, job=job, stage=f"final-condense-{attempt}").strip()
+            except ModelOutputTruncated as exc:
+                # An incomplete generated fragment is not an acceptable user summary.
+                logging.warning("Final condensation exceeded output allowance task=%s attempt=%s chars=%s",
+                                job.task_id, attempt, len(exc.partial))
+                continue
+            except ModelContextExceeded:
+                logging.warning("Final condensation context overrun task=%s attempt=%s", job.task_id, attempt)
+                # Work on the shortest COMPLETE prior candidate, never silently
+                # truncate the original report and pretend it is a full copy.
+                if best:
+                    source = best
+                continue
+            if not candidate:
+                continue
+            store.save(job.task_id, job.step_id, f"final-condense-{attempt}", candidate)
+            if not best or len(candidate) < len(best):
+                best = candidate
+            if len(best) <= limit:
+                break
+            source = best
+        # Even when 3 tries cannot meet the target, provide the shortest COMPLETE
+        # attempt plus the untouched original report. The user's real work survives.
+        if not best:
+            best = "The complete report was preserved, but an abbreviated response could not be generated reliably."
+        suffix = f"\n\nFull original report: {report_link(path)}"
+        logging.warning("Archived long final report task=%s chars=%s condensed=%s original=%s",
+                        job.task_id, len(content), len(best), str(path))
+        return best + suffix
+
+    def _generate_complete_text(self, prompt: str, *, think: bool, num_predict: int, temperature: float, max_segments: int = 4, system_context: str = "", job: PromptJob | None = None, stage: str = "text") -> str:
         pieces: list[str] = []
         current = str(prompt)
         for segment in range(1, max_segments + 1):
@@ -3102,8 +3192,12 @@ class PromptWorker:
                 pieces.append(exc.partial)
                 joined = "".join(pieces)
                 logging.warning("Model text output hit length limit segment=%s/%s chars=%s eval_count=%s; continuing", segment, max_segments, len(joined), exc.eval_count)
+                if job is not None:
+                    self._store_output_overflow(job, f"{stage}-segment-{segment}", joined)
                 if segment >= max_segments:
-                    raise
+                    # Raise the COMPLETE accumulated generated portion, not just
+                    # the last segment, so the caller can archive it safely.
+                    raise ModelOutputTruncated(joined, exc.eval_count) from exc
                 current = (
                     "Continue an incomplete response. Do not restart, summarize, or repeat already-completed material. "
                     "Continue exactly from the cutoff and finish every remaining requirement. Return only the continuation.\n\n"
@@ -3164,11 +3258,21 @@ class PromptWorker:
                     think=bool(metadata.get("think", False)),
                     num_predict=int(metadata.get("num_predict") or 16000),
                     temperature=float(metadata.get("temperature", 0.2)),
-                    system_context=voice_instructions,
+                    system_context=voice_instructions, job=job, stage="n2-no-tools",
                 )
+            except ModelOutputTruncated as exc:
+                receipt = self._store_output_overflow(job, "n2-no-tools-output", exc.partial)
+                self._checkpoint_yield(redis_id, job, name, started, {
+                    "yielded": True, "checkpoint": "MODEL OUTPUT LIMIT: incomplete generation.\n" + receipt,
+                    "reason": "output_length_checkpoint", "step_rounds": 0,
+                    "task_rounds": self.queue.task_rounds(job.task_id), "evidence": [],
+                })
+                return None
             except ModelContextExceeded as exc:
                 self._yield_context_overflow(redis_id, job, name, started, exc)
                 return None
+            if normalize_request_type(job.request_type) == "conclusion" or (job.metadata or {}).get("is_final_candidate"):
+                answer = self._prepare_final_report(job, answer)
             return self._verify_and_correct_without_tools(job, prompt, answer, system_context=voice_instructions)
 
         historical_evidence = self.live.task_evidence(job.task_id) if hasattr(self.live, "task_evidence") else []
@@ -3184,6 +3288,8 @@ class PromptWorker:
             return None
         answer = str(outcome["answer"])
         evidence = list(historical_evidence) + local_evidence
+        if normalize_request_type(job.request_type) == "conclusion" or (job.metadata or {}).get("is_final_candidate"):
+            answer = self._prepare_final_report(job, answer, forced=False)
         return self._verify_and_correct(job, prompt, answer, evidence, tools, redis_id, name, started)
 
     @staticmethod
@@ -3503,14 +3609,22 @@ class PromptWorker:
             )
         )
         metadata = job.metadata or {}
-        # Only a real operator request receives the Ollama `user` role. Planned
-        # steps, reviews, N1 corrections, and injected control flow remain
-        # system-origin instructions, even when they quote the user's text.
+        request_type = normalize_request_type(job.request_type)
+        # Only a *direct* operator turn receives Ollama's `user` role. A planned
+        # step/child already carries the original user request for semantic
+        # reference inside the typed system payload. Repeating that old request
+        # as the latest user-role message at every fresh slice causes an N2
+        # continuation to restart the whole task instead of obeying its step.
         original_user_prompt = str(metadata.get("original_user_prompt") or "").strip()
-        if not original_user_prompt and job.request_type == "prompt" and str(metadata.get("prompt_origin") or "user_prompt") in {"user_prompt", "prompt_interface", "gui_prompt", "ssh_prompt"}:
+        direct_user_turn = (
+            request_type == "prompt"
+            and str(metadata.get("prompt_origin") or "user_prompt")
+            in {"user_prompt", "prompt_interface", "gui_prompt", "ssh_prompt"}
+        )
+        if not original_user_prompt and direct_user_turn:
             original_user_prompt = str(job.prompt or "").strip()
         messages: list[dict] = [{"role": "system", "content": ""}]
-        if original_user_prompt:
+        if direct_user_turn and original_user_prompt:
             messages.append({"role": "user", "content": original_user_prompt})
         pending_verification: dict[str, str] = {}
         evidence: list[dict] = []
@@ -3526,7 +3640,7 @@ class PromptWorker:
         metadata = job.metadata or {}
         request_type = normalize_request_type(job.request_type)
         long_form = request_type == "conclusion" or bool(metadata.get("is_final_candidate")) or bool(re.search(r"\bexactly\s+\d+\b", prompt, re.I))
-        output_budget = int(metadata.get("num_predict") or (27000 if long_form else 16000))
+        output_budget = int(metadata.get("num_predict") or (74000 if long_form else 38000))
         chunk_manager = ChunkedEvidenceManager(self._runtime_config().get("context_budget") or {})
         restored_streams = chunk_manager.restore_streams((metadata.get("chunked_evidence_streams") or {}))
         if restored_streams:
@@ -3568,8 +3682,11 @@ class PromptWorker:
                 gate_instructions,
                 self._active_voice_instructions(),
                 "[NORM INTERNAL TASK/STEP INSTRUCTION — NOT USER-AUTHORED]\n"
-                "The genuine user request is the separate user-role message, if present. "
-                "Do not claim internal follow-up instructions or reviews were said by the user.\n"
+                "A separate user-role message, if present, is a direct operator turn. "
+                "For planned steps and recovery children, the original user request "
+                "in the typed work payload is REFERENCE ONLY; the active step, its "
+                "verification requirement, and its continuation govern WHAT TO DO NOW. "
+                "Do not restart the parent task or claim internal follow-up instructions were said by the user.\n"
                 + prompt,
                 live_injection,
             ]
@@ -3603,6 +3720,19 @@ class PromptWorker:
                 )
             if content:
                 last_content = content
+            if done_reason == "length" and calls:
+                # Truncated tool-call JSON is not an executable plan. Checkpoint
+                # the actual generated payload; do not fire incomplete calls.
+                partial_call_text = json.dumps({"content": content, "tool_calls": calls}, ensure_ascii=False)
+                pointer = self._store_output_overflow(job, "n2-truncated-tool-proposal", partial_call_text)
+                evidence.extend(self._verify_pending(job, pending_verification, tools))
+                return {
+                    "yielded": True,
+                    "checkpoint": "OUTPUT LIMIT WITH UNEXECUTED TOOL PROPOSAL\n" + pointer,
+                    "reason": "output_length_checkpoint",
+                    "step_rounds": step_rounds, "task_rounds": task_rounds,
+                    "evidence": evidence,
+                }
             if not calls and turn_reset.startswith("The Bird says No."):
                 # A sensitive-value probe can end as prose instead of another tool
                 # call. Give N1's opaque redirect back to N2 rather than accepting
@@ -3633,6 +3763,8 @@ class PromptWorker:
                             item_start=item_start,
                             item_end=item_end,
                         )
+                        checkpoint += "\n\n" + self._store_output_overflow(job, "n2-output-segment", current_segment)
+                        job.metadata = dict(job.metadata or {}, output_length_seen=True)
                         logging.warning(
                             "Model answer hit length limit task=%s step=%s eval_count=%s; saved PostgreSQL segment=%s and yielding to queue",
                             job.task_id, job.step_id, response.get("eval_count"), segment_index,
@@ -3651,6 +3783,7 @@ class PromptWorker:
                         }
 
                     compact_thinking = self._compact_thinking_for_resume(job, thinking, thinking_index)
+                    thinking_ref = self._store_output_overflow(job, "n2-thinking-segment", thinking)
                     checkpoint = (
                         "DURABLE THINKING CHECKPOINT\n"
                         f"Original goal: {job.prompt}\n"
@@ -3658,7 +3791,7 @@ class PromptWorker:
                         "Its raw unfinished thinking WAS saved in PostgreSQL norm_runtime.task_thinking_segments "
                         f"(task_id={job.task_id}, step_id={job.step_id}, thinking_index={thinking_index}). "
                         "Resume from the compact working note below, not from the bulky raw thinking. Keep normal reasoning enabled and do not repeat already-explored work.\n\n"
-                        f"COMPACT WORKING NOTE:\n{compact_thinking}"
+                        f"COMPACT WORKING NOTE:\n{compact_thinking}\n\n{thinking_ref}"
                     )
                     logging.warning(
                         "Model reached length limit before answer task=%s step=%s eval_count=%s; yielding to queue with thinking still enabled",
@@ -4437,6 +4570,7 @@ class PromptWorker:
                 num_predict=12000,
                 temperature=0.1,
                 system_context=system_context,
+                job=job, stage="no-tools-verifier-correction",
             )
             answer = corrected.strip() or answer
         raise VerifierProtocolError("skeptical verifier rejected the result after three correction cycles")
@@ -4623,6 +4757,12 @@ class PromptWorker:
         metadata = dict(job.metadata or {})
         if resume_metadata:
             metadata.update(resume_metadata)
+        if reason != "context_headroom_checkpoint":
+            # A distilled checkpoint is valid for exactly its next resume. At a
+            # later ordinary step-round/length yield we have a NEW checkpoint;
+            # don't carry a stale compact-only instruction into that new slice.
+            metadata.pop("compact_resume_context", None)
+            metadata.pop("context_checkpoint_remaining_fraction", None)
         if reason in {"output_length_checkpoint", "reasoning_output_limit", "input_context_limit"} and metadata.get("allow_oversize_recovery", True) is not False:
             cycle = int(metadata.get("oversize_recovery_cycle", 0)) + 1
             worker_cfg = self._runtime_config().get("worker", {})

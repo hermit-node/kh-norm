@@ -1,3 +1,13 @@
+> **0.55.8 r5 source-only:** Updated tool-enabled N2 budgets (38k/74k), final repair (87,400), and Redis/Markdown output-overflow fallback. N2 without tools stays at 16k. See `docs/RELEASE_NOTES.md`. This ZIP is not a rebuilt Windows executable.
+
+### 0.55.8 continuity r4 — protect task handoffs (2026-10-09; source-only)
+
+- **Verified earlier steps:** Load PostgreSQL `completed_step_context()` independently of the Redis `working_memory()` JSON envelope. Limit injected PostgreSQL prior-step text to 36,000 characters; preserve the full durable records.
+- **Non-sticky compaction:** A context-headroom distilled checkpoint is used for its immediate resumed slice; the next ordinary yield clears stale compact-only metadata. Legacy headroom markers and explicit manual-failure compact resumes are still supported.
+- **Step scope:** Only direct operator prompt jobs send the original prompt in Ollama's user role. Generated steps, reviewer work, and recovery children retain the original user request inside the typed system work payload for semantic fidelity, without presenting a four-hour-old request as a new user command on every requeue. The current step/verification/continuation is explicitly authoritative for immediate execution.
+- No changes to tool schemas, batching limits, plugin or slash-command wiring, model selection, installer, private code, or database schema. This branch is **not** installed or live-validated. It is built upon the separate 0.55.8 continuity r3 source patch.
+- Regression tests: `tools/test_continuity_handoff_0558_r4.py` and extended provenance-role tests.
+
 ### 0.55.8 continuity/supervision update (2026-10-09; source-only, not live-validated)
 
 - Ordinary 16-round step yields now use the existing PostgreSQL context-slice archive and N1 compact continuation handoff, preserving the previous cumulative checkpoint and negative findings across successive slices. The original task stays authoritative and raw execution remains recoverable.

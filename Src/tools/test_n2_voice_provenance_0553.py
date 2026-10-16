@@ -137,15 +137,31 @@ def test_n2_task_and_review_roles_preserve_original_user_provenance():
         assert reviewed["answer"] == first["answer"]
     first_messages, review_messages = worker.client.calls
     for messages in (first_messages, review_messages):
-        assert [msg["role"] for msg in messages] == ["system", "user"]
-        assert messages[1]["content"] == "How's your mother?"
+        # Planned steps and reviews keep original user words as typed reference
+        # data, not as a fresh imperative user-role turn that restarts the task.
+        assert [msg["role"] for msg in messages] == ["system"]
+        assert "REFERENCE ONLY" in messages[0]["content"]
         assert "COCKNEY IN BOTH THINKING AND ANSWER" in messages[0]["content"]
         assert "TOOLS:" in messages[0]["content"]
-        assert "Do not claim internal follow-up instructions" in messages[0]["content"]
+        assert "Do not restart the parent task" in messages[0]["content"]
     assert "INTERNAL STEP: decide" in first_messages[0]["content"]
     assert "Do one quick completion review" in review_messages[0]["content"]
     assert "NOT A NEW USER REQUEST" in review_messages[0]["content"]
-    assert "Do one quick completion review" not in review_messages[1]["content"]
+    assert not any(m["role"] == "user" for m in review_messages)
+    with patch.object(PromptWorker, "_runtime_config", return_value={}):
+        assert worker._typed_prompt(job, "information_retrieval").count("How's your mother?") >= 1
+
+
+def test_direct_operator_prompt_keeps_actual_user_role():
+    worker, job, patches = make_worker()
+    job.request_type = "prompt"
+    job.prompt = "How's your mother?"
+    job.metadata["prompt_origin"] = "user_prompt"
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+        result = worker._run_tool_slice(job, worker._typed_prompt(job, "prompt"), Tools())
+    assert result["answer"] == "Ain't got one, mate."
+    assert [m["role"] for m in worker.client.calls[0]] == ["system", "user"]
+    assert worker.client.calls[0][1]["content"] == "How's your mother?"
 
 
 def test_retired_injection_removed_from_subsequent_n2_round():

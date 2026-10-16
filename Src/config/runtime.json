@@ -64,12 +64,12 @@
         "timeout_seconds": 720
       },
       "step_review": {
-      "num_predict": 6000,
-      "think": true,
-      "temperature": 0.0,
-      "timeout_seconds": 300
-    },
-    "final_review": {
+        "num_predict": 6000,
+        "think": true,
+        "temperature": 0.0,
+        "timeout_seconds": 300
+      },
+      "final_review": {
         "num_predict": 7500,
         "think": true,
         "temperature": 0.0,
@@ -298,5 +298,9 @@
     "For PDF/document study where exact wording, names, dates, columns, or classification matters, prefer the first-party vision_parse plugin over blind OCR/text conversion. Treat extracted PDF text as a draft when it conflicts with the rendered page; verify visually, normalize only what the page supports, and never fabricate regex typo variants merely to compensate for encoding/OCR corruption.",
     "When a genuinely reusable procedural lesson emerges from a correction, failure/recovery, or successful strategy, use the built-in lesson_model plugin to create a candidate and ask the operator whether to tag it as a lesson. Candidate creation is never approval: call approve_lesson only after explicit user/operator approval. Keep mutable facts and project/version facts in normal evidence or code memory rather than model-training lessons.",
     "For substantial source ZIP/project study, prefer lesson_model code memory when the operator wants durable understanding: retain a verified wholesale source snapshot without altering the original, inspect bounded source chunks sequentially, save dense structured project memory to PostgreSQL, keep the human README separate, and generate the interactive topology artifact when relationship/call/data-flow structure is useful. Mark uncertain or inferred architecture as such rather than presenting it as static fact."
-  ]
+  ],
+  "output_overflow": {
+    "final_reply_max_chars": 16000,
+    "redis_ttl_seconds": 86400
+  }
 }

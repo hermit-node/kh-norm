@@ -1,3 +1,5 @@
+> **0.55.8 r5 source-only:** Updated tool-enabled N2 budgets (38k/74k), final repair (87,400), and Redis/Markdown output-overflow fallback. N2 without tools stays at 16k. See `docs/RELEASE_NOTES.md`. This ZIP is not a rebuilt Windows executable.
+
 ### 0.55.8 continuity/supervision update (2026-10-09; source-only, not live-validated)
 
 - Ordinary 16-round step yields now use the existing PostgreSQL context-slice archive and N1 compact continuation handoff, preserving the previous cumulative checkpoint and negative findings across successive slices. The original task stays authoritative and raw execution remains recoverable.
@@ -75,6 +77,10 @@
 ## Norm 0.55.4 clean compiled portable source
 
 Compatible with Norm Installer 1.6.12, Windows Python 3.14 x64. Norm core is portable Python source that the installer compiles into norm.exe. Proprietary StegoSplit internals are precompiled native .pyd modules, accessed through readable plugin src/main.py adapters. StegoSplit Auth reuses Message's native V3 modules instead of duplicating them. Each plugin includes a developer README.md and a user-facing help.txt available with /help stegosplit-message, /help stegosplit-auth or /help stegosplit-key. Master and credential images are NEVER distributed in this package. Filename-derived passwords and hidden PNG file selection are convenience/obscurity only. Native SSH or a network-facing authentication endpoint are NOT provided.
+
+## 0.55.8 continuity r4 hotfix — source-only, not installed
+
+Builds upon the separately prepared 0.55.8 continuity r3 portable-source archive. Repairs three N2 context routing problems in `core/norm_runtime/prompt_worker.py`: independent bounded PostgreSQL prior-step retrieval even when Redis returns its standard JSON envelope; clearing stale compact-only metadata on non-headroom yields; and treating original user text as a reference inside generated step/recovery system instructions rather than repeating it as a fresh user-role request. Direct operator prompts continue to use the user role. No changes to plugin binaries or interfaces. Offline focused tests pass; not validated with live Ollama/Redis/PostgreSQL or Windows installer.
 
 # Norm 0.55.4 — Compiled StegoSplit portable-source package
 

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Any
 
-from .ollama_client import OllamaClient
+from .ollama_client import ModelOutputTruncated, OllamaClient
 from .secret_redaction import redact
 from .voice_profile_context import load_active_voice_context
 from .invocation_source import invocation_header
@@ -446,6 +446,21 @@ class N1Gatekeeper:
                 self._final_reviews[decision] += 1
             logging.info("N1 final review decision=%s candidate_chars=%s reason=%s", decision, len(candidate), reason[:500])
             return {"decision": decision, "reason": reason, "retry_instruction": instruction, "processing_failed": False}
+        except ModelOutputTruncated as exc:
+            # No verdict exists if N1's structured JSON was cut off. Retain the
+            # generated prefix for inspection; never reinterpret it as ACCEPT.
+            try:
+                from .output_overflow import OverflowStore
+                if not hasattr(self.live, "client"):
+                    raise RuntimeError("N1 live Redis client is unavailable")
+                marker = hashlib.sha256(request.encode("utf-8")).hexdigest()[:16]
+                receipt = OverflowStore(self.live.client).save(marker, "n1-final", "review-truncated", exc.partial)
+                logging.warning("N1 final review output truncated; saved Redis key=%s", receipt.key)
+            except Exception:
+                logging.exception("Could not preserve N1 truncated review output")
+            with self._lock:
+                self._final_reviews["processing_failed"] += 1
+            return {"decision": "retry", "reason": "N1 final review response truncated before a valid verdict", "retry_instruction": "", "processing_failed": True}
         except Exception as exc:
             with self._lock:
                 self._final_reviews["processing_failed"] += 1
