@@ -1,3 +1,7 @@
+# Norm 0.55.8r10c - verified reference/assignment separation
+
+TaskPlan preserves verbatim user origin separately from child assignments. N2 executes only the active step and N1 checks current evidence against the original constraints without restarting completed work.
+
 # Norm 0.55.8r10b - active-step-first portable source
 
 All internal N1/N2 handoffs preserve the original user request for constraints and provenance. N2 executes only the current assigned step and preserves completed work; N1 checks that step against evidence and original-user intent without reissuing the root task.

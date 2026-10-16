@@ -38,6 +38,7 @@ class TaskPlan:
     created_at: datetime = field(default_factory=utc_now)
     task_uuid: str = field(default_factory=lambda: str(uuid.uuid4()))
     original_request: str = ""
+    original_user_prompt: str = ""
     source_prompt_id: str = ""
     source_user_message_id: str = ""
     ingrained_detail_count: int = 0
@@ -51,7 +52,7 @@ class TaskPlan:
             "title": self.title,
             "created_at": self.created_at.isoformat(),
             "original_request": self.original_request,
-            "original_user_prompt": self.original_request,
+            "original_user_prompt": self.original_user_prompt,
             "source_prompt_id": self.source_prompt_id,
             "source_user_message_id": self.source_user_message_id,
             "ingrained_detail_count": int(self.ingrained_detail_count or 0),

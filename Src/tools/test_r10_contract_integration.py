@@ -87,6 +87,19 @@ class R10Contracts(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"Conflicting original user prompts"):
             queue._job_to_fields(job)
 
+    def test_child_task_plan_does_not_mislabel_scoped_assignment(self):
+        from norm_runtime.models import TaskPlan,TaskStep
+        plan=TaskPlan(task_id="child",title="Analysis child",
+            steps=(TaskStep("work","Inspect","Inspect existing files"),),
+            original_request="Inspect existing files",
+            original_user_prompt="Build the full user PDF.")
+        data=plan.as_dict()
+        self.assertEqual(data["original_request"],"Inspect existing files")
+        self.assertEqual(data["original_user_prompt"],"Build the full user PDF.")
+        old=TaskPlan(task_id="legacy",title="Old",steps=(),
+                     original_request="Legacy scoped assignment").as_dict()
+        self.assertEqual(old["original_user_prompt"],"")
+
     def test_step_seven_does_not_reissue_original_prompt(self):
         job=self._job({
             "original_user_prompt":"Make an entire document and all seven components.",

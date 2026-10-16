@@ -2167,7 +2167,7 @@ class PromptWorker:
         plan = TaskPlan(
             task_id=child_id, title="Recovery attempt concluding from " + job.task_id,
             task_uuid=str(uuid.uuid5(uuid.NAMESPACE_URL, child_id + ":task")),
-            steps=steps, original_request=original,
+            steps=steps, original_request=original, original_user_prompt=original,
             source_prompt_id=str((job.metadata or {}).get("source_prompt_id") or ""),
             source_user_message_id=str((job.metadata or {}).get("original_user_message_id") or ""),
         )
@@ -2683,7 +2683,7 @@ class PromptWorker:
         task_user_prompt = str((job.metadata or {}).get("task_user_prompt") or original_user_prompt).strip()
         plan = TaskPlan(
             task_id=child_id, title=f"Child decomposition for {job.task_id}/{job.step_id}", steps=tuple(steps),
-            original_request=task_user_prompt, source_prompt_id=str((job.metadata or {}).get("source_prompt_id") or ""),
+            original_request=task_user_prompt, original_user_prompt=original_user_prompt, source_prompt_id=str((job.metadata or {}).get("source_prompt_id") or ""),
             source_user_message_id=str((job.metadata or {}).get("original_user_message_id") or ""),
             ingrained_detail_count=int((job.metadata or {}).get("ingrained_detail_count") or 0),
             ingrained_task_context=tuple((job.metadata or {}).get("ingrained_task_context") or []),
@@ -2767,7 +2767,7 @@ class PromptWorker:
         original_user_prompt = self._ensure_original_user_prompt(parent_job)
         task_user_prompt = str((parent_job.metadata or {}).get("task_user_prompt") or original_user_prompt).strip()
         plan = TaskPlan(
-            task_id=child_id, title=title, steps=steps, original_request=task_user_prompt,
+            task_id=child_id, title=title, steps=steps, original_request=task_user_prompt, original_user_prompt=original_user_prompt,
             source_prompt_id=str((parent_job.metadata or {}).get("source_prompt_id") or ""),
             source_user_message_id=str((parent_job.metadata or {}).get("original_user_message_id") or ""),
             ingrained_detail_count=int((parent_job.metadata or {}).get("ingrained_detail_count") or 0),

@@ -1,3 +1,20 @@
+## Norm 0.55.8r10c - explicit TaskPlan user origin (2026-10-10)
+
+- Finalizes active-step-first JSON and chat handoffs from r10b.
+- Fixes child TaskPlan serialization: original_request can contain the scoped
+  child objective, while original_user_prompt must contain the verbatim root
+  user-authored prompt. Never falsely label the child's instruction as the user
+  origin, and never infer missing original intent from a generated instruction.
+- TaskPlan remains an existing frozen dataclass. Root, recovery and child
+  constructors set the separate original_user_prompt attribute; old dataclass
+  constructors remain compatible but missing originals require durable recovery
+  before execution.
+- N1 checks current assigned work, its supporting evidence, and constraints in
+  the originating user request. Original constraints prevail over contradictory
+  generated step wording; the original is not a fresh task at step 7/7.
+- The live C:\Norm installation is untouched. Python regression tests pass,
+  but actual model/tool execution and installer deployment are not smoke-tested.
+
 ## Norm 0.55.8r10b - active-step-first handoffs (2026-10-10)
 
 - Fixes N2 executing the original user's root prompt again during later steps

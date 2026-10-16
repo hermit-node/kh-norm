@@ -1,6 +1,6 @@
-# Norm 0.55.8r10b
+# Norm 0.55.8r10c
 
-Original archive SHA-256: 5afa4fad86c3e6a4a0fd6be9a1b76388bfa7cd18fd748892f881ed6ad3a904fe
+Original archive SHA-256: 8069ab5cf78e5f6e45c46742318c2b1064b154f9f22fb0bea8ebf64129803523
 
 Historical assessment: bad web_browser SHA; use r10d
 
