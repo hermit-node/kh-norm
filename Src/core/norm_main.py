@@ -1397,9 +1397,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="norm")
     parser.add_argument("--check", action="store_true", help="Verify Ollama, Redis, and PostgreSQL, then exit")
     parser.add_argument("--version", action="store_true", help="Print Norm project/version metadata, then exit")
+    parser.add_argument("--self-test-celery", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--console", action="store_true", help="Open the interactive Rich console")
     parser.add_argument("--service", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.self_test_celery:
+        from norm_runtime.async_n1_delivery import N1AsyncBridge
+        from norm_runtime.n1_gatekeeper import GateOutcome
+        if not callable(N1AsyncBridge) or not callable(GateOutcome):
+            raise RuntimeError("N1 direct tool transport validation failed")
+        print(json.dumps({"ok":True,"frozen_celery":False,
+                          "celery_enabled":False,"transport":"direct-n1-gated"}))
+        return 0
     root = norm_root()
     path_cfg = load_path_settings(root)
     if args.version:

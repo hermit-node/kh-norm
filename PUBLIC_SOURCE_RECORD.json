@@ -1,16 +1,18 @@
 {
-  "version": "0.55.10r18",
-  "variant": "No-Celery",
-  "tag": "v0.55.10r18",
-  "source_archive_sha256": "1b6a389fad01b0a09545a63a3d6c7cba2387e9271af2b996a4fbe19f2c085a9d",
-  "source_archive": "0.55.10r18--No-Celery--1b6a389fad01.zip",
+  "version": "0.55.10r19",
+  "variant": "Strict-Recovery-No-Celery",
+  "tag": "v0.55.10r19",
+  "source_archive_sha256": "a9c2a56a1040c1f0d8820ef3fd7c07bc0ed942c79281f42e54c13b233d6b280f",
+  "source_archive": "0.55.10r19--Strict-Recovery-No-Celery--a9c2a56a1040.zip",
   "quality": "source-inventory-verified",
   "known_issues": [
-    "Its predecessor no-Celery ZIP lacked config/settings.ini; the installer-valid normalized package restores it from its own bundled example, with Celery disabled.",
-    "Normalized from 0.55.10r11r7-no-celery; old ZIP and mapping retained in the installer kit."
+    "Normalized from 0.55.10r11r8-strict-recovery-no-celery; old ZIP and mapping retained in the installer kit."
   ],
-  "published_source_files": 351,
+  "published_source_files": 367,
   "omitted_paths": [
+    "backups/plugins-ini/plugins-20261014-151017-561326+0000-72956dfad8bb.ini",
+    "config/plugins.ini",
+    "config/settings.ini",
     "docs/STEGO_TWO_PLUGIN_INTEGRATION.md",
     "legacy_stegosplit_plugins_r8/original_plugins.ini",
     "legacy_stegosplit_plugins_r8/stegosplit_auth/help.txt",
@@ -78,8 +80,7 @@
     "plugins/stegosplit/src/paired_identity.cp314-win_amd64.pyd",
     "plugins/stegosplit/src/polygon_art.py",
     "plugins/stegosplit/src/public_identity.cp314-win_amd64.pyd",
-    "tools/test_stego_two_plugins.py",
-    "config/settings.ini"
+    "tools/test_stego_two_plugins.py"
   ],
   "sanitized_paths": [
     "core/norm_main.py",

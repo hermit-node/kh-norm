@@ -1,6 +1,6 @@
-# r11r7 source candidate — Celery retired
+# r11r8 installer-ready source candidate — Celery retired
 
-Based on the installed 0.55.10r11r6 workspace-stability source (not the inaccessible Library archive).
+Based on 0.55.10r11r7 Strict Recovery IDs portable ZIP, preserving its recovery changes and bundled launcher.
 No source or runtime files in C:\Norm were modified by this build.
 
 - Removed Celery worker launcher, broker executor and package dependency.
@@ -10,5 +10,5 @@ No source or runtime files in C:\Norm were modified by this build.
 - One-time process-identity-scoped cleanup of legacy Norm workers occurs at new-service startup.
 - The diagnostic label 'Ollama n2-worker' existed in 0.54.0c before Celery and is not taken as evidence of a changed reasoning role.
 - No live Windows/Redis/Ollama/PostgreSQL behavioral smoke test has been performed.
-- Source-only candidate: compile a fresh norm.exe; do not reuse the Celery-enabled executable.
-- Existing local config and user plugins must be preserved during installation; live credentials are excluded from this source candidate.
+- Installer 1.6.12 validates the supplied lightweight launcher and legacy --self-test-celery alias (direct transport; no Celery import).
+- Installer preserves existing local config and user plugins; source ZIP retains the original distributable package resources.

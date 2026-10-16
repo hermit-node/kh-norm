@@ -1,6 +1,6 @@
 {
-  "package": "Norm-0.55.10r11r7-No-Celery-Portable-Source",
-  "source_baseline": "Installed 0.55.10r11r6",
+  "package": "Norm-0.55.10r11r8-Strict-Recovery-No-Celery-Portable-Source",
+  "source_baseline": "0.55.10r11r7 Strict Recovery IDs source ZIP",
   "files": [
     {
       "file": ".gitattributes",
@@ -18,14 +18,34 @@
       "sha256": "e5bffb24c733b1e297d3a0d3e742b050a16899ed71f97ff94210d5971c9c3bfb"
     },
     {
+      "file": "backups/plugins-ini/plugins-20261014-151017-561326+0000-72956dfad8bb.ini",
+      "bytes": 1665,
+      "sha256": "72956dfad8bbdde0dd631bb19ab6ed3b7c1caafed990de0df0df552955a5037b"
+    },
+    {
+      "file": "config/plugins.ini",
+      "bytes": 1762,
+      "sha256": "ca13ca4d9f1be47b02ecb9f206f407c81d040b37dd59ac523698cb5708264c7a"
+    },
+    {
+      "file": "config/runtime.json",
+      "bytes": 16843,
+      "sha256": "deb77778116cbc9c635e628b45d3d4d134772aacbfafcb4d980a402ae0a8a6c6"
+    },
+    {
       "file": "config/settings.example.ini",
       "bytes": 2952,
       "sha256": "34c0c073df6e1b5a9985875f0f8297474611035a22567fc3dc621e9bda4b5cdc"
     },
     {
+      "file": "config/settings.ini",
+      "bytes": 3496,
+      "sha256": "25e8cc3e8119868d56dd25423d33f6e653f414c82bc7b75a1c3a2dca88702809"
+    },
+    {
       "file": "core/norm_main.py",
-      "bytes": 70187,
-      "sha256": "607b17d2e4419ff8cc80494e4136f48a6f0d8835981e06e68dee3fc1e15ec37c"
+      "bytes": 70736,
+      "sha256": "7e047613ac211892b042e942ae2495313122e39cbb7786642ed9568a756f7b7c"
     },
     {
       "file": "core/norm_runtime/__init__.py",
@@ -398,9 +418,14 @@
       "sha256": "3f2d9c67ab82e1ba8a35f3755f94c7348f323a17e69d56d9165b9059d35a9829"
     },
     {
-      "file": "docs/R11R7_NO_CELERY_VALIDATION.md",
-      "bytes": 1118,
-      "sha256": "29b39228731e3c4b8ded29f73c21fa303199b394de21913a2c053486886b3cfd"
+      "file": "docs/R11R7_STRICT_SCOPE_IDS.md",
+      "bytes": 928,
+      "sha256": "ac910d01d036a66c3461a2c67025e1cb45662a640f8bc496352a1e424acf0418"
+    },
+    {
+      "file": "docs/R11R8_NO_CELERY_INSTALLER_VALIDATION.md",
+      "bytes": 1172,
+      "sha256": "aa1df1336fc963539ce96e0390b86cf963114cc8d4ec1dcfef21ef7f2e8320d2"
     },
     {
       "file": "docs/README.md",
@@ -618,9 +643,54 @@
       "sha256": "e774f5ea91a76af90b32d07d967a17a1e2741a3e99c67ee944536cb548e6a432"
     },
     {
+      "file": "norm-ssh.ps1",
+      "bytes": 8195,
+      "sha256": "8c1215750298c25c88d5db35ed26e5d23ecf1b727ec7ad01ced442dbf96e6bb2"
+    },
+    {
+      "file": "objects/__init__.py",
+      "bytes": 1097,
+      "sha256": "c896034b69fa44aefc45a54a37620514072f4f858362523782257f69ff794e97"
+    },
+    {
+      "file": "objects/_base.py",
+      "bytes": 2398,
+      "sha256": "a26833056ee7d434b5e9a8030f031e698a0bc9655dda06f4e3a2cec3577fb38e"
+    },
+    {
+      "file": "objects/evidence.py",
+      "bytes": 1745,
+      "sha256": "391d3d0fcbeabdc6adde1c2f388ab13598fe13781104d31de47c8874ab5424a0"
+    },
+    {
+      "file": "objects/README.md",
+      "bytes": 6512,
+      "sha256": "21cfa8dd0fffdbebe3b1c82ed4899258985f7792c040f283399335a8bec90f76"
+    },
+    {
+      "file": "objects/recovery.py",
+      "bytes": 5988,
+      "sha256": "85ebe1d906b28eb02ba8c7a19b07767c96d2f1b1e75ec66ba96522ac54d250e8"
+    },
+    {
+      "file": "objects/review.py",
+      "bytes": 5776,
+      "sha256": "6fc6960c88d33169e50e1ef810d67292f1a5b6f634838f41624311227cbbe7d7"
+    },
+    {
+      "file": "objects/task.py",
+      "bytes": 3220,
+      "sha256": "4b4ca3c4a866d09e508ccac33836dfe6cdc3bf4a51448394bf8a6657da02c541"
+    },
+    {
+      "file": "objects/test_contracts.py",
+      "bytes": 5853,
+      "sha256": "814cf6e096ac167f56bbb47c98287818949ec13c65843574b3a733698c91f982"
+    },
+    {
       "file": "package-manifest.json",
-      "bytes": 39559,
-      "sha256": "413aeeec8c41b2791ecdc2d388ddbe4d08232cf7fd553405f5adcfb78f6e5a84"
+      "bytes": 39591,
+      "sha256": "3b56921f6fba5348918989773f2bae7929f64e899800b85538c75e2c61dc2545"
     },
     {
       "file": "plugins/backup/help.txt",
@@ -1284,8 +1354,18 @@
     },
     {
       "file": "SOURCE_PACKAGE.md",
-      "bytes": 37207,
-      "sha256": "aa8682182bb5c943fcfc40f2103e5d61415bbc130ce7b568375e15b478424be1"
+      "bytes": 37326,
+      "sha256": "7ca0576f67d7bd2532633136a3ba2bb0e0e624614d72dd103c5abed753b979d2"
+    },
+    {
+      "file": "tools/7zip/7z.dll",
+      "bytes": 1906688,
+      "sha256": "65e4c1f855f9ef6e8f0f5df8e3f27d9eb5f07311408639da0a1ca0b8f4871b0d"
+    },
+    {
+      "file": "tools/7zip/7z.exe",
+      "bytes": 577536,
+      "sha256": "6ee3c0ed0b27663c1b948ae85a7c0bb073aed1498983182f3f0df1f6a8c30b2f"
     },
     {
       "file": "tools/7zip/License.txt",
@@ -1341,6 +1421,11 @@
       "file": "tools/launcher/build_launcher.py",
       "bytes": 1095,
       "sha256": "0afdd4bdfc98ee89e82b322cea2d0ef06c4299cf667e4d1d5642b1c4e3d819f8"
+    },
+    {
+      "file": "tools/launcher/norm.exe",
+      "bytes": 8192,
+      "sha256": "39024d3c832ae33e0cbebd89c3fc6306f17e677b4c0fe301eb54c5baab41436e"
     },
     {
       "file": "tools/launcher/norm.exe.sha256",
@@ -1838,6 +1923,11 @@
       "sha256": "d7ce87d425bd453706c46eacd313d1ebdd026fc53eabd755d936eb5173a233ec"
     },
     {
+      "file": "tools/test_r11r7_strict_scope.py",
+      "bytes": 2445,
+      "sha256": "1c579ea4478881b3853fb9bf115be1f453274a453650bc7da7dc80187c0bd483"
+    },
+    {
       "file": "tools/test_recovery_failure_r11.py",
       "bytes": 5130,
       "sha256": "d774eb6238274347e16c1ec53054c12071bc9b06eb71592bb66578bb1f5700c2"
@@ -2041,6 +2131,11 @@
       "file": "tools/workspace/native/NormWorkspace.cpp",
       "bytes": 39763,
       "sha256": "eea7564aca8096d97ecde502f2df41c7253c0792221224c2e51b01dfd675aae5"
+    },
+    {
+      "file": "tools/workspace/native/NormWorkspace.exe",
+      "bytes": 382976,
+      "sha256": "09acc48e02d68cb57372c54952bc6dab8a9483c07208ca61de7c66e64ad38d3f"
     },
     {
       "file": "tools/workspace/native/NormWorkspace.json",
