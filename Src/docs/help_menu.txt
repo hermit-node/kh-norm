@@ -4,6 +4,7 @@ Norm console — quick reference
 /help plugins            List installed plugins with a help.txt manual
 /help voice-profiler     Voice training, selection, and inspection commands
 /help vision-parse       PDF/image OCR and selective-vision commands
+/help lesson-model       Lessons, source-code memory, README and topology tools
 
 /queue [N]               Queue snapshot
 /queue-full              Full queue and parked records

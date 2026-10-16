@@ -1,3 +1,9 @@
+## 0.54.3 — 2026-10-08 — Lesson/code-memory plugin integration candidate
+
+- Added built-in schema-2 `lesson_model` v0.3.0a1 with explicit operator approval for reusable lessons; candidate creation alone never approves a lesson. Training and automatic `norm:latest` promotion remain disabled.
+- Added wholesale SHA-verified source-ZIP retention, bounded runtime-priority code walking, PostgreSQL raw project/version memory, separate human README generation, and canonical CodeGraph + standalone interactive topology output. Original input ZIPs remain untouched.
+- Added `/help lesson-model`, plugin settings, package-manifest registration, and runtime guidance for lesson/code-memory use.
+
 ## 0.54.3 — 2026-10-08 — Direct PDF/image reader slash controls (source patch)
 
 - Added direct Norm Prompt `/vision-parse`, `/vision-read`, `/vision-text`, `/vision-force`, `/vision-recheck`, and `/vision-status` operator commands; PDF/image reads bypass the queued N2 tasks and use existing verified `vision_parse` plugin code.

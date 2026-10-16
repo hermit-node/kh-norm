@@ -2,6 +2,11 @@
 
 Current package: **Norm 0.54.3** portable source; source-packaged installer baseline **2.0.0** (not rebuilt).
 
+### Lesson/code-memory plugin integration (0.54.3 source candidate)
+
+- Built-in schema-2 `lesson_model` v0.3.0a1 captures reusable lesson candidates but requires explicit operator approval before a lesson becomes approved/training-eligible. Training and `norm:latest` promotion remain disabled pending a reviewed LoRA/QLoRA backend and regression gate.
+- Source ZIP study can retain a verified wholesale content-addressed archive, walk bounded code chunks sequentially, persist dense structured project/version memory in PostgreSQL, write a separate human README, and emit a standalone interactive topology map from a canonical CodeGraph representation. The original user source ZIP is never moved, renamed, or deleted.
+
 ### Structured conclusion reporting (0.54.3)
 
 - Built-in Nabler v0.2.0 supplies a one-call, data-only native reporting tool for verified checklist/table rows. N2 prefers it for suitable multi-item conclusions, but a rendered PASS is not evidence of executing a check.
@@ -151,7 +156,7 @@ It does not target generic Python processes.
 
 ## Plugins
 
-Package-managed first-party plugins: backup, file_read, postgres_pool, rotor5_cipher, soft_delete, stegosplit_key, stegosplit_message, verbatim_lines, and voice_profile. Public/optional plugins `vision_parse`, `web_browser`, `jan`, `vane`, and `opencode` use install-if-missing semantics: an existing plugin directory is operator-owned and is not overwritten by normal updates.
+Package-managed first-party plugins: backup, file_read, lesson_model, postgres_pool, rotor5_cipher, soft_delete, stegosplit_key, stegosplit_message, verbatim_lines, voice_profile, codex_reasoner, and nabler. Public/optional plugins `vision_parse`, `web_browser`, `jan`, `vane`, and `opencode` use install-if-missing semantics: an existing plugin directory is operator-owned and is not overwritten by normal updates.
 
 Schema-2 package plugins use plugin.json, README.md, and src\ with deterministic source-tree identity.
 

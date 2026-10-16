@@ -83,7 +83,8 @@
     "plugins/postgres_pool",
     "plugins/voice_profile",
     "plugins/codex_reasoner",
-    "plugins/nabler"
+    "plugins/nabler",
+    "plugins/lesson_model"
   ],
   "built_in_plugins": {
     "backup": "plugins/backup",
@@ -96,7 +97,8 @@
     "postgres_pool": "plugins/postgres_pool",
     "voice_profile": "plugins/voice_profile",
     "codex_reasoner": "plugins/codex_reasoner",
-    "nabler": "plugins/nabler"
+    "nabler": "plugins/nabler",
+    "lesson_model": "plugins/lesson_model"
   },
   "canonical_prompt_ingress": {
     "redis_db": 3,
@@ -213,9 +215,9 @@
     "plugins": {
       "plugins/vision_parse": {
         "name": "vision_parse",
-        "version": "0.2.2",
+        "version": "0.3.0",
         "entrypoint": "src/main.py",
-        "sha256": "ece586f8c5794c05800027c6f9ec41edc717584e969fb0712b17e3221838d424"
+        "sha256": "f67a17564401f972ee78e6a8730df4a010aa0a7796e78b69deb53d284feac331"
       },
       "plugins/web_browser": {
         "name": "Norm Web Browser",
@@ -437,5 +439,18 @@
     "hard_limit": 384,
     "judge": "N1 grants each additional bounded lease only for genuine forward progress rather than raw tool/activity volume",
     "manual_recovery": "At the granted/hard boundary a resumable failure checkpoint is retained for /failed and /resume-failed; /flush-failed distills a reusable lesson before purging detailed failed-task state."
+  },
+  "lesson_model": {
+    "plugin": "plugins/lesson_model",
+    "version": "0.3.0a1",
+    "mode": "operator-reviewed lessons + versioned code memory + topology",
+    "training_backend": "not configured; training and auto-promotion disabled",
+    "state_root": "state/lesson_model",
+    "source_retention": "content-addressed wholesale ZIP copy; original input is never deleted",
+    "postgres_table": "configured runtime schema.code_memory_snapshots",
+    "human_outputs": [
+      "README.md",
+      "standalone interactive topology HTML"
+    ]
   }
 }
