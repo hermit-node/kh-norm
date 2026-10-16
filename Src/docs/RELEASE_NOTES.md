@@ -1,3 +1,28 @@
+## Norm 0.55.9r6 ? tool-result evidence and emergency suppression
+
+- Plugin return values are authoritative structured tool results. N1 and N2
+  receive fields from the nested payload, not empty stdout/stderr; old
+  nested evidence is still understood. Plugin-level ok=false remains failure.
+- N2 invokes plugins during normal user tasks instead of reading plugin
+  implementation files to infer output contracts. Source debugging remains
+  appropriate when explicitly requested by the user.
+- /suppress-task now immediately cancels active Ollama generation after
+  committing durable PostgreSQL suppression and before optional cleanup.
+  It preserves the existing task working artifacts and stream/crash buffer,
+  writes state/suppressed-sos/TASK_ID/SOS.md, and does not queue recovery.
+- Suppression now also takes precedence at budget/verifier failure
+  boundaries and at the pathological failure handoff boundary.
+- The existing no-argument /suppress-task behavior is retained.
+- /help shows docs/help_full.txt directly in both operator consoles.
+  Plugin-specific help remains accessible through /help plugins.
+- r5 selective /flush-failed INDEX|TASK_ID and lightweight 8KB .NET launcher
+  remain included. The installer still validates loose Python source and
+  Celery before promoting the prebuilt launcher.
+- Test coverage: plugin result handoff, emergency stop ordering and SOS,
+  legacy suppression, 12 additional source regression scripts.
+- Source-package preparation did NOT overwrite a running C:\\Norm install,
+  alter PostgreSQL rows, delete Redis keys, or trigger live suppression.
+
 ## Norm 0.55.9r5 — selective failure cleanup and lightweight launcher
 
 - /flush-failed <index|task_id|unique_prefix> targets exactly one failed

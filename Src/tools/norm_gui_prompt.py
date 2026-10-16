@@ -873,12 +873,12 @@ def main() -> int:
                         print("Use /resume-task maintenance to resume the parked maintenance run.")
                 submit_resume_command(ep, dispatcher, text)
                 continue
-            elif lowered == "/suppress-task":
+            elif lowered in {"/suppress-task", "/suppress-task now"}:
                 retry_guard_ids = dispatcher.active_prompt_ids()
                 try:
                     result = post_json(
                         ep["suppress_task"],
-                        payload={"reason": "Operator requested /suppress-task from Norm GUI."},
+                        payload={"reason": "Operator requested /suppress-task from Norm GUI.", "immediate": lowered.endswith(" now")},
                         timeout=5,
                     )
                 except Exception as exc:
@@ -886,7 +886,7 @@ def main() -> int:
                     continue
                 if result.get("suppressed"):
                     dispatcher.suppress_prompt_retries(retry_guard_ids)
-                    print(f"Suppressed: {result.get('title') or result.get('task_id')}.")
+                    print(f"Suppressed{' immediately' if lowered.endswith(' now') else ''}: {result.get('title') or result.get('task_id')}.")
                 else:
                     print(f"Nothing suppressed: {result.get('reason') or result.get('task_status') or 'no eligible task'}.")
                 continue
@@ -971,7 +971,7 @@ def main() -> int:
             if text.lstrip().startswith("/"):
                 command = text.lstrip().split(maxsplit=1)[0]
                 if command.lower() == "/suppress-task":
-                    print("Usage: /suppress-task (no arguments; suppresses the active or next task)")
+                    print("Usage: /suppress-task [now] (now interrupts generation and retains SOS)")
                 else:
                     print(f"{command} not recognized, or arguments not supported. Type /help. Nothing queued.")
                 continue

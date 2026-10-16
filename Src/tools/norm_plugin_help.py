@@ -26,7 +26,7 @@ def plugin_help_files(root: Path) -> dict[str, Path]:
 def get_help(root: Path, topic: str = "") -> str:
     topic = "-".join(str(topic or "").strip().lower().split()).replace("_", "-")
     if not topic:
-        path = Path(root) / "docs" / "help_menu.txt"
+        path = Path(root) / "docs" / "help_full.txt"
         try:
             return path.read_text(encoding="utf-8-sig").rstrip()
         except OSError as exc:

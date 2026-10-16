@@ -1,16 +1,19 @@
-# Norm 0.55.9r5 ? loose-source 8KB executable and selective failure cleanup
+# Norm 0.55.9r6 ? authoritative plugin results and immediate suppression
 
-Norm keeps N1/N2 authority, existing plug-ins, Redis state, and its Python
-source files. core/norm.exe becomes a prebuilt 8KB .NET launcher that starts
-the existing .venv's Python interpreter to run core/norm_main.py.
-It contains no Python code. The installer verifies the launcher and tests
-Celery as a source-mode import before promoting the candidate.
+Retains r5's prebuilt launcher, source-mode Celery test, selective failed-task
+flush, folder-aware trash, and read-only desktop GUI.
 
-Use /failed to identify failed tasks, then /flush-failed INDEX or TASK_ID
-to clean up just one failure. Bare /flush-failed retains legacy bulk behavior.
-Historical folder trash/orphans, GUI controls, and quiet Celery workers from
-r4 remain present; no runnable task is reset by the installer build process.
+Plugin return values (including screenshot metadata) are authoritative.
+N1 gets structured evidence, N2 invokes tools rather than guessing or
+reading plugin source for normal user requests.
 
+/suppress-task now marks PostgreSQL suppressed and cancels active model
+generation without waiting for a model checkpoint, preserving the streamed
+crash buffer and existing task artifacts. A task-specific SOS.md lives at
+state/suppressed-sos/TASK_ID/SOS.md. Automatic recovery is prohibited.
+/help now displays docs/help_full.txt in both consoles.
+
+No running C:\Norm installation was modified to prepare this ZIP.
 # Norm 0.55.9r4 - integrated reversible folder trash and quiet workers
 
 This build preserves N1 verification-pool/tool authorization, N2 reasoning

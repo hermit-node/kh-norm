@@ -370,3 +370,15 @@ fail before promotion if the binary/source validation fails.
 The original final-conclusion recovery, N1 authorization, N2 workflow and
 Redis Celery DB4 transport are not modified by the launcher transition.
 Single-task /flush-failed must not invalidate unrelated memory/snapshots.
+
+## 0.55.9r6 release gates
+PluginManager envelope.stdout is diagnostic; envelope.result is authoritative
+data. N1 verifier evidence must retain structured tool values including
+filenames, image dimensions, byte counts, hash values, and actual parameters.
+Normal N2 plugin use is invoke -> inspect result, not investigate source.
+
+Operator emergency suppression must not wait for a model checkpoint. Preserve
+available PostgreSQL-streamed material and existing artifacts; write an SOS
+per task and keep status suppressed (no automatic recovery descendant).
+The default /suppress-task remains backward compatible. Both consoles
+display docs/help_full.txt through plain /help, not help_menu.txt.

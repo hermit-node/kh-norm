@@ -1,7 +1,9 @@
 Norm commands
 
 help or /help
-  Show this file.
+  Show this complete operator reference.
+/help plugins
+  List installed plugin manuals; /help PLUGIN opens one.
 
 Model
   /switch-model
@@ -45,6 +47,11 @@ Threads / input
 
 Task control
   /suppress-task
+      Suppress the active or next task using existing behavior.
+  /suppress-task now
+      Immediately cancel active Ollama generation; preserve PostgreSQL
+      suppression snapshot, existing stream buffer and task-specific SOS.md
+      in state/suppressed-sos. Do not dispatch automatic recovery.
       Park the active task tree, oldest queued task tree, or active scheduled maintenance when no user task is ahead of it.
   /resume-task [N]
       List suppressed user tasks, or resume an index/task-id/prefix directly.

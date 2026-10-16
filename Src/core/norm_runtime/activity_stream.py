@@ -79,7 +79,7 @@ def _activity_app(
     shutdown_ollama: Callable[[], dict] | None,
     shutdown_norm: Callable[[bool], dict] | None,
     stop_all: Callable[[bool], dict] | None,
-    suppress_task: Callable[[str | None, str], dict] | None,
+    suppress_task: Callable[[str | None, str, bool], dict] | None,
     resume_maintenance: Callable[[], dict] | None,
     flush_suppressed: Callable[[], dict] | None,
     failed_tasks: Callable[[int], dict] | None,
@@ -250,7 +250,7 @@ def _activity_app(
                     if suppress_task is None:
                         return web.json_response({"error": "suppress-task control unavailable"}, status=503)
                     result = await _call(
-                        suppress_task, payload.get("task_id"), str(payload.get("reason") or "")
+                        suppress_task, payload.get("task_id"), str(payload.get("reason") or ""), bool(payload.get("immediate", False))
                     )
                     return web.json_response(result, status=200 if result.get("status") == "ok" else 409)
                 if path == "/control/resume-maintenance":
@@ -368,7 +368,7 @@ def start_activity_server(
     shutdown_ollama: Callable[[], dict] | None = None,
     shutdown_norm: Callable[[bool], dict] | None = None,
     stop_all: Callable[[bool], dict] | None = None,
-    suppress_task: Callable[[str | None, str], dict] | None = None,
+    suppress_task: Callable[[str | None, str, bool], dict] | None = None,
     resume_maintenance: Callable[[], dict] | None = None,
     flush_suppressed: Callable[[], dict] | None = None,
     failed_tasks: Callable[[int], dict] | None = None,

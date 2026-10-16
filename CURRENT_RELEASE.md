@@ -1,6 +1,6 @@
-# Norm 0.55.9r5 - discovered-source
+# Norm 0.55.9r6 - discovered-source
 
-Original archive SHA-256: d2c44662edba5895a79c38154d6ff03054600dc4acc07b7431799c54c1ac6996
+Original archive SHA-256: 73789165717f3970d747b377a11ba7c50ace84e28f2c9b99277c33d0c4e38f09
 
 Historical assessment: unverified
 
@@ -8,6 +8,6 @@ Omitted private paths: config/plugins.ini, config/settings.ini, plugins/rotor5_c
 
 Sanitized paths: core/norm_main.py, core/norm_runtime/aiohttp_host.py
 
-Historical caveats: 
+Historical caveats: Install-smoke source tree differs from packaged ZIP core.
 
 Public source snapshot is not identical to the original ZIP or guaranteed installable.

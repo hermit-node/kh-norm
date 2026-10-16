@@ -236,8 +236,8 @@ class NormConsole:
         except Exception as exc:
             self.console.print(f"[red]Could not stop all: {exc}[/]")
 
-    def _suppress_task(self) -> None:
-        req = request.Request(self.suppress_task_url, data=json.dumps({"reason": "Operator requested /suppress-task from Norm console."}).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
+    def _suppress_task(self, immediate: bool = False) -> None:
+        req = request.Request(self.suppress_task_url, data=json.dumps({"reason": "Operator requested /suppress-task from Norm console.", "immediate": immediate}).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
         try:
             with request.urlopen(req, timeout=5) as response:
                 result = json.loads(response.read().decode("utf-8"))
@@ -470,7 +470,7 @@ class NormConsole:
 
     def _show_help(self) -> None:
         runtime_root = Path(os.environ.get("NORM_RUNTIME_ROOT") or Path(__file__).resolve().parents[2]).resolve()
-        path = runtime_root / "docs" / "help_menu.txt"
+        path = runtime_root / "docs" / "help_full.txt"
         try:
             self.console.print(path.read_text(encoding="utf-8").rstrip(), markup=False)
         except Exception as exc:
@@ -521,8 +521,8 @@ class NormConsole:
             self.console.print("[yellow]Norm is checkpointing the current generation and stopping everything now.[/]")
             self._stop_all(immediate=True)
             return False
-        elif parts == ["/suppress-task"]:
-            threading.Thread(target=self._suppress_task, daemon=True).start()
+        elif parts in (["/suppress-task"], ["/suppress-task", "now"]):
+            threading.Thread(target=self._suppress_task, args=(parts == ["/suppress-task", "now"],), daemon=True).start()
         elif parts == ["/resume-task", "maintenance"]:
             threading.Thread(target=self._resume_maintenance, daemon=True).start()
         elif parts == ["/flush-suppressed"]:

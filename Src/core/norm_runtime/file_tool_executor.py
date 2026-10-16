@@ -366,13 +366,17 @@ class FileToolExecutor:
                 method = getattr(self, f"_{name}")
                 result = method(arguments)
             elif self.plugin_manager is not None and self.plugin_manager.has_tool(name):
-                result = self.plugin_manager.execute(name, arguments)
-                payload = result.get("result")
-                if isinstance(payload, dict) and payload.get("file_mutation"):
-                    result.update({key: payload.get(key) for key in ("path", "sha256", "file_mutation")})
+                envelope = self.plugin_manager.execute(name, arguments)
+                payload = envelope.get("result")
+                result = dict(payload) if isinstance(payload, dict) else {"value": payload}
+                if str(envelope.get("stderr") or "").strip():
+                    result["plugin_stderr"] = str(envelope["stderr"])[:4000]
+                if str(envelope.get("stdout") or "").strip():
+                    result["plugin_stdout"] = str(envelope["stdout"])[:4000]
             else:
                 raise ValueError(f"unsupported tool: {name}; deletion is not available")
-            result.update({"ok": True, "tool": name})
+            result.setdefault("ok", True)
+            result["tool"] = name
         except TaskStorageLimitReached as exc:
             result = {
                 "ok": False,

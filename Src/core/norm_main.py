@@ -840,11 +840,11 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         logging.info("Stop-all requested mode=%s", mode)
         return {"status": "ok", "mode": mode}
 
-    def request_suppress_task(task_id: str | None, reason: str) -> dict:
+    def request_suppress_task(task_id: str | None, reason: str, immediate: bool = False) -> dict:
         worker_obj = resources.get("worker")
         if worker_obj is None:
             return {"status": "unavailable", "suppressed": False, "reason": "worker is still initializing"}
-        result = worker_obj.request_suppress_task(task_id=task_id, reason=reason)
+        result = worker_obj.request_suppress_task(task_id=task_id, reason=reason, immediate=immediate)
         if bool(result.get("suppressed")) or str(task_id or "").strip():
             return result
         if not str(result.get("reason") or "").startswith("no active or queued task"):

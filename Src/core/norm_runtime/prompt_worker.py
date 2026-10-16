@@ -89,6 +89,7 @@ class PromptWorker:
         self._state_lock = Lock()
         self._active_task_id = ""
         self._suppress_requested: set[str] = set()
+        self._suppress_now_requested: set[str] = set()
         self._maintenance_suppress_requested = Event()
         self._manual_memory_condense_mode = ""
         self.deferred_append_planner = deferred_append_planner
@@ -240,6 +241,11 @@ class PromptWorker:
     def _clear_suppression_request(self, task_id: str) -> None:
         with self._state_lock:
             self._suppress_requested.discard(task_id)
+            self._suppress_now_requested.discard(task_id)
+
+    def _suppression_now_requested(self, task_id: str) -> bool:
+        with self._state_lock:
+            return task_id in self._suppress_now_requested
 
     def _weekly_maintenance_marker(self) -> tuple[object, str, dict | None]:
         maint_cfg = self._runtime_config().get("maintenance", {})
@@ -411,7 +417,7 @@ class PromptWorker:
             "runs_when": "worker_idle",
         }
 
-    def request_suppress_task(self, task_id: str | None = None, reason: str = "") -> dict:
+    def request_suppress_task(self, task_id: str | None = None, reason: str = "", *, immediate: bool = False) -> dict:
         explicit = bool(str(task_id or "").strip())
         seed = str(task_id or "").strip() or self.active_task_id() or str(self.queue.oldest_task_id() or "")
         if not seed:
@@ -469,6 +475,8 @@ class PromptWorker:
             # truth, but this marker closes the race where /flush-suppressed can
             # delete durable rows while an Ollama cancellation is still unwinding.
             self._suppress_requested.update(member_ids)
+            if immediate:
+                self._suppress_now_requested.update(member_ids)
         try:
             if self.durable and hasattr(self.durable, "suppress_task_tree"):
                 snapshot = self.durable.suppress_task_tree(target, member_ids, reason, payload)
@@ -476,10 +484,17 @@ class PromptWorker:
                 snapshot = self.durable.suppress_task(target, reason, payload)
             else:
                 snapshot = {"task_id": target}
-            # Soft-delete only explicitly ephemeral+reproducible task-created assets.
-            # Suppression is conservative because resume may need review/durable intermediates.
-            for member_id in member_ids:
-                self._soft_delete_task_assets(member_id, suppressed=True)
+            # Emergency mode cancels generation as soon as durable suppression
+            # is committed, BEFORE optional cleanup. Never wait for a model
+            # checkpoint or verifier turn.
+            active = self.active_task_id()
+            if immediate and active in member_ids:
+                OllamaClient.cancel_active()
+            # A forced suppression preserves all existing task assets, even
+            # temporary ones, for forensic inspection/manual resume.
+            if not immediate:
+                for member_id in member_ids:
+                    self._soft_delete_task_assets(member_id, suppressed=True)
             # PostgreSQL now owns the complete durable resume snapshot. Once that
             # transaction succeeds, live Redis copies are redundant and must be removed
             # so the worker can advance immediately to unrelated queued work. Resume
@@ -490,10 +505,10 @@ class PromptWorker:
                 for key in queue_cleanup:
                     queue_cleanup[key] += int(cleaned.get(key) or 0)
             active = self.active_task_id()
-            if active in member_ids:
+            if not immediate and active in member_ids:
                 OllamaClient.cancel_active()
             return {
-                "status": "ok", "suppressed": True, "task_id": target,
+                "status": "ok", "suppressed": True, "immediate": immediate, "task_id": target,
                 "title": snapshot.get("title", ""), "suppressed_task_ids": member_ids,
                 "queue_cleanup": queue_cleanup,
             }
@@ -1070,12 +1085,18 @@ class PromptWorker:
                 self._handle_cancelled(redis_id, job, name, started, str(exc))
             return
         except TaskRoundBudgetExceeded as exc:
+            if self._task_suppressed(job.task_id):
+                self._handle_suppressed(redis_id, job, reason="Suppressed at task-round budget boundary.")
+                return
             self._handle_pathological_failure(
                 redis_id, job, name, started, "task-round-budget", str(exc),
                 resume_checkpoint=getattr(exc, "checkpoint", ""),
             )
             return
         except VerifierProtocolError as exc:
+            if self._task_suppressed(job.task_id):
+                self._handle_suppressed(redis_id, job, reason="Suppressed at verifier boundary.")
+                return
             self._handle_pathological_failure(redis_id, job, name, started, "verifier", str(exc))
             return
         except Exception as exc:
@@ -1135,12 +1156,46 @@ class PromptWorker:
             heartbeat_stop.set()
             heartbeat.join(timeout=1)
 
+    def _write_suppression_sos(self, job: PromptJob, reason: str) -> Path:
+        """Keep a per-task SOS without overwriting unrelated task crash notes."""
+        import re
+        safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", str(job.task_id))[:150]
+        directory = self._runtime_root() / "state" / "suppressed-sos" / safe_id
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / "SOS.md"
+        content = (
+            "# Norm emergency suppression\n\n"
+            + f"Task ID: {job.task_id}\n"
+            + f"Step ID: {job.step_id}\n"
+            + f"Recorded: {_utc_now().isoformat()}\n"
+            + f"Reason: {str(reason)[:1000]}\n\n"
+            + "State: suppressed by operator; automatic recovery prohibited.\n"
+            + "PostgreSQL task suppression snapshot and streamed crash fragments "
+              "retain the available work at interruption.\n"
+            + "No uncompleted output is represented as verified or complete.\n"
+        )
+        with path.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+        if self.durable and hasattr(self.durable, "record_maintenance_note"):
+            self.durable.record_maintenance_note(
+                "suppression", "Emergency task stop recorded; no recovery queued.",
+                task_id=job.task_id, details={"step_id":job.step_id,"sos_path":str(path)},
+            )
+        return path
+
     def _handle_suppressed(self, redis_id: str, job: PromptJob, reason: str) -> None:
         status = self.durable.task_status(job.task_id) if self.durable else None
         if self.durable and status is not None and status != "suppressed":
             payload = self.queue.snapshot_task_jobs(job.task_id)
             self.durable.suppress_task(job.task_id, reason or "Suppressed by operator.", payload)
-        self._soft_delete_task_assets(job.task_id, suppressed=True)
+        emergency = self._suppression_now_requested(job.task_id)
+        if emergency:
+            try:
+                self._write_suppression_sos(job, reason)
+            except Exception:
+                logging.exception("Could not persist immediate-suppression SOS task=%s", job.task_id)
+        else:
+            self._soft_delete_task_assets(job.task_id, suppressed=True)
         # The suppression payload is the durable resume source. Remove all live
         # copies for this task so a cancelled active model call cannot leave queue
         # debris that shadows unrelated work.
@@ -2252,6 +2307,10 @@ class PromptWorker:
         self, redis_id: str, job: PromptJob, name: str, started, stage: str, error: str,
         *, resume_checkpoint: str = "",
     ) -> None:
+        # A suppression arriving during exception escalation must take priority.
+        if self._task_suppressed(job.task_id):
+            self._handle_suppressed(redis_id, job, reason="Suppressed before failure escalation.")
+            return
         resumable = bool(str(resume_checkpoint or "").strip())
         suggestion = (
             "Use /failed then /resume-failed <index> to continue from the durable checkpoint."
@@ -2312,6 +2371,9 @@ class PromptWorker:
                     resumable=resumable,
                 )
         self.live.step_failed(job.task_id, job.step_id, error[:2000])
+        if self._task_suppressed(job.task_id):
+            self._handle_suppressed(redis_id, job, reason="Suppressed before failure handoff.")
+            return
         try:
             successor = self._handoff_failed_task_to_recovery(
                 job, stage=stage, error=error, checkpoint=checkpoint
@@ -4150,6 +4212,12 @@ class PromptWorker:
             # N1 is transparent to user/N2 prose. Only the tool boundary is instrumented.
             system_sections = [
                 tools.instructions(),
+                ("[PLUGIN RESULTS] The actual plugin return value is the evidence. "
+                 "Use the returned structured fields, not stdout or stderr. "
+                 "If a field is absent, report that exact absence; never invent values. "
+                 "For routine plugin tasks invoke the tool and inspect its response. "
+                 "Do not browse plugin implementation files unless the user's request "
+                 "explicitly concerns software development or debugging."),
                 gate_instructions,
                 ("N1 may return status=pending with dispatch_id for asynchronous tools. "
                  "Continue independent tasks. Do not re-request pending calls. "
@@ -4824,50 +4892,49 @@ class PromptWorker:
 
     @staticmethod
     def _evidence_text(evidence: list[dict]) -> str:
-        import json
-
-        compact: list[dict] = []
+        """Compact observed values, prioritizing plugin return data."""
+        compact = []
         for item in evidence:
-            arguments = item.get("arguments") if isinstance(item, dict) else None
-            result = item.get("result") if isinstance(item, dict) else None
-            compact_args = {}
-            if isinstance(arguments, dict):
-                for key in ("path", "expected_sha256"):
-                    if key in arguments:
-                        compact_args[key] = arguments[key]
-            compact_result = {}
-            if isinstance(result, dict):
-                is_chunked = isinstance(result.get("chunk_stream"), dict)
-                keys = (
-                    "ok", "path", "paths", "sha256", "source_fingerprint", "file_mutation", "created", "error", "staged", "staged_path", "note_path",
-                    "attempts", "answer", "text", "summary", "analysis", "observations", "data", "items",
-                    "image_count", "output_dir", "analysis_json", "geometry_overlay", "horizontal_consensus", "profile",
-                    "device", "width", "height", "reconstruction_similarity", "artifact_fraction", "resource_status", "storage_context",
-                    "command", "cwd", "exit_code", "stdout", "stderr", "timed_out", "timeout_seconds", "duration_seconds",
-                    "returned_bytes", "start_byte", "next_byte", "truncated", "chunk_stream", "context_budget",
-                    "chunk_evicted", "retained_facts", "raw_chunk_in_durable_evidence"
-                )
-                if not is_chunked:
-                    keys = (*keys, "content")
-                for key in keys:
-                    if key in result:
-                        value = result[key]
-                        if isinstance(value, str) and len(value) > 12000:
-                            value = value[:12000] + "...[truncated]"
-                        compact_result[key] = value
-            compact.append({
-                "tool": item.get("tool") if isinstance(item, dict) else None,
-                "arguments": compact_args,
-                "result": compact_result,
-                "deterministic_verification": bool(item.get("deterministic_verification")) if isinstance(item, dict) else False,
-            })
-        return json.dumps(compact, ensure_ascii=False)
+            if not isinstance(item, dict):
+                continue
+            args = item.get("arguments") if isinstance(item.get("arguments"), dict) else {}
+            args = {k:v for k,v in args.items() if k not in ("n1_need","n1_target","_norm_chunked_evidence")}
+            observed = item.get("result") if isinstance(item.get("result"), dict) else {}
+            nested = observed.get("result")
+            if ("plugin" in observed or "plugin_fingerprint" in observed) and isinstance(nested, dict):
+                values = dict(nested)
+                values.setdefault("ok", observed.get("ok",True))
+            elif ("plugin" in observed or "plugin_fingerprint" in observed) and nested is not None:
+                values = {"ok":observed.get("ok",True),"value":nested}
+            else:
+                values = dict(observed)
+            for k in ("plugin","plugin_fingerprint"):
+                values.pop(k,None)
+            for k in ("stdout","stderr","plugin_stdout","plugin_stderr"):
+                if not values.get(k):
+                    values.pop(k,None)
+            def bound(v):
+                if isinstance(v,str) and len(v)>12000:
+                    return v[:12000]+"...[truncated]"
+                if isinstance(v,(dict,list)):
+                    encoded=json.dumps(v,ensure_ascii=False,default=str)
+                    if len(encoded)>12000:
+                        return {"truncated":True,"preview":encoded[:12000]}
+                return v
+            compact.append({"tool":item.get("tool"),
+                            "arguments":{k:bound(v) for k,v in args.items()},
+                            "result":{k:bound(v) for k,v in values.items()},
+                            "deterministic_verification":bool(item.get("deterministic_verification"))})
+        return json.dumps(compact,ensure_ascii=False,default=str)
 
     def _verifier_prompt(self, original_prompt: str, answer: str, evidence: list[dict]) -> str:
         return (
             "Act as a fresh independent skeptical verifier. Return only the JSON object required by the supplied schema. "
             "Do not rewrite valid work for style. Inspect the original request, candidate answer, observed tool evidence, and deterministic verification. "
-            "Model assertions are not evidence. Reject unsupported external-action claims, unmet requirements, contradictions, material factual/logical errors, "
+            "Model assertions are not evidence. Verify claims against structured tool return values, "
+            "not stdout/stderr. An admission that required fields were absent does not make "
+            "requirements_complete true. Do not accept guessed paths or measurements. "
+            "Reject unsupported external-action claims, unmet requirements, contradictions, material factual/logical errors, "
             "or review-report language instead of the requested result. requirements_complete means all material request requirements are met. "
             "evidence_supported means every claim needing external/tool evidence has matching observed evidence; it is true when no such evidence is needed. "
             "Use verdict=accept only with no issues and repair_scope=none. "
