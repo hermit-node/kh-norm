@@ -2,14 +2,13 @@
 
 This file contains only active, unimplemented work for the current Norm design.
 
-## Deferred Celery CPU parallelism (not part of r9)
+## Celery post-r2 follow-ups
 
-Revisit only if profiling shows a material benefit. Redis is already present, but
-Celery must remain a CPU-side transport for selected existing, N1-authorized
-Python tools/plugins (e.g. bounded disk operations and database calls), not an
-alternative model client or agent. Preserve the single N2 execution path,
-N1 approval, registered-tool permissions, voice, context and audit trail.
-No Celery workers, queues or direct model-generation functions ship in r9.
+Live-test asynchronous N1-approved plugin calls, out-of-order completions,
+same-task resumption and final-conclusion continuity. Verify that Redis DB is
+operator-selectable via config/settings.ini and that workers do not share a
+process-local connection pool. Run recovery/invalidation checks before enabling
+write-capable plugins in production. Add worker cancellation/stop-all policy.
 
 ## Installer transactional promotion
 

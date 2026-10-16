@@ -1,3 +1,20 @@
+## Norm 0.55.9r2 - optional N1-approved Celery tool transport (2026-10-11)
+
+- N2 tool proposals still enter N1.before_tool before dispatch.
+- N1 reuses trustworthy Redis verification evidence immediately; no Celery call
+  occurs on a pool hit. After a pool miss, N1-recognized information/inspection
+  work may run in Celery. Mutating tools stay synchronous in this test build.
+- Four optional independent Windows solo workers use configurable Redis DB
+  (default DB4). Config is in config/settings.ini, never runtime.json.
+- N2 can act on independent requests while results run, receives same-task
+  completion from N1, and waits when no independent work remains.
+- Existing prompt/conclusion generation stays N2 with N1 final review.
+- Synchronous fallback remains available when workers are not ready.
+- Never transplant old r8 Celery final-answer code.
+- Includes the original norm-ssh.ps1 script from the r6 release archive.
+- Source regression checks are included; live installer/model orchestration
+  still requires smoke testing before claiming production readiness.
+
 ## Norm 0.55.9 - public web_browser checksum repair (2026-10-10)
 
 - Corrects the stale Schema-2 source hash for the public managed web_browser plugin in

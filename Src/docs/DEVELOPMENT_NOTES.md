@@ -1,6 +1,6 @@
 # Norm development notes
 
-These are current engineering contracts for **Norm 0.53.19**. This file intentionally contains no release chronology.
+These are current engineering contracts for **Norm 0.55.9r2**. This file intentionally contains no release chronology.
 
 ## Architectural authority
 
@@ -185,3 +185,162 @@ README.md, CURRENT_STATUS.md, DEVELOPMENT_NOTES.md, MAINTENANCE_VERIFICATION.md,
 `plugins/web_browser` is a schema-2 optional capability. Its exposed tool functions stay lightweight inside frozen `norm.exe` and delegate browser/extraction work to `C:\Norm\.venv\Scripts\python.exe -m web_runtime.worker`, with the plugin `src` directory on `PYTHONPATH`. This prevents optional Playwright/Beautiful Soup/Trafilatura dependencies from becoming mandatory PyInstaller payload.
 
 Browser execution prefers installed Edge, then installed Chrome, then Playwright Chromium when already present. Browser profiles, cache, page material, and downloads live under `Documents\Norm\workspace\web`. The plugin permits only public HTTP(S) destinations and rejects loopback/private/link-local/multicast/reserved destinations. Crawl limits are explicit and the plugin does not implement CAPTCHA or anti-bot bypass.
+
+
+## Norm 0.55.9r2: authoritative N1/N2 async contract
+
+# Norm 0.55.9r2 development contracts (DRAFT)
+
+This documents the asynchronous implementation and outstanding live-validation requirements; Celery,
+GUI automation, or 0.55.9r2 has been implemented. The verified base archive
+is Norm-0.55.9-portable-source.zip. Before shipping a real r2, incorporate
+this contract into docs/DEVELOPMENT_NOTES.md and tests, update release
+metadata/hashes together, and verify installer compatibility. Do not overwrite
+C:\Norm or silently activate new workers.
+
+## Non-negotiable N1/N2 responsibility split
+
+N2: understands the original user request, plans work and executes ONLY the
+currently assigned step, requests tools, reasons from observed results, performs
+independent work while approved async operations are pending, and drafts the
+conclusion. N2 cannot execute an unapproved tool or directly submit Celery work.
+
+N1: owns the existing before_tool/after_tool boundary and all tool decisions.
+Before approving any fresh observation, inspect the live Redis verification
+pool for relevant already-observed evidence. Prefer replaying that result when
+N1 judges it accurate, complete, applicable to the requested tool/arguments/
+needed fact, and sufficiently current for its source. Age by itself does not
+mean stale or reliable. Reuse preserves the original result/provenance; it does
+not call the tool, fabricate evidence, or increment fresh-observation counts.
+Actual source mutations must invalidate affected cached evidence.
+
+If no sufficiently trustworthy observation exists, N1 approves execution,
+applies the existing authorization, identity, guard, loop and audit rules,
+and passes the approved tool request to the dispatcher. N1 receives resulting
+evidence; N2 consumes the answer. Celery is NOT N1 or N2 and never decides
+whether a tool is warranted. Preserve operator slash-command exceptions.
+Do not allow the normal protected execution path to silently bypass N1 when
+its gatekeeper is missing. Maintain N1's final-review authority.
+
+## Generic Celery adapter for existing and future plugins
+
+Do NOT create one Celery task per plugin, and do NOT serialize arbitrary Python
+lambdas/functions/callables to workers. Use one registered task whose message
+contains only an immutable dispatch identifier. Its worker looks up the
+N1-approved, schema-validated request, checks approval identity, expiry,
+tool permissions, tool schema, plugin/source fingerprint and task ownership,
+resolves the existing verified Norm tool registry, then executes through the
+authorized tool executor. Prevent a worker from consuming forged/stale requests.
+
+Illustrative DESIGN ONLY (not implementation):
+
+    @celery_app.task(name="norm.execute_approved_tool")
+    def execute_approved_tool(dispatch_id):
+        request = approved_store.claim(dispatch_id)
+        validate_approval_and_registered_tool(request)
+        result = authorized_executor.execute(
+            request.tool_name, request.arguments
+        )
+        result_inbox.persist(request.dispatch_id, result)
+        completion_events.publish(request.dispatch_id)
+
+New registered plugins should need no Celery code change. Handle per-plugin
+serial/parallel classification, timeouts, resource budgets, sensitive actions
+and filesystem/secret policies. Avoid routing runtime-bound objects or
+unserializable clients across worker processes.
+
+Windows Celery multiprocessing/fork assumptions must not be imported. Start
+with four independent Windows-compatible solo workers as an optional setup,
+plus measured resource limits; do not claim four workers share an in-memory
+PostgresPool. Each process has its own bounded instance of Norm's existing
+connection-pool implementation, or workers call a separately managed pool
+service if true central sharing is required. Four threads INSIDE one worker
+process could share one pool, but Norm's current plugin manager serializes
+calls behind a process-wide lock, so threads alone do not provide true
+plugin-call parallelism until that mechanism is reviewed safely.
+
+Redis DB5 is a proposed Celery transport segregated from Norm's DB0 state.
+Use bounded queues and explicit worker health/readiness checks. Only the
+interactive Windows-session-1 desktop helper can operate GUI controls.
+GUI input remains serialized irrespective of how many Celery workers exist.
+GUI reads/screenshots can be queued independently when safe.
+
+## Nonblocking execution contract
+
+A tool proposal always enters N1 first. If adequate cached evidence exists,
+N1 returns it immediately to N2 with source/provenance. Otherwise N1 checks
+whether an equivalent approved tool job is already pending; attach a waiter
+rather than dispatching duplicates. For a new approved async call, return
+a small pending receipt (dispatch_id, originating task_id, step_id, tool,
+dependency identifiers and expected completion behavior), not a fake result.
+N2 can progress with independent work, but must not pretend the missing fact
+is known or finish a dependent step without it.
+
+Celery publishes completion/failure to N1 through a durable result inbox.
+N1 records fresh evidence and verification provenance, then delivers it once
+to the SAME N2 task at a safe model/tool boundary, preserving task identity,
+pending dependencies and completed work. If all remaining work depends on
+outstanding results, park/yield the same task instead of spending model turns
+polling or fabricating a new task. Support timeout, cancellation/suppression,
+duplicates, stale approvals, retries and restart/recovery without double
+side effects. Never redo external mutations on an ambiguous retry.
+
+PostgreSQL stores authoritative durable job/task relationships and the outbox;
+Redis handles live notifications and ephemeral transport. Preserve control
+envelopes with typed status: pending/completed/failed/cancelled and distinguish
+a pool replay from a fresh observation. Ensure no N1/N2 responsibilities move
+into the Celery task.
+
+## HIGH PRIORITY: context, resumption, and conclusion-step regression
+
+This has failed on several earlier Norm versions: after many completed steps,
+especially at step 7/7 or final user-facing conclusion, Norm loses or confuses
+context and starts the original task over, repeats previous completed actions,
+invents a new task, or overwrites earlier verified work. Treat this as an
+active regression risk, not an already-proven live fix.
+
+The immutable verbatim original_user_prompt supplies user intent/constraints,
+NOT a new executable assignment. The current scoped work_request and
+active_assignment identify what must be performed NOW. Carry both separately
+through every JSON envelope, N1/N2 model call, child task, recovery record,
+chunk/context condensation, and final-conclusion processing. Never present
+the original root request alone as the new execution instruction at conclusion.
+
+Persist completed step results, their evidence/provenance, current step scope,
+outstanding job IDs/results, pending dependencies and original constraints.
+Do not generate a new task ID when simply resuming the same active conclusion
+after a transient failure. Preserve PASSED_TO only for genuine terminal
+recovery according to its existing contract; do not substitute it for an
+ordinary continuation. N1 verifies the final candidate against completed
+work and user intent without ordering N2 to repeat the root task.
+
+Acceptance tests MUST include:
+1. N1 pool hit: exact observed payload reused, original executor not called.
+2. N1 pool miss: one authorized Celery dispatch; N2 receives pending receipt.
+3. Two concurrent equivalent proposals: one execution, two valid waiters.
+4. New future plugin: registered tool resolves without Celery task changes.
+5. Rejected/altered/stale approval: zero tool invocations.
+6. Several independent tool calls: results arrive out of order and match
+   correct task/step; N2 continues unrelated work.
+7. N2 awaits only required dependencies; no busy-loop model polling.
+8. Worker/process restart: pending jobs survive; no duplicate mutations.
+9. Desktop: screenshots work in session 1; mouse and keyboard actions serial.
+10. At conclusion step 7/7, root user prompt remains provenance only;
+    previously completed steps are not re-executed, no new task ID appears,
+    and verified earlier results are preserved.
+11. N1 rejection/revision at final review resumes ONLY the affected final
+    candidate/relevant scoped step, not the whole root workflow.
+12. Context condensation, large outputs, shutdown and recoverable tool
+    errors preserve pending receipts and complete-step evidence.
+
+No live Norm files are modified by this draft. Only package tested, verified
+and deliberately installed code as completed functionality.
+
+## Initial r2 rollout safety
+
+Celery initially handles only N1-recognized information/inspection tools
+(excluding the special raw read_file chunk stream). Mutating or unknown tools
+remain on the existing synchronous N1-gated path. Generic Celery worker
+dispatch code supports registry-based tools, but asynchronous mutation should
+NOT be enabled until cancellation, at-most-once side-effects, plugin identity
+checks and full live recovery tests pass.

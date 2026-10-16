@@ -1,3 +1,11 @@
+# Norm 0.55.9r2 - N1-approved asynchronous tool execution
+
+This is a source release for live testing. N1 remains the tool and
+verification-pool gatekeeper; N2 remains the worker. Optional Celery
+uses config/settings.ini ([celery]), with four Windows solo workers,
+configurable Redis DB4, and a synchronous fallback. No Celery
+final-answer model exists. See docs/DEVELOPMENT_NOTES.md.
+
 # Norm 0.55.9 - verified public-plugin source identity
 
 Corrected web_browser manifest checksum without altering plugin source.

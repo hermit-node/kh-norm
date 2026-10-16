@@ -13,6 +13,12 @@ def main() -> int:
         return 2
 
     try:
+        from start_async_workers import main as start_celery
+        start_celery()
+    except Exception as exc:
+        print(f"Celery unavailable; Norm retains synchronous tool execution: {exc}")
+
+    try:
         process = start_norm_detached()
     except Exception as exc:
         print(f"Could not launch Norm service: {exc}", file=sys.stderr)

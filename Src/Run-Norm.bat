@@ -99,6 +99,9 @@ pause
 exit /b 1
 
 :ready
+if exist "%ROOT%tools\start_async_workers.py" (
+  "%PY%" -B "%ROOT%tools\start_async_workers.py"
+)
 echo Norm is healthy at %CHAT_HEALTH%
 if /I "%~1"=="--service-only" exit /b 0
 

@@ -4075,6 +4075,9 @@ class PromptWorker:
         # deleting the user's words—prevents internal steps from replanning.
         self._ensure_original_user_prompt(job)
         messages: list[dict] = self._tool_slice_initial_messages(job)
+        from norm_runtime.async_n1_delivery import N1AsyncBridge
+        async_bridge = N1AsyncBridge(self, job, tools)
+        async_bridge.inject_receipts(messages)
         pending_verification: dict[str, str] = {}
         evidence: list[dict] = []
         step_rounds = 0
@@ -4125,10 +4128,15 @@ class PromptWorker:
                     "task_rounds": task_rounds,
                     "evidence": evidence,
                 }
+            async_bridge.deliver(messages, evidence)
             # N1 is transparent to user/N2 prose. Only the tool boundary is instrumented.
             system_sections = [
                 tools.instructions(),
                 gate_instructions,
+                ("N1 may return status=pending with dispatch_id for asynchronous tools. "
+                 "Continue independent tasks. Do not re-request pending calls. "
+                 "Do not finish a step dependent on pending results until N1 delivers them. "
+                 if async_bridge.enabled or async_bridge.pending else ""),
                 self._active_voice_instructions(),
                 self._tool_slice_execution_instructions(job),
                 "[NORM INTERNAL TASK/STEP INSTRUCTION — NOT USER-AUTHORED]\n"
@@ -4190,6 +4198,24 @@ class PromptWorker:
                 messages.append({"role": "system", "content": invocation_header("n1", "n2", "tool_intervention") + "\n[NORM-INTERNAL N1 INTERVENTION; NOT USER-AUTHORED]\n" + turn_reset})
                 continue
             if not calls:
+                if async_bridge.pending and done_reason != "length":
+                    messages.append({"role": "assistant", "content": content})
+                    if async_bridge.wait_for_one(messages, evidence, seconds=90):
+                        continue
+                    checkpoint, resume_metadata = self._distilled_continuation_checkpoint(
+                        job, prompt, messages, reason="n1_async_pending",
+                        headroom={"remaining_fraction": 1.0, "prompt_eval_count": 0,
+                                  "eval_count": 0, "context_limit_tokens": 0},
+                        chunk_manager=chunk_manager,
+                        step_rounds=step_rounds, task_rounds=task_rounds,
+                    )
+                    resume_metadata["n1_pending_dispatch_ids"] = [
+                        item["id"] for item in async_bridge.pending
+                    ]
+                    return {"yielded": True, "checkpoint": checkpoint,
+                            "reason": "n1_async_pending", "step_rounds": step_rounds,
+                            "task_rounds": task_rounds, "evidence": evidence,
+                            "resume_metadata": resume_metadata}
                 if done_reason == "length":
                     evidence.extend(self._verify_pending(job, pending_verification, tools))
                     if content.strip():
@@ -4554,16 +4580,21 @@ class PromptWorker:
                         )
                         arguments = outcome.arguments
                         if outcome.execute:
-                            # IMPORTANT: this object is passed to N2 unchanged. N1 records
-                            # verification metadata out-of-band after execution.
-                            result = tools.execute(name, arguments)
-                            gate_meta = self.n1_gatekeeper.after_tool(
-                                task_id=job.task_id,
-                                step_id=job.step_id,
-                                name=name,
-                                outcome=outcome,
-                                result=result,
-                            )
+                            # Celery is transport only; N1 has already decided whether to
+                            # reuse the verification pool or execute this call.
+                            pending_receipt = async_bridge.receipt(name, arguments, outcome)
+                            if pending_receipt is not None:
+                                result = pending_receipt
+                                gate_meta = {"executed": False, "async_pending": True}
+                            else:
+                                result = tools.execute(name, arguments)
+                                gate_meta = self.n1_gatekeeper.after_tool(
+                                    task_id=job.task_id,
+                                    step_id=job.step_id,
+                                    name=name,
+                                    outcome=outcome,
+                                    result=result,
+                                )
                         else:
                             result = dict(outcome.result or {
                                 "ok": False, "tool": name, "error": "N1 did not execute or supply a result"
@@ -4627,9 +4658,11 @@ class PromptWorker:
                             active_raw_stream_id = chunk_stream.stream_id
                             active_raw_piece = chunk_piece
 
-                evidence_item = redact({"tool": str(name), "arguments": arguments, "result": result, "n1_gatekeeper": gate_meta})
-                evidence.append(evidence_item)
-                self._persist_evidence_now(job, [evidence_item])
+                if not result.get("async_pending"):
+                    evidence_item = redact({"tool": str(name), "arguments": arguments,
+                                            "result": result, "n1_gatekeeper": gate_meta})
+                    evidence.append(evidence_item)
+                    self._persist_evidence_now(job, [evidence_item])
                 if self._suppression_requested(job.task_id) or (self.durable and self.durable.task_status(job.task_id) == "suppressed"):
                     raise ModelGenerationCancelled("task suppressed by operator after current tool boundary")
 

@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "release": "0.55.9",
-  "baseline": "Norm-0.55.8r9-N2-restored-portable-source.zip",
-  "file_count": 295,
+  "release": "0.55.9r2",
+  "baseline": "Norm-0.55.9-portable-source.zip",
+  "file_count": 300,
   "hash_algorithm": "SHA-256",
   "files": {
     ".gitattributes": {
@@ -18,24 +18,20 @@
       "sha256": "e774f5ea91a76af90b32d07d967a17a1e2741a3e99c67ee944536cb548e6a432"
     },
     "README.md": {
-      "bytes": 20581,
-      "sha256": "7c3ef0007926d87f4730572600ab06681e2751382f102ced454648a8d5566602"
+      "bytes": 20966,
+      "sha256": "6330518f97a228af55260f11402477a24f5ba5ff6981bf85d3c45aeef562c47b"
     },
     "Run-Norm.bat": {
-      "bytes": 3806,
-      "sha256": "4b202a7fc07e7419333263788a94f378f1ba8106e1620748097ba158bebaa180"
+      "bytes": 3908,
+      "sha256": "b2397cdde74158ad65a40823a5dacf6eec134450341d39e12fd6d15d29263694"
     },
     "SOURCE_PACKAGE.md": {
-      "bytes": 20445,
-      "sha256": "7c8ef5f631522e1d913ac5a35b0e0b6f018cb09e9c58fe5dc178807533941a15"
+      "bytes": 20830,
+      "sha256": "d6c582daa02791adf195d2c37b9a422c918569106a270d72889f9b90e835f3f6"
     },
     "Safe-Shutdown-Norm.bat": {
       "bytes": 1568,
       "sha256": "cf9930fc55eb69537d91ebcc6dd7f6984206b51b506d34671dc66a93b5a9a3b2"
-    },
-    "_build_release.py": {
-      "bytes": 3050,
-      "sha256": "ee3cc16813e04b7c5594ce5775af593b1cde7bcb7f88b0a0b9e22804fd99ed21"
     },
     "config/plugins.ini": {
       "bytes": 1706,
@@ -50,8 +46,8 @@
       "sha256": "a11bc6bbed2877de9f90c9e46490fed457448918eb7a3f9099a7206b8cae690b"
     },
     "config/settings.ini": {
-      "bytes": 2616,
-      "sha256": "516ed66a1fbdfcba47e22df0e00ecc3d9f53592c2d8b76ade86317b519ea17fc"
+      "bytes": 2696,
+      "sha256": "3793624190074d7c87501d733a76147ee833d81ac7cab387ec3a7821f2757bf9"
     },
     "core/norm_main.py": {
       "bytes": 65755,
@@ -77,6 +73,10 @@
       "bytes": 17080,
       "sha256": "bd8fb4e901c458e8b01327f7359d4b0ca32c5f7d358783d001a474f37c45bd9f"
     },
+    "core/norm_runtime/async_n1_delivery.py": {
+      "bytes": 5121,
+      "sha256": "fb866a51d45c5dab55cca7a6d1c9851d965a50a2e72b7cb5e2cd56bf21bd860a"
+    },
     "core/norm_runtime/backup_retention.py": {
       "bytes": 1534,
       "sha256": "519850c7832df18d495bff1db993fa2adf7f6140a9b24a9544377e4b5f795ced"
@@ -84,6 +84,10 @@
     "core/norm_runtime/busy_status.py": {
       "bytes": 10082,
       "sha256": "1724e6f5dd41a262ef2d86033c310345e2dddfbf4e041ff938f1956dc919056d"
+    },
+    "core/norm_runtime/celery_tool_executor.py": {
+      "bytes": 5231,
+      "sha256": "26d1616722d3fbafa60c11baddce911f17089d67b1eaf87e60239336a07d3f62"
     },
     "core/norm_runtime/chunked_evidence.py": {
       "bytes": 17245,
@@ -210,8 +214,8 @@
       "sha256": "b2c39070add4e948be4998d75a72f4305661c130f6e7ba1b223f30ac7097bd32"
     },
     "core/norm_runtime/prompt_worker.py": {
-      "bytes": 327347,
-      "sha256": "bd338409112354433cc98a0ec620140e901636675c53032be4f329673c1baf2c"
+      "bytes": 329573,
+      "sha256": "414bf16d82cdffb05b500db55a4e32e3ebeb524800a16cf3e7e2523c9627e335"
     },
     "core/norm_runtime/protocol.py": {
       "bytes": 14182,
@@ -274,12 +278,12 @@
       "sha256": "1fcd208613e23083e27e1b4d8ae131b52dca4bb1b71a4190571c380cf4fd4ca3"
     },
     "docs/DEVELOPMENT_NOTES.md": {
-      "bytes": 13813,
-      "sha256": "d6f867f19e37422c1410b011b7a8ddf638cc3f3dc5ba18b1ce12007e40f6f4e7"
+      "bytes": 22979,
+      "sha256": "5b9dffa7586fd50fe0ddede0fc997ea078dd38eab5dd43dcccf33c404a24e56c"
     },
     "docs/FUTURE_IMPLEMENTATION_NOTES.md": {
-      "bytes": 4365,
-      "sha256": "1a2c3b44bfafe9a3ec1198bd9493250761581b8ab6df14c03576202356ca9354"
+      "bytes": 4268,
+      "sha256": "977f3a165d8114a7dec9813b3ed4d51ef62ba97b1513038d735cf1f839d42d64"
     },
     "docs/MAINTENANCE_VERIFICATION.md": {
       "bytes": 8797,
@@ -294,8 +298,8 @@
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
     },
     "docs/RELEASE_NOTES.md": {
-      "bytes": 123804,
-      "sha256": "495ef5616173960ec2a0384f68748260ca9e9f47bbafb609f8a107b07da5c392"
+      "bytes": 124880,
+      "sha256": "4ee98507784d2db5ae742cee34b3f9332b835338c5847266be1426f3c6dbc96c"
     },
     "docs/VOICE_OPERATOR_COMMANDS_PATCH.md": {
       "bytes": 1796,
@@ -312,6 +316,10 @@
     "make-listener.bat": {
       "bytes": 367,
       "sha256": "e3210b0077888d2f28437da01107b1d055fcb5d5f3fb9d76a9a1804528b72667"
+    },
+    "norm-ssh.ps1": {
+      "bytes": 8271,
+      "sha256": "5bde5d5429744fe7c6d770af6230bf3561ce248dae011e3f465e8e0772b741a3"
     },
     "objects/README.md": {
       "bytes": 6512,
@@ -346,8 +354,8 @@
       "sha256": "814cf6e096ac167f56bbb47c98287818949ec13c65843574b3a733698c91f982"
     },
     "package-manifest.json": {
-      "bytes": 25829,
-      "sha256": "7eb9c725e77ed682aa9133462c2e308d65c9d3f153130a757e7991acb0179869"
+      "bytes": 26310,
+      "sha256": "8cf81f19fb40dd66aba9faf2674c7600ea6dc97afe66d1ac23467ad40af9015a"
     },
     "plugins/README.md": {
       "bytes": 721,
@@ -869,6 +877,10 @@
       "bytes": 12152,
       "sha256": "0a767a94478a958e06fc5f807e372b78201358d7f8df47672362f3b00b6e1b69"
     },
+    "tools/celery_tool_worker.py": {
+      "bytes": 1160,
+      "sha256": "2b8b49b4f308c76e1dc8e53fff94c308aa9f7a9948bb99108e93023c8737fcf5"
+    },
     "tools/fetch_weasyprint_runtime.py": {
       "bytes": 8056,
       "sha256": "77008e05ccf6a575eb7a2672ba8c6da2071d98fbda49475accf2cd277e0f7096"
@@ -950,12 +962,16 @@
       "sha256": "8ad47d5281c1bbc9e073d6436a45222490144ac9f571b105b8de1b2829265040"
     },
     "tools/requirements-lock.txt": {
-      "bytes": 939,
-      "sha256": "9bbca5077b323e1bc7905aa0b178281153c06ad67a2a78fa6fb7d68404320fdb"
+      "bytes": 1085,
+      "sha256": "e69df50444c49bfef404c7b430d2faace1f8a1d6445919fbae5e951709f162a6"
+    },
+    "tools/start_async_workers.py": {
+      "bytes": 1889,
+      "sha256": "3fbae560d600beb30be8b60cc8b7202f7ef22e6267d2e8b5b11576cb5a96b82e"
     },
     "tools/start_norm_service.py": {
-      "bytes": 1712,
-      "sha256": "2a04dcf2208ee2cd0522b9f40c93d13a4d503a493c9ab4cbee9b998fe077c98c"
+      "bytes": 1920,
+      "sha256": "4ba3bb035eaaf3c6deb43d0834898b1c2003f23ad7dd6df7105356047bfd89a7"
     },
     "tools/start_operator_consoles.py": {
       "bytes": 2473,
@@ -964,6 +980,10 @@
     "tools/test_archive_adapter.py": {
       "bytes": 2071,
       "sha256": "ae42fa605615e78b1bb134bd95e393da951be1bb7113fecdbf1383d2e1890480"
+    },
+    "tools/test_async_celery_r2.py": {
+      "bytes": 4658,
+      "sha256": "37db4d4eb3afc92b6a2f5ee8ff3c8cd69db3feb32f04484b1989bf5ab7a8432e"
     },
     "tools/test_chunked_evidence.py": {
       "bytes": 11472,
