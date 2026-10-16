@@ -9,6 +9,7 @@ See [the maintained operator docs](../docs/README.md#plugin-operation-and-verifi
 - [postgres_pool](postgres_pool/README.md)
 - [rotor5_cipher](rotor5_cipher/README.md)
 - [soft_delete](soft_delete/README.md)
+- [stegosplit_auth](stegosplit_auth/README.md)
 - [stegosplit_key](stegosplit_key/README.md)
 - [stegosplit_message](stegosplit_message/README.md)
 - [verbatim_lines](verbatim_lines/README.md)

@@ -2,3 +2,19 @@ __pycache__/
 *.py[cod]
 .test-temp/
 plugins/.registry.json
+
+# Authentication credentials and private runtime state
+**/auth.sqlite3*
+**/master.png
+**/credentials/
+**/issuer.key
+**/.env
+.env
+*.pem
+*.key
+backups/
+state/
+logs/
+
+# Keep local infrastructure config private; commit only sanitized template
+config/settings.ini

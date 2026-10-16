@@ -1,3 +1,40 @@
+## 0.55.3 clean compiled release - October 8, 2026
+
+- StegoSplit Message 0.4.3, Auth 0.1.0 and Key 0.2.0a1 algorithms compiled as CPython 3.14 Windows x64 native .pyd modules; entrypoint adapters remain readable.
+- Shared V3 backend stored only in stegosplit_message; stegosplit_auth explicitly imports that plugin. No duplicated V3 engine.
+- Recomputed exact plugin content SHA-256 values; restored installer 1.6.12-compatible manifest/build script and updated per-plugin Norm README and user-facing /help text.
+- No private implementation Python, build object files, generated code, runtime secrets, master/issued credential PNGs, database, logs or state in distribution.
+- Custom image authorization is NOT an OpenSSH integration; no network upload handler is bundled.
+
+## 0.55.3 compiled portable-source packaging — 2026-10-08
+
+- Installer 1.6.12-compatible portable-source manifest and build script retained.
+- StegoSplit Message 0.4.3, Auth 0.1.0, and Key 0.2.0a1 carry CPython 3.14 Windows x64 compiled native engines and readable main.py adapters.
+- Plugin SHA-256 identity values recalculated from exact compiled src trees; generated registry excluded.
+- Implementation sources excluded from compiled distribution. Proprietary rebuild sources remain separate.
+- Image authentication is a bearer-credential verifier, not a native OpenSSH module; TXT-dialog path UI is optional.
+
+## 0.55.3 development-stage source archive (historical; superseded by compiled package)
+
+- Packaging correction: restored required `build_script: tools/build_norm.py`, verified against the exact supplied 1.6.12 installer, and removed stale generated plugin registry. Existing installer unchanged.
+- Adds `plugins/stegosplit_auth` v0.1.0 as a separate signed, revocable fixed-master/many-client PNG credential subsystem. Existing `stegosplit_message` v0.4.3 V3 two-share messaging, identity, and 256-bit paired-credential functions remain unchanged.
+- Authentication uses Ed25519 issuer signing, a private server master PNG, individually signed differential client PNGs, durable SQLite revocation/lockout, optional filename-based passwords, and a TXT-filtered PySide6 selector allowing typed PNG paths.
+- Compiled Windows CPython 3.14 `.pyd` for authentication was built and smoke-tested on KHzz as a separate compiled artifact; this GitHub SOURCE zip includes the matching private Python source and repeatable Windows build scripts, not that new native binary. Original V3 `.pyd` modules remain bundled.
+- Not an OpenSSH authentication plugin, server-side HTTP upload API, or TLS gateway. Client PNGs are copyable bearer credentials. Master PNG embeds the Ed25519 issuer seed in unencrypted metadata; protect it with ACLs and never commit generated credentials or SQLite state.
+- Corrected 0.55.1 stale headings, source manifest plugin version, plugin index, and package version; omitted generated plugin registry and historical backup snapshot from repo source archive.
+
+## StegoSplit plugin 0.4.3 two-PNG credential (Norm 0.55.2 source patch) — 2026-10-08
+
+- `create_unlock_pair` generates a random 256-bit application credential and carries it in two StegoSplit V3 PNG shares; no SSH, hash, .pub, or .txt input required.
+- `unlock_image_pair` performs paired V3 extraction, authenticated decoding and optional trusted SHA-256 enrollment comparison in one call. Raw key is opt-in (`reveal_key=True`) to avoid accidental secret disclosure through Norm logs. Matching a particular enrolled pair still requires a trusted fingerprint in the consuming application.
+- Preserved 0.4.2 paired identifier tools, 0.4.1 legacy single-image read-only compatibility, compiled 0.4.0 engine and all placement/decoy algorithms without change.
+
+## StegoSplit plugin 0.4.2 paired identifier patch for Norm 0.55.2
+
+- Replaced new single-image SSH/SHA-256 identity writes with a V3-encrypted **two-share** identifier envelope supporting SSH public keys, SHA-256 and MD5. All share matching, decrypting, decoding and optional independent expected-value comparison are exposed through one `unlock_identity_pair()` operation.
+- Kept historical 0.4.1 single-PNG reads as an explicitly read-only legacy API; stopped exposing single-image creation actions. Unchanged V3 compiled 0.4.0 engine; no change to scatter/decoys/pixel format.
+- Added Python integration and wrong-key/wrong-value/legacy compatibility regression tests. Windows compiled .pyd test deferred to an actual Windows CPython 3.14 runtime.
+
 ## 0.55.2 — 2026-10-08 — StegoSplit V3 packaged integration and public identifier shortcut
 
 - Replaced bundled StegoSplit V2 `stegosplit_message` v0.3.0 source with the operator-provided native StegoSplit V3 0.4.0 distribution, retaining its Windows CPython 3.14 x64 `.pyd` binaries **exactly** and wrapping it as plugin 0.4.1.

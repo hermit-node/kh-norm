@@ -1,131 +1,20 @@
-# Norm 0.55.2 portable source package
+## Norm 0.55.3 clean compiled portable source
 
-## 0.55.2 StegoSplit integration
+Compatible with Norm Installer 1.6.12, Windows Python 3.14 x64. Norm core is portable Python source that the installer compiles into norm.exe. Proprietary StegoSplit internals are precompiled native .pyd modules, accessed through readable plugin src/main.py adapters. StegoSplit Auth reuses Message's native V3 modules instead of duplicating them. Each plugin includes a developer README.md and a user-facing help.txt available with /help stegosplit-message, /help stegosplit-auth or /help stegosplit-key. Master and credential images are NEVER distributed in this package. Filename-derived passwords and hidden PNG file selection are convenience/obscurity only. Native SSH or a network-facing authentication endpoint are NOT provided.
 
-Promotes bundled stegosplit_message from 0.3.0 V2 to plugin 0.4.1, retaining the compiled Windows CPython 3.14 V3 carrier from the operator-provided 0.4.0 package bit-for-bit. Its compiled 4-bit-per-paired-position RGB delta encoding is unchanged. Adds independent single-image public SSH key / SHA256 identity embedding (RGB LSB 3 bits/pixel or overt PNG metadata), reading and explicit trusted-expectation comparison. Public identifier storage alone is not authentication. No existing 0.55.1 behavior was removed.
+# Norm 0.55.3 — Compiled StegoSplit portable-source package
 
-**Compiled-plugin exception**: this portable source includes the explicitly provided StegoSplit V3 .pyd binaries. Those are required to run the V3 paired carrier and work only on Windows x64 / CPython 3.14. Other generated Norm executables remain excluded.
+This archive is compatible with Norm Installer **1.6.12-unified**, with package schema 1, `package_type: portable-source`, the installer-owned `norm.exe` build (no legacy build script required), and a matching companion SHA-256 file. Norm's core is distributed as source to be built by the installer. The three StegoSplit plugins distribute their private implementations only as Windows CPython 3.14 x64 native `.pyd` modules; readable `src/main.py` adapters expose the stable Norm tool interface.
 
-## 0.55.1 cumulative injection/voice update
+- `stegosplit_message` **0.4.3**: V3 paired-message carrier, paired SSH/SHA/MD5 identifier matching, and random 256-bit credential creation/unlock.
+- `stegosplit_auth` **0.1.0**: distinct fixed-master/many-client signed image bearer authentication. Optional side plugin; disabled until enrolled/configured.
+- `stegosplit_key` **0.2.0a1**: legacy paired key, rotation and cover reconstruction methods.
+- The existing compiled V3 carrier engine remains **0.4.0** internally; its native module bytes were not modified.
+- `package-manifest.json` and every plugin `plugin.json` carry the matching current versions and schema-2 hashes of the exact shipped source/native trees.
+- `plugins/.registry.json` is runtime-generated and deliberately excluded. No private authentication Python implementation, real master image, private client images, SQLite authentication state, or configured secrets are included.
 
-Adds verified injection retirement and operator controls, and N2 voice conditioning and tune/test to 0.55.0. No earlier features removed.
+**Verification:** The exact 1.6.12 installer accepted the compiled ZIP in `--validate-only` mode. Windows CPython 3.14 smoke tests passed for Message paired secret unlock, Auth issuance/verify/revoke, Key imports, and 18 plugin identities. Full deployment and SSH-service integration remain untested/not implemented.
 
-## 0.55.0 cumulative lesson/code-memory integration
+**Help:** `README.md` contains operator installation and user procedures. `plugins/stegosplit_message/README.md`, `plugins/stegosplit_auth/README.md`, and `plugins/stegosplit_key/README.md` explain interfaces for Norm; each plugin's `help.txt` summarizes user-facing operations. Complete historical development detail is preserved in `docs/RELEASE_NOTES.md`.
 
-- Adds built-in schema-2 `plugins/lesson_model` v0.3.0a1. It supports explicit-review lesson capture, versioned wholesale source-ZIP memory, bounded source walking, PostgreSQL raw project summaries, separate human README output, and canonical CodeGraph/interactive topology output.
-- The plugin does not yet fine-tune model weights and cannot auto-promote `norm:latest`; those remain future reviewed backend operations.
-- Original user source archives are never deleted or moved; Norm keeps its own SHA-verified content-addressed copy.
-
-## Resource-only busy and suppression runway
-
-Resource-only busy signals yield for up to 30 seconds; actively tracked Norm work remains a hard gate. Suppressed in-flight ingress is rechecked at HTTP admission, with cancellation tombstones retained through `/flush-suppressed`.
-
-This directory is the portable source payload for **Norm 0.55.2**, derived from the user-supplied 0.54.2i + SSE source ZIP.
-
-The portable source package excludes generated or machine-private material such as .venv, compiled core\norm.exe, build output, Python caches, secrets, and private runtime state.
-
-## 0.54.3 Nabler structured reporting
-
-- Adds one unified `plugins/nabler` schema-2 plugin with original native tool name and merged inline-script Python authoring API. No redundant `nabler_inline` plugin is shipped.
-- Adds `tabulate==0.9.0` to both source dependency manifests, N2 default preference, conclusion directive, regression tests and source package inventory.
-- Pure source package: contains no compiled executable, no .venv, no installer EXE, no secrets or user-specific local config. The existing managed optional-plugin repair fallback remains pinned to verified 0.54.2g.
-
-## 0.54.2i progress leases, failed-task controls, and compact continuation
-
-- N1 reviews task progress at round 96 and grants 36-round extensions only when durable forward progress is real, with an absolute 384-round cap. Existing per-turn tool behavior is unchanged.
-- Budget failures preserve resumable queue/checkpoint state. `/failed`, `/resume-failed`, and `/flush-failed` expose operator recovery/cleanup; flush retains one generalized lesson and removes failed execution/history debris plus stale background snapshots.
-- Context-headroom continuation uses a fresh compact slice: the resumed N2 call skips already-consumed bulk task/prior/background context and relies on N1's distilled continuation plus durable PostgreSQL fallback. Existing 0.54.2h headroom checkpoints are recognized from their saved yield markers on first resume after upgrade. Tool proposals without results are explicitly treated as unexecuted during distillation.
-- Managed-plugin fallback remains pinned to the known-good 0.54.2g package because plugin payloads are unchanged.
-
-## 0.54.2h planner-only file mutation discipline
-
-- File-creation/file-editing plans should use one primary output file per executable step while allowing unrestricted source/context reads.
-- This patch does not add runtime enforcement and does not modify the verbatim-lines plugin or plan verifier.
-- Managed-plugin fallback remains pinned to the known-good 0.54.2g package because plugin payloads are unchanged.
-
-## 0.54.2g packaged-plugin repair + 0.54.2f runtime fixes
-
-- Restored the exact verified `vision_parse`, `web_browser`, `jan`, `vane`, and `opencode` Schema-2 plugin payloads that were accidentally omitted from the 0.54.2/0.54.2f portable-source archives. Their `src/` trees match the SHA-256 identities already declared by this package.
-- The managed-plugin public fallback now points to the matching 0.54.2g source package instead of the incomplete 0.54.2 archive.
-- Norm Prompt remains singleton; Norm Replies and Norm Runtime are read-only fan-out viewers and do not use named mutexes.
-- Explicit text byte-cursor reads are marked as streamed evidence so N1 records deterministic metadata instead of running the raw chunk through verification_value.
-- Portable-source generation excludes core/norm.exe; the installer builds and validates the executable from source.
-- The 0.54.2 action-boundary protected-literal/Bird behavior and oversize-recovery fixes remain intact.
-
-## 0.53.20 optional remote-agent/plugin installation
-
-Installer 1.6.9 adds shared chat/embedding provider fields plus explicit Jan, Vane, and OpenCode Tailscale endpoints on the Environment page. Managed public/optional plugins are reconciled checksum-first. Existing `src\` trees are hashed before any write; an exact target SHA is left untouched. A mismatch repairs only Norm-owned `src\` from the packaged release and re-hashes it; the pinned public 0.53.20 source is used only if that repair still fails. Missing plugins prefer the exact public 0.53.20 source and use the verified packaged adapter only as an offline fallback. Non-src plugin state/cache survives repair.
-
-
-
-## Portable remote SSE viewer
-
-The installed root includes `make_sse.bat`. Running it uses the installed `.venv` and current `config\settings.ini` to build a single `Norm-SSE.exe` beside the batch file. The generated viewer embeds the current Norm machine's tailnet activity `/events` endpoint, contains no Redis/PostgreSQL passwords or other Norm secrets, and can be copied to another Windows machine on the same tailnet. `Norm-SSE.exe` is read-only and reconnects automatically when the source Norm instance is offline or restarting.
-
-## Included capabilities
-
-- Adaptive single-chunk evidence streaming for large text reads: context-budgeted piece size, explicit seam markers, compact retained facts, and raw-payload eviction between N2 turns.
-- N1/N2 tool gating and loop supervision.
-- Session-only transactional /switch-model discovery/switching through the live Ollama API; every restart boots norm.
-- Single-source operator help from docs\help_menu.txt, loaded on demand by both prompt frontends.
-- Durable PostgreSQL task/memory/history state.
-- Redis prompt queues and hot validation pool.
-- Recent-only manual/background memory condensation.
-- Alternating scheduled regular/full maintenance on a configurable interval.
-- Manual /memory-condense -deep for bounded older-history compaction/validation without hierarchical merging.
-- Full-history condensation with configurable row-batch/sample sizing and conservative hierarchical merging of neighboring compact rows.
-- Canonical internal state_root and capability-specific file-access overrides.
-- Package-local 7-Zip archive support.
-- First-party PDF vision parsing.
-- Verified-download WeasyPrint 70.0 / Pango 1.58.2 runtime with package-pinned upstream URL/SHA and lazy repair helper.
-- Managed dynamic plugins and shared PostgreSQL pool.
-- Operator consoles and emergency shutdown coordination.
-
-## Current memory tuning
-
-config\runtime.json defaults:
-
-    scheduled_memory_interval_days = 7
-    regular_memory_window_days = 14
-    consolidation_batch_chars = 14000
-    consolidation_batch_target_chars = 1800
-    consolidation_snapshot_target_chars = 6000
-    deep_history_full_batch_rows = 200
-    deep_history_full_samples_per_batch = 12
-    deep_history_full_merge_max_records = 6
-
-These settings are re-read when a maintenance pass starts.
-
-## Documentation
-
-- docs\README.md — current operator/runtime overview.
-- docs\CURRENT_STATUS.md — concise current facts.
-- docs\DEVELOPMENT_NOTES.md — current implementation contracts.
-- docs\FUTURE_IMPLEMENTATION_NOTES.md — active backlog only.
-- docs\MAINTENANCE_VERIFICATION.md — current package evidence.
-- docs\RELEASE_NOTES.md — release/version history.
-
-## Package contract
-
-package-manifest.json is the installer-facing source contract.
-
-Installer 1.6.9 binds the portable-source ZIP by exact filename and SHA-256, migrates/preserves machine configuration/state, hashes existing managed plugin src before mutation, repairs only mismatched Norm src, installs missing optional plugins from verified public source, preserves a valid native WeasyPrint runtime or fetches/repairs it from the pinned official archive, validates its SHA-256 and real PDF render, and recreates/reuses generated environment/build output as appropriate.
-
-## 0.53.20 optional web plugin
-
-This package includes schema-2 `plugins\web_browser` v1.0.0 and exact direct pins for Playwright 1.63.0, Beautiful Soup 4.15.0, Soup Sieve 2.10, and Trafilatura 2.3.0. The plugin delegates its third-party web runtime to the installed `.venv`, so the portable plugin remains independently removable and does not require those libraries to be frozen into `norm.exe`.
-
-## 0.54.2 recovery scope and action-boundary protected-literal guard
-
-- Oversize recovery no longer invents `scope_items=[1]` for ordinary unnumbered work. Atomic-item limits apply only when a real numbered scope exists.
-- The existing upstream protected-literal transformation remains unchanged. N1 checks only concrete proposed actions, not N2's ambient reasoning.
-- The first denied action returns only `The Bird says No. The Worm won't Go.`; a later retry may receive a short safe workaround. Existing PostgreSQL pool/query/execute capabilities remain fully allowed, and guard state resets on restart.
-- Existing PostgreSQL pool/query/execute capabilities remain fully allowed; ordinary code analysis of credential usage is not blocked.
-
-## 0.54.2b Redis verification-pool replay
-
-Redis's existing validation pool is the sole hot reusable-evidence cache. N1 decides whether relevant cached observations are sufficiently applicable/current for N2's request; when they are, the selected exact replay payload is fetched from the companion Redis replay hash and delivered to N2. Otherwise the source runs again and the pool is refreshed. Information-only repeats are not blocked by the generic loop reset, the redundant process-local raw-result cache is removed, and large reads still permit only one raw chunk in an N2 turn. PostgreSQL remains the durable history/checkpoint layer.
-
-## 0.54.2a continuation context
-
-Large evidence streams use one replaceable raw chunk at a time. Ollama token counters trigger the existing checkpoint/requeue path at 5% remaining context headroom without a separate full-context rescan. The recent execution slice is retained losslessly in PostgreSQL; N1 distills the small task-applicable continuation that N2 receives on the same requeued step.
+**Security note:** A signed client PNG is a copyable bearer credential. A filename used as a password is exposed with the file. The master issuer seed is in server-master PNG metadata, so secure the master and never publish operational credentials. Auth is not native OpenSSH.
