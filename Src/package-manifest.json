@@ -1,7 +1,7 @@
 {
   "package_schema": 1,
   "name": "Norm",
-  "version": "0.55.8",
+  "version": "0.55.8r8",
   "package_type": "portable-source",
   "source_dir": "core",
   "entrypoint": "core/norm_main.py",
@@ -485,5 +485,40 @@
   "stegosplit_key": {
     "version": "0.2.0a1",
     "compiled_implementation": "Windows CPython 3.14 x64 .pyd modules"
+  },
+  "output_overflow": {
+    "implementation": "core/norm_runtime/output_overflow.py",
+    "user_report": "configured state_root/reports/final-overflow/*.md",
+    "redis_receipt": "norm:output:overflow:* (24h, verified readback)",
+    "condensation_attempts": 3,
+    "policy": "retain full generated original and submit shortest complete summary; no bypass of N1/N2 verification",
+    "normal_output_child_tasks": "not included; deferred"
+  },
+  "release_revision": "0.55.8-continuity-r8-celery",
+  "terminal_conclusion": {
+    "implementation": "core/norm_runtime/terminal_conclusion.py",
+    "worker": "core/norm_runtime/terminal_celery.py",
+    "launch": "tools/start_terminal_workers.py",
+    "worker_processes": 5,
+    "pool": "Windows solo process x5, 1 task per worker",
+    "redis_db": 5,
+    "queues": [
+      "norm-terminal"
+    ],
+    "use_ollama_only_for_semantic_checks": true,
+    "checks": [
+      "file_exists",
+      "directory_exists",
+      "sha256_matches",
+      "text_contains",
+      "model_review"
+    ],
+    "controller_poll_seconds": 3,
+    "deadline_seconds": 3600,
+    "max_checks": 24,
+    "report_card_prefix": "norm:terminal:v2:",
+    "successor_only_on_failed_work": true,
+    "completed_task_keeps_id": true,
+    "worker_runtime": "separate Windows Python processes; not embedded in norm.exe"
   }
 }

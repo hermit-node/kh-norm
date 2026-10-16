@@ -1,3 +1,18 @@
+> 0.55.8r8: Celery DB5 terminal workers (five Windows solo processes); deterministic file/hash/text checks without Ollama; paragraph-level verified response; successor ID only for proven missing work. See docs/TERMINAL_CONCLUSION_R8.md. Source-only ZIP; Installer 1.6.12 builds norm.exe.
+
+> 0.55.8 continuity r7 terminal source: single final-step Redis verification, successor handoff only if FALSE, restartable verified paragraphs. Based on installed r6 source. See docs/TERMINAL_CONCLUSION_R7.md. No Windows EXE rebuilt.
+
+> **0.55.8 continuity r6 source-only:** Preserves the original user request as an Ollama `user` message on generated N2 steps, while explicitly separating planning from **active-step execution** (no re-planning or redoing completed work). Includes all r5 token-budget and Redis/Markdown output-overflow changes. N2 without tools remains at 16k. See `docs/RELEASE_NOTES.md`. This ZIP is not a rebuilt Windows executable.
+
+### 0.55.8 continuity/supervision update (2026-10-09; source-only, not live-validated)
+
+- Ordinary 16-round step yields now use the existing PostgreSQL context-slice archive and N1 compact continuation handoff, preserving the previous cumulative checkpoint and negative findings across successive slices. The original task stays authoritative and raw execution remains recoverable.
+- Formal plan verification routes through the existing N1 Ollama client (same loaded model, N1 agent policy). N2 still drafts and performs its bounded pre-submission plan check.
+- Repeated identical file/directory reads and equivalent simple `git log` investigations are bounded by N1 per task/step; distinct file offsets and other Git queries remain usable. Repeated tool observations are reported separately from distinct evidence during task-budget reviews.
+- Repeated ordinary step-round yields prompt a bounded N1 stalled-step check. Only a positive substantive decomposition decision invokes the existing oversize-recovery child-task machinery; the default remains simple continuation.
+- **Important diagnostic caveat:** the observed ineffective run used Laguna, whereas restarting Norm returns the canonical `norm` model. Model quality and reset working state were uncontrolled variables. The observed loop does NOT independently prove these orchestrator changes are needed or effective. Run the same task on both models under controlled conditions before attributing causality.
+- Does not change installed configuration, model selection, installer, plug-in files, or compiled StegoSplit. Tests are offline/mock tests, not a live Windows end-to-end validation.
+
 ### 0.55.8 review-retry checkpoint-handoff revision (2026-10-09)
 
 - The N1 step-alignment retry now archives original request, primary task, step acceptance criteria, **unchanged N2-verified candidate**, full observed evidence, job metadata/working context, and previously completed-step progress in the existing PostgreSQL `task_context_slices` store.
@@ -66,6 +81,10 @@
 ## Norm 0.55.4 clean compiled portable source
 
 Compatible with Norm Installer 1.6.12, Windows Python 3.14 x64. Norm core is portable Python source that the installer compiles into norm.exe. Proprietary StegoSplit internals are precompiled native .pyd modules, accessed through readable plugin src/main.py adapters. StegoSplit Auth reuses Message's native V3 modules instead of duplicating them. Each plugin includes a developer README.md and a user-facing help.txt available with /help stegosplit-message, /help stegosplit-auth or /help stegosplit-key. Master and credential images are NEVER distributed in this package. Filename-derived passwords and hidden PNG file selection are convenience/obscurity only. Native SSH or a network-facing authentication endpoint are NOT provided.
+
+## 0.55.8 continuity r4 hotfix — source-only, not installed
+
+Builds upon the separately prepared 0.55.8 continuity r3 portable-source archive. Repairs three N2 context routing problems in `core/norm_runtime/prompt_worker.py`: independent bounded PostgreSQL prior-step retrieval even when Redis returns its standard JSON envelope; clearing stale compact-only metadata on non-headroom yields; and treating original user text as a reference inside generated step/recovery system instructions rather than repeating it as a fresh user-role request. Direct operator prompts continue to use the user role. No changes to plugin binaries or interfaces. Offline focused tests pass; not validated with live Ollama/Redis/PostgreSQL or Windows installer.
 
 # Norm 0.55.4 — Compiled StegoSplit portable-source package
 
