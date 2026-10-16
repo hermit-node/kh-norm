@@ -1,3 +1,7 @@
+# Norm 0.55.8r10 portable source - recovery contract integration
+
+Built from the verified r9 source, not the live installation. Adds the r10 objects boundary, retained live web import fixes, unchanged PDF reader source, failed-task console controls and verifier-confirmed automatic injection retirement. The live C:\Norm installation is unchanged. See `docs/RELEASE_NOTES.md` for scope and validation limitations.
+
 # Norm 0.55.8r9 — restore native N2 conclusion and N1 final acceptance
 
 **Source release (not a precompiled EXE), based on the user-supplied 0.55.8r8 ZIP.**

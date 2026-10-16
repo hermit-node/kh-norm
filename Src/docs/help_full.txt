@@ -36,7 +36,7 @@ Threads / input
       Switch to a thread by exact title, unique prefix, ID, or ID prefix.
   /multi
       Start multiline prompt entry; finish with ::send or cancel with ::cancel.
-  /inject-context [--task ID] TEXT
+  /inject-context [--task ID] [-persist|-forever|-no_expire] TEXT
       Save context for the current task tree without creating a new task.
   /repeat-submission
       Requeue the last submitted prompt verbatim.
@@ -112,7 +112,7 @@ Runtime control
 
 
 Context injection lifecycle (0.55.1):
-  /inject-context [--task ID] [--once|--keep] TEXT
+  /inject-context [--task ID] [--once|-persist|-forever|-no_expire] TEXT
     Opens a retirement checkbox unless --once (retire on verified completion) or
     --keep (persist until task conclusion) is supplied. Legacy injections retain
     their original behavior.

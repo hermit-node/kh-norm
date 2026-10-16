@@ -15,6 +15,11 @@ def runtime_root() -> Path:
 
 
 def workspace_root() -> Path:
+    import sys
+    # norm_runtime lives at <NormRoot>/core/norm_runtime; ensure <NormRoot>/core is importable
+    core_dir = str(runtime_root() / "core")
+    if core_dir not in sys.path:
+        sys.path.insert(0, core_dir)
     from norm_runtime.settings import load_path_settings
     return Path(load_path_settings(runtime_root())["workspace_root"]).resolve()
 

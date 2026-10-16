@@ -224,6 +224,22 @@ class N1Gatekeeper:
                 if review_handoff else ""
             )
         )
+        if "INTERNAL CHILD CONTRACT:" in str(verification_requirement):
+            review = (
+                "N1 RECOVERY-ANALYSIS CHILD REVIEW. The authoritative deliverable for "
+                "this child is structured recovery_analysis JSON, not the root user's "
+                "file, PDF, or final answer. The original request is reference material "
+                "for preserving intent and scope; it is NOT an uncompleted child work order. "
+                "ACCEPT if the analysis is accurate, scoped, structured, and adequately "
+                "supported by observed evidence. RETRY only for a defect in this child's "
+                "own assignment/structure/evidence. Never demand the root deliverable. "
+                "Return decision, reason, retry_instruction as strict JSON.\n\n"
+                f"ORIGINAL INTENT (reference only):\n{str(original_request)[:10000]}\n\n"
+                f"CHILD ASSIGNMENT:\n{str(step_prompt)[:12000]}\n\n"
+                f"CHILD ACCEPTANCE CRITERIA:\n{str(verification_requirement)[:4000]}\n\n"
+                f"CHILD RESULT:\n{str(candidate)[:22000]}\n\n"
+                f"OBSERVED EVIDENCE:\n{str(evidence)[:12000]}"
+            )
         try:
             profile = self._profile("step_review", num_predict=6000, timeout_seconds=300.0)
             # Guard against a prior oversized num_predict override consuming the
@@ -430,6 +446,20 @@ class N1Gatekeeper:
             f"AUTHORITATIVE USER REQUEST:\n{request}\n\nN2 FINAL CANDIDATE:\n{candidate}"
             + (f"\n\nCOMPLETED TASK CONTEXT/EVIDENCE:\n{str(context)[:36000]}" if context else "")
         )
+        if "INTERNAL_RESULT_KIND: recovery_analysis" in context:
+            prompt = (
+                "N1 INTERNAL RECOVERY-ANALYSIS ACCEPTANCE. This is a structured "
+                "analysis child, not the root user's final deliverable. Evaluate whether "
+                "the JSON correctly identifies verified completed work, unresolved "
+                "work, nonoverlapping scoped recovery units, and merge requirements. "
+                "Do not reject it for not yet producing the root deliverable. "
+                "Original user intent is reference context, not this child's execution "
+                "assignment. Return strict JSON with decision, reason, retry_instruction; "
+                "RETRY only for material inaccuracy, invalid structure/scope or weak evidence.\n\n"
+                f"CHILD ASSIGNMENT:\n{request}\n\n"
+                f"CHILD STRUCTURED CANDIDATE:\n{candidate}\n\n"
+                f"CONTEXT AND EVIDENCE:\n{str(context)[:36000]}"
+            )
         try:
             profile = self._profile("final_review", num_predict=self.final_num_predict, timeout_seconds=self.final_review_timeout_seconds)
             raw = self._review_generate(

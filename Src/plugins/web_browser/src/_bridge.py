@@ -28,7 +28,13 @@ def call(action: str, payload: dict, timeout_seconds: int = 180) -> dict:
     plugin_src = Path(__file__).resolve().parent
     env = os.environ.copy()
     prior = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = str(plugin_src) + (os.pathsep + prior if prior else "")
+    core_dir = root / "core"
+    paths = [str(plugin_src)]
+    if core_dir.is_dir():
+        paths.append(str(core_dir))
+    if prior:
+        paths.append(prior)
+    env["PYTHONPATH"] = os.pathsep.join(paths)
     proc = subprocess.run(
         [str(_venv_python()), "-m", "web_runtime.worker", action],
         input=json.dumps(payload, ensure_ascii=False),

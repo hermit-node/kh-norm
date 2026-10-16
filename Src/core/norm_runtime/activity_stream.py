@@ -220,7 +220,7 @@ def _activity_app(
                             payload.get("task_id"),
                             payload.get("content"),
                             payload.get("request_id"),
-                            payload.get("retire_when_satisfied", False),
+                            payload.get("retire_when_satisfied", True),
                         )
                     except ValueError as exc:
                         return web.json_response({"error": str(exc)}, status=400)

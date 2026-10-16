@@ -960,7 +960,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             return {"status": "unavailable", "scheduled": False, "reason": "worker is still initializing"}
         return worker_obj.request_memory_condense(full=bool(full), deep=bool(deep))
 
-    def request_inject_context(task_id: str | None, content: str, request_id: str, retire_when_satisfied: bool = False) -> dict:
+    def request_inject_context(task_id: str | None, content: str, request_id: str, retire_when_satisfied: bool = True) -> dict:
         worker_obj = resources.get("worker")
         injections = resources.get("context_injections")
         prompt_queue_obj = resources.get("prompt_queue")

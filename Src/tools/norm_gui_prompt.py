@@ -539,9 +539,9 @@ def main() -> int:
             if lowered == "/inject-context" or lowered.startswith("/inject-context "):
                 body = text[len("/inject-context"):].strip()
                 task_id = None
-                retirement = None
-                # Optional flags must precede literal instruction content.
-                while body.startswith("--"):
+                retirement = True
+                # Automatic retirement is the default. Explicit persistence opts out.
+                while body.startswith("-"):
                     if body.startswith("--task "):
                         chunks = body.split(maxsplit=2)
                         if len(chunks) < 2:
@@ -553,11 +553,11 @@ def main() -> int:
                     elif body == "--once" or body.startswith("--once "):
                         retirement = True
                         body = body[len("--once"):].strip()
-                    elif body == "--keep" or body.startswith("--keep "):
+                    elif body.split(maxsplit=1)[0] in {"--keep", "--persist", "-persist", "--forever", "-forever", "--no_expire", "-no_expire"}:
                         retirement = False
-                        body = body[len("--keep"):].strip()
+                        body = body[len(body.split(maxsplit=1)[0]):].strip()
                     else:
-                        print("Unknown /inject-context option. Use --task ID, --once, or --keep.")
+                        print("Unknown /inject-context option. Use --task ID, --once, -persist, -forever, or -no_expire.")
                         body = ""
                         break
                 if not body:
@@ -565,25 +565,6 @@ def main() -> int:
                 if not body:
                     print("Context injection cancelled.")
                     continue
-                if retirement is None:
-                    # A real selectable checkbox (not a model question). The default
-                    # is checked; fallback supports terminals without dialog rendering.
-                    try:
-                        from prompt_toolkit.shortcuts import checkboxlist_dialog
-                        checked = checkboxlist_dialog(
-                            title="Norm context injection",
-                            text="Retire this instruction when a completed step verifies it was fulfilled?",
-                            values=[("retire", "Retire when verified")],
-                            default_values=["retire"],
-                            ok_text="Save", cancel_text="Cancel",
-                        ).run()
-                        if checked is None:
-                            print("Context injection cancelled.")
-                            continue
-                        retirement = "retire" in checked
-                    except (OSError, RuntimeError):
-                        value = read_console_line("Retire when verified? [X] Yes / [ ] No (Y/n)> ").strip().lower()
-                        retirement = value not in {"n", "no", "0", "false"}
                 payload = {"task_id": task_id, "content": body, "request_id": str(uuid.uuid4()),
                            "retire_when_satisfied": bool(retirement)}
                 try:
@@ -695,6 +676,46 @@ def main() -> int:
                 for issue in durable_queue.get("errors", []):
                     print(f"WARNING: queue inventory incomplete: {issue}")
                 print("Read-only snapshot of GUI ingress, parked/uncertain delivery, all worker queue streams, and durable running/failed/suppressed tasks; nothing retried or changed.")
+                continue
+            if lowered == "/failed" or lowered.startswith("/failed "):
+                parts = text.split()
+                if len(parts) > 2 or (len(parts) == 2 and not parts[1].isdigit()):
+                    print("Usage: /failed [limit]")
+                    continue
+                limit = min(200, max(1, int(parts[1]) if len(parts) == 2 else 25))
+                try:
+                    result = post_json(ep["failed_tasks"], {"limit": limit}, timeout=20)
+                    rows = list(result.get("tasks") or [])
+                    print(f"FAILED TASKS ({len(rows)} shown):")
+                    for index, item in enumerate(rows):
+                        if not isinstance(item, dict):
+                            continue
+                        task_id = str(item.get("task_id") or "")
+                        title = str(item.get("title") or item.get("failed_step_name") or "")[:110]
+                        print(f"[{index}] {task_id} resumable={bool(item.get('resumable'))} {title}")
+                    if not rows:
+                        print("No failed tasks recorded.")
+                    print("Use /resume-failed <index|task_id> to resume a durable checkpoint.")
+                except Exception as exc:
+                    print(f"Could not read durable failed tasks: {exc}")
+                continue
+            if lowered == "/resume-failed" or lowered.startswith("/resume-failed "):
+                selector = text[len("/resume-failed"):].strip()
+                if not selector:
+                    print("Usage: /resume-failed <index|task_id>")
+                    continue
+                try:
+                    result = post_json(ep["resume_failed"], {"selector": selector}, timeout=20)
+                    print(json.dumps(result, ensure_ascii=False, indent=2))
+                except Exception as exc:
+                    print(f"Resume failed: {exc}")
+                continue
+            if lowered == "/flush-failed":
+                try:
+                    result = post_json(ep["flush_failed"], {}, timeout=20)
+                    print(json.dumps(result, ensure_ascii=False, indent=2))
+                except Exception as exc:
+                    print(f"Could not flush failed-task records: {exc}")
                 continue
             if lowered == "/queue" or lowered.startswith("/queue "):
                 parts = text.split()

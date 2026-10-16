@@ -28,6 +28,7 @@ from .resource_status import full_context_status, impaired_context_status, merge
 from .settings import load_path_settings
 from .voice_profile_context import load_active_voice_context
 from .invocation_source import invocation_header, work_invoke_source
+from .contract_boundary import validate_recovery_analysis_child, validate_recovery_handoff
 
 
 def _utc_now() -> datetime:
@@ -197,10 +198,9 @@ class PromptWorker:
         """Persist verifier-confirmed retirements; never infer completion from N2 prose."""
         if self.context_injections is None:
             return
-        # A model-only assertion cannot establish completion of external work.
-        if not any(isinstance(x, dict) and isinstance(x.get("result"), dict)
-                   and x["result"].get("ok") for x in (evidence or [])):
-            return
+        # The accepted structured verifier supplies explicit fulfilled ids.
+        # Text-only corrections need no tool result; external-work assertions
+        # remain subject to N1 evidence/artifact review before this call.
         try:
             verdict = json.loads(report)
             if verdict.get("verdict") != "accept":
@@ -1387,7 +1387,16 @@ class PromptWorker:
         return validate_final_candidate(payload)
 
     def _enqueue_final_verification(self, job: PromptJob, answer: str) -> None:
-        if "Full original report:" not in str(answer):
+        if str((job.metadata or {}).get("expected_result_kind") or "") == "recovery_analysis":
+            analysis = self._parse_recovery_analysis(
+                answer, parent_scope=self._recovery_scope_items(job))
+            answer = validate_recovery_analysis_child(
+                self._runtime_root(), task_id=job.task_id, step_id=job.step_id,
+                instruction=job.prompt, criterion=str((job.metadata or {}).get("verification") or ""),
+                original_prompt=str((job.metadata or {}).get("original_user_prompt") or ""),
+                parent_task_id=str((job.metadata or {}).get("parent_task_id") or ""),
+                analysis=analysis)
+        elif "Full original report:" not in str(answer):
             answer = self._prepare_final_report(job, answer)
         candidate = self._build_final_candidate(job, answer)
         message_id = str((job.metadata or {}).get("final_verification_node_id") or "")
@@ -1407,6 +1416,9 @@ class PromptWorker:
             "context_id": job.task_id,
             "original_user_prompt": str((job.metadata or {}).get("original_user_prompt") or ""),
             "task_user_prompt": str((job.metadata or {}).get("task_user_prompt") or (job.metadata or {}).get("original_user_prompt") or ""),
+            "expected_result_kind": str((job.metadata or {}).get("expected_result_kind") or "final_candidate"),
+            "parent_task_id": str((job.metadata or {}).get("parent_task_id") or ""),
+            "recovery_scope_items": list((job.metadata or {}).get("recovery_scope_items") or []),
             "ingrained_task_context": list((job.metadata or {}).get("ingrained_task_context") or []),
             "command_envelope": self._command_from_job(job),
             "verification_cycle": int((job.metadata or {}).get("verification_cycle") or 1),
@@ -1509,6 +1521,7 @@ class PromptWorker:
         envelope_context = {
             "original_user_request": (job.metadata or {}).get("original_user_prompt"),
             "primary_task_request": (job.metadata or {}).get("task_user_prompt"),
+            "expected_result_kind": (job.metadata or {}).get("expected_result_kind"),
             "current_step": job.prompt if job.request_type != "final_verification" else (job.metadata or {}).get("step_name"),
             "verification_requirement": (job.metadata or {}).get("verification"),
             "command": candidate.get("command"),
@@ -1517,10 +1530,31 @@ class PromptWorker:
             "evidence_count": candidate.get("evidence_count"),
             "resource_status": candidate.get("resource_status"),
         }
+        result_kind = str((job.metadata or {}).get("expected_result_kind") or "final_candidate")
+        if result_kind == "recovery_analysis":
+            try:
+                analysis = self._parse_recovery_analysis(
+                    str(candidate.get("user_reply") or ""),
+                    parent_scope=self._recovery_scope_items(job))
+                validate_recovery_analysis_child(
+                    self._runtime_root(), task_id=job.task_id,
+                    step_id=str((job.metadata or {}).get("n2_conclusion_step_id") or job.step_id),
+                    instruction=str((job.metadata or {}).get("task_user_prompt") or ""),
+                    criterion=str((job.metadata or {}).get("verification") or ""),
+                    original_prompt=str((job.metadata or {}).get("original_user_prompt") or ""),
+                    parent_task_id=str((job.metadata or {}).get("parent_task_id") or ""),
+                    analysis=analysis)
+            except (ValueError, RuntimeError) as exc:
+                return {"decision": "retry", "reason": str(exc),
+                        "retry_instruction": "Return valid scoped recovery-analysis JSON only.",
+                        "processing_failed": False}, False
         judgment = gate.judge_final_answer(
             request=str((job.metadata or {}).get("task_user_prompt") or (job.metadata or {}).get("original_user_prompt") or ""),
             candidate=str(candidate.get("user_reply") or ""),
-            context=(prior + "\n\nFINAL ENVELOPE METADATA:\n" + json.dumps(envelope_context, ensure_ascii=False, default=str)).strip(),
+            context=(("INTERNAL_RESULT_KIND: recovery_analysis; evaluate the structured recovery assessment, not the root deliverable.\n"
+                      if result_kind == "recovery_analysis" else "")
+                     + prior + "\n\nFINAL ENVELOPE METADATA:\n"
+                     + json.dumps(envelope_context, ensure_ascii=False, default=str)).strip(),
         )
         if bool(judgment.get("processing_failed")):
             return judgment, True
@@ -2045,6 +2079,12 @@ class PromptWorker:
             "context_policy": "This is a summary/index, not the complete history. Look up archived evidence selectively.",
         }
         compact = json.dumps(info, ensure_ascii=False)
+        marker = validate_recovery_handoff(
+            self._runtime_root(), parent_task_id=job.task_id,
+            parent_step_id=job.step_id, successor_task_id=child_id,
+            original_prompt=original, summary=compact)
+        if marker != "PASSED_TO:" + child_id:
+            raise VerifierProtocolError("Invalid designated recovery handoff")
         steps = (
             TaskStep("plan-breakdown", "Recovery lineage", "Existing failed task referenced; no new user request.",
                      "Lineage is recorded."),
@@ -2748,7 +2788,13 @@ class PromptWorker:
                 "step_name": title, "verification": verify,
                 "prompt_origin": prompt_origin, "context_id": child_id,
                 "original_user_prompt": original_user_prompt,
-                "task_user_prompt": task_user_prompt,
+                "task_user_prompt": instruction if prompt_origin in {
+                    "runtime_oversize_recovery_analysis", "runtime_oversize_recovery_unit"
+                } else task_user_prompt,
+                "expected_result_kind": (
+                    "recovery_analysis" if prompt_origin == "runtime_oversize_recovery_analysis"
+                    else "step_result" if prompt_origin == "runtime_oversize_recovery_unit"
+                    else "final_candidate"),
                 "ingrained_task_context": list((parent_job.metadata or {}).get("ingrained_task_context") or []),
                 "ingrained_detail_count": int((parent_job.metadata or {}).get("ingrained_detail_count") or 0),
                 "source_prompt_id": str((parent_job.metadata or {}).get("source_prompt_id") or ""),
@@ -2795,7 +2841,7 @@ class PromptWorker:
     def _recovery_scope_items(self, job: PromptJob) -> list[int]:
         metadata = job.metadata or {}
         supplied = metadata.get("recovery_scope_items")
-        if isinstance(supplied, list) and supplied:
+        if isinstance(supplied, list) and (supplied or metadata.get("expected_result_kind") == "recovery_analysis"):
             return self._normalize_scope_items(supplied, field="recovery_scope_items")
         scope = self._scope_items_from_text(job.prompt)
         if not scope:
@@ -4758,11 +4804,26 @@ class PromptWorker:
         if gate is None or not hasattr(gate, "judge_step_answer"):
             return True, []
         meta = dict(job.metadata or {})
+        expected_kind = str(meta.get("expected_result_kind") or "")
+        if expected_kind == "recovery_analysis":
+            try:
+                analysis = self._parse_recovery_analysis(
+                    answer, parent_scope=self._recovery_scope_items(job))
+                validate_recovery_analysis_child(
+                    self._runtime_root(), task_id=job.task_id, step_id=job.step_id,
+                    instruction=job.prompt, criterion=str(meta.get("verification") or ""),
+                    original_prompt=str(meta.get("original_user_prompt") or ""),
+                    parent_task_id=str(meta.get("parent_task_id") or ""),
+                    analysis=analysis)
+            except (ValueError, RuntimeError) as exc:
+                return False, [f"Wrong recovery-analysis result contract: {exc}"]
         judgment = gate.judge_step_answer(
             original_request=str(meta.get("original_user_prompt") or ""),
             task_request=str(meta.get("task_user_prompt") or meta.get("original_user_prompt") or ""),
             step_prompt=str(job.prompt or ""),
-            verification_requirement=str(meta.get("verification") or ""),
+            verification_requirement=(str(meta.get("verification") or "")
+                + ("\nINTERNAL CHILD CONTRACT: expected recovery_analysis JSON; original root request is reference only. Judge the structured assessment, not the root deliverable."
+                   if expected_kind == "recovery_analysis" else "")),
             candidate=str(answer),
             evidence=self._evidence_text(evidence),
         )

@@ -1,3 +1,24 @@
+## Norm 0.55.8r10 - portable-source recovery and live plugin preservation (2026-10-10)
+
+- Based on intact r9 N2-restored portable ZIP. No live C:\Norm code was overwritten.
+- Includes the eight existing C:\Norm\objects contract files/docs/tests; narrowly wires typed
+  recovery-analysis validation and PASSED_TO handoff preconditions without changing task IDs,
+  PostgreSQL/Redis ownership, the existing recovery coordinator or model selection.
+- Recovery-analysis child final output stays scoped JSON (no generic report wrapping).
+  N1 reviews the child assignment/result and evidence, not the unfinished root deliverable.
+- Carries forward only two changed live web-browser Python files:
+  plugins/web_browser/src/_bridge.py and src/web_runtime/browser.py. Both repair module
+  search paths so subprocess and in-process browser calls can import norm_runtime.settings.
+- Existing live vision_parse/file_read PDF plugin source files exactly match r9; the
+  existing PDF raster/text coverage code is retained, not replaced with unrelated live state.
+- Context injections retire on verifier-confirmed satisfaction by default with no popup;
+  opt out using /inject-context -persist, -forever, or -no_expire (also -- variants).
+  Legacy persisted records are not silently changed by the migration.
+- Restores console /failed [limit], /resume-failed <selector>, /flush-failed;
+  all use existing activity API/durable-worker controls, no new task system.
+- Staged-source unit tests only. No actual Windows EXE rebuild or live model, Redis,
+  PostgreSQL, GUI, installer or web navigation smoke test was performed.
+
 # Norm 0.55.8r9 — restore native N2 conclusion and N1 final acceptance
 
 **Source release (not a precompiled EXE), based on the user-supplied 0.55.8r8 ZIP.**

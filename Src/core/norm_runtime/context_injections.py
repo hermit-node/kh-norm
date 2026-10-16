@@ -25,7 +25,7 @@ class ContextInjections:
                 root_task_id text NOT NULL REFERENCES {}.task_runs(task_id) ON DELETE CASCADE,
                 content text NOT NULL CHECK(length(content) BETWEEN 1 AND 8000),
                 created_at timestamptz NOT NULL DEFAULT now(),
-                retire_when_satisfied boolean NOT NULL DEFAULT false,
+                retire_when_satisfied boolean NOT NULL DEFAULT true,
                 status text NOT NULL DEFAULT 'active',
                 status_updated_at timestamptz,
                 retired_by_step text,
@@ -44,7 +44,7 @@ class ContextInjections:
                 ON {}.task_context_injections(root_task_id, injection_id)
                 WHERE status='active' ''').format(schema))
 
-    def save(self, task_id, content, request_id, retire_when_satisfied=False):
+    def save(self, task_id, content, request_id, retire_when_satisfied=True):
         content = str(content or '').strip()
         if not content or len(content) > 8000:
             raise ValueError('Context must contain 1–8000 characters')
