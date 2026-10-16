@@ -1,6 +1,6 @@
-# Norm 0.55.9r11 - recovery-verifier
+# Norm 0.55.9r11 - gui-celery-hotfix
 
-Original archive SHA-256: 4ad3108fc0611e92ffeb324969b5ecd5a43df89e1a0654c16b34bee15ee22296
+Original archive SHA-256: 8fee7be1f5c4a6a7b9dd04b18b2fe6b9946af8de708ad073e330466e7fb53fd8
 
 Historical assessment: source-inventory-verified
 

@@ -499,7 +499,7 @@
     "policy": "retain full generated original and submit shortest complete summary; no bypass of N1/N2 verification",
     "normal_output_child_tasks": "not included; deferred"
   },
-  "release_revision": "r11 shared Chromium controls + PDF guards + Oct 12 verifier/recovery fault repairs",
+  "release_revision": "r11 merged October 12 browser/PDF/recovery with GUI PowerShell template and Celery worker shutdown fixes",
   "celery_tool_transport": {
     "transport": "Celery",
     "enabled_setting": "config/settings.ini:[celery].enabled",
@@ -601,5 +601,12 @@
     "failure_retention": "After failed recovery handoff retain parent SOS, Redis task history/evidence, PostgreSQL failure/checkpoints and temporary artifacts; clear only queued jobs",
     "limits": "N1 may still reject a truly incomplete plan. No automatic approval or task resurrection",
     "validation": "24 selected offline tests including historical failure patterns"
+  },
+  "r11_gui_celery_shutdown_hotfix": {
+    "desktop_gui": "Render only four explicit PowerShell placeholders; keep literal script braces to avoid unexpected brace formatting failure.",
+    "celery": "Recognize numeric --id for named graceful Celery destinations; preserve strict interpreter and script path ownership filters and PID-verified fallback.",
+    "stop_all": "Both /stop-all and /stop-all now retain common shutdown path; main/child PostgreSQL pools, Norm-owned Celery workers, browser/desktop helpers and operator windows.",
+    "validation": "25 selected offline tests passed, including simulated GUI startup, graceful Celery broadcast, PID-scoped fallback, and both command routes.",
+    "caveat": "No live shutdown or task scheduling performed while packaging."
   }
 }

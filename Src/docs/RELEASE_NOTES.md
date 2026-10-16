@@ -1,3 +1,10 @@
+### r11 GUI-helper / Celery shutdown hotfix (October 12, in-place revision)
+
+- tools/start_desktop_gui.py: fixed the unexpected brace field exception from applying Python str.format to PowerShell conditional block braces. Replaces only the four intended placeholders (python, args, root, user), leaving PowerShell braces intact and preserving interactive-user-only task protections.
+- core/norm_runtime/celery_shutdown.py: fixed double-escaped regex preventing extraction of Celery worker --id N. Graceful shutdown now addresses correctly named worker destinations before existing ownership-verified PID-scoped fallback. It still does NOT kill all Python processes.
+- Both /stop-all and /stop-all now use the same coordinator finally cleanup path: Norm-local Celery workers, main PostgreSQL pools, browser/desktop bridges, operator consoles and transport shutdown. Worker-local PostgreSQL pools have their own finally cleanup when graceful Celery shutdown succeeds.
+- Verified via 25 selected source regressions, including simulated PowerShell rendering, matching/foreign worker inventory, graceful shutdown broadcast and fallback. No real shutdown was triggered. This remains version 0.55.9r11; reinstall the updated package to replace an earlier r11 build.
+
 ### r11 recovery/verifier hotfix (October 12)
 
 - Traced live r10 task chat-41b80fe1-84b6-4132-b4b2-6560437c722e read-only: N2 step verifier returned internally contradictory accept verdicts three times, triggering a verifier error; then N1 rejected recovery plan three times over requested sentence substitutions, and the failed-handoff path fell through to destructive terminal cleanup.

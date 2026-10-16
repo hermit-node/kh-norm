@@ -45,7 +45,7 @@ def _owned_workers(root: Path) -> list[dict]:
             pid=int(item["ProcessId"])
             number=0
             import re
-            match=re.search(r"--id\\s+(\\d+)",cmd)
+            match=re.search(r"--id\s+(\d+)",cmd)
             if match:number=int(match.group(1))
             if pid > 0:
                 owned.append({"pid":pid,"number":number})

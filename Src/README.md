@@ -1,5 +1,11 @@
 # Norm 0.55.9r11 - Shared browser visibility and control
 
+This revised r11 also fixes the Windows Desktop GUI helper PowerShell
+brace-template error and Celery --id worker routing during graceful
+shutdown. Both /stop-all and /stop-all now retain their common cleanup
+path. Reinstall the refreshed r11 ZIP if using the earlier r11 build.
+
+
 r11 also repairs two traced verifier/recovery failures: inconsistent
 structured verifier ACCEPT results become actionable REVISE results,
 and the N1 recovery approval prompt excludes mere sentence polishing.

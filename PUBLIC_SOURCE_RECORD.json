@@ -1,12 +1,12 @@
 {
   "version": "0.55.9r11",
-  "variant": "recovery-verifier",
-  "tag": "v0.55.9r11-recovery-verifier",
-  "source_archive_sha256": "4ad3108fc0611e92ffeb324969b5ecd5a43df89e1a0654c16b34bee15ee22296",
-  "source_archive": "0.55.9r11--recovery-verifier--4ad3108fc061.zip",
+  "variant": "gui-celery-hotfix",
+  "tag": "v0.55.9r11-gui-celery-hotfix",
+  "source_archive_sha256": "8fee7be1f5c4a6a7b9dd04b18b2fe6b9946af8de708ad073e330466e7fb53fd8",
+  "source_archive": "0.55.9r11--gui-celery-hotfix--8fee7be1f5c4.zip",
   "quality": "source-inventory-verified",
   "known_issues": [],
-  "published_source_files": 304,
+  "published_source_files": 305,
   "omitted_paths": [
     "config/plugins.ini",
     "config/settings.ini",

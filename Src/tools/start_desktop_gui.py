@@ -82,9 +82,19 @@ if ($existing) {
     Register-ScheduledTask -TaskName $name -Action $action -Principal $principal -Description 'Local Norm GUI bridge in the interactive user session' | Out-Null
 }
 Start-ScheduledTask -TaskName $name
-""".format(python=str(pythonw).replace("'", "''"),
-           args=('-B "' + str(helper) + '"').replace("'", "''"),
-           root=str(ROOT).replace("'", "''"), user=user.replace("'", "''"))
+"""
+    # PowerShell uses literal { } for blocks. Python str.format() tried to
+    # parse those blocks and raised "unexpected '{' in field name".
+    # Replace ONLY the four intentional placeholders; leave PS braces intact.
+    replacements = {
+        "python": str(pythonw).replace("'", "''"),
+        "args": ('-B "' + str(helper) + '"').replace("'", "''"),
+        "root": str(ROOT).replace("'", "''"),
+        "user": user.replace("'", "''"),
+    }
+    import re
+    script = re.sub(r"\{(python|args|root|user)\}",
+                    lambda match: replacements[match.group(1)], script)
     encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
     out = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive",
                           "-EncodedCommand", encoded], capture_output=True,

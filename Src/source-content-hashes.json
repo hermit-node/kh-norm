@@ -2,7 +2,7 @@
   "schema": 1,
   "release": "0.55.9r11",
   "baseline": "Norm-0.55.9r10-portable-source.zip",
-  "file_count": 345,
+  "file_count": 346,
   "hash_algorithm": "sha256",
   "files": {
     ".gitattributes": {
@@ -18,8 +18,8 @@
       "sha256": "e774f5ea91a76af90b32d07d967a17a1e2741a3e99c67ee944536cb548e6a432"
     },
     "README.md": {
-      "bytes": 27541,
-      "sha256": "1686f85ac14c948e9339c35cf730bf57ca895912d19e71f3a0e8902b88f039e9"
+      "bytes": 27822,
+      "sha256": "b33464ace5d871a793174d066dff364a184173413e2aa3d2d7b8e9f4e6a0116c"
     },
     "Run-Norm.bat": {
       "bytes": 4112,
@@ -94,8 +94,8 @@
       "sha256": "1724e6f5dd41a262ef2d86033c310345e2dddfbf4e041ff938f1956dc919056d"
     },
     "core/norm_runtime/celery_shutdown.py": {
-      "bytes": 4892,
-      "sha256": "2e8242be69ea48b34679b2afd112ebbe2667e6593c75cd2ab362a39d3a5000f9"
+      "bytes": 4890,
+      "sha256": "627327e81f0129fca812d4f0555f7375efc65339ec01e4a192d0efa286f9bad8"
     },
     "core/norm_runtime/celery_tool_executor.py": {
       "bytes": 5865,
@@ -318,8 +318,8 @@
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
     },
     "docs/RELEASE_NOTES.md": {
-      "bytes": 140093,
-      "sha256": "d01bc49e1b728aff281747e246a18efa3c4bd37f86222765514edb0e2d15e9db"
+      "bytes": 141353,
+      "sha256": "b0c7cc34d31caeb97429747a993def0f11890c8b6329393494c3aeda6130fae4"
     },
     "docs/SHARED_BROWSER.md": {
       "bytes": 5519,
@@ -378,8 +378,8 @@
       "sha256": "814cf6e096ac167f56bbb47c98287818949ec13c65843574b3a733698c91f982"
     },
     "package-manifest.json": {
-      "bytes": 32749,
-      "sha256": "e8cda4c3fa8fa94e7368163e88b8e57605d1e4138c687325b97d4aef1c80788f"
+      "bytes": 33552,
+      "sha256": "4955903d07aee205c7d233a3d7bacc5bdbadc228676780336cdda74dabad8e6b"
     },
     "plugins/README.md": {
       "bytes": 721,
@@ -1078,8 +1078,8 @@
       "sha256": "72ac0e909ba41e4bdbb1c34a87e91e2361375e4f38f3d773fbd3d549c3d3bf58"
     },
     "tools/start_desktop_gui.py": {
-      "bytes": 4467,
-      "sha256": "9733bd0effa4aafc363c67e3822e416880440b68073a244e3284c53322449747"
+      "bytes": 4868,
+      "sha256": "010f902684fe3f375034b0d41f051e02ae399d5157d4aee4f0d4194eef3a4ba2"
     },
     "tools/start_norm_service.py": {
       "bytes": 2112,
@@ -1172,6 +1172,10 @@
     "tools/test_first_answer_preservation_0555.py": {
       "bytes": 4413,
       "sha256": "fc0233d348421be6ddf16dc3d11a55012948620d07c9ef3926fb6e885b2b52b8"
+    },
+    "tools/test_gui_celery_shutdown_r11.py": {
+      "bytes": 5737,
+      "sha256": "5da67f8d179a36d6c99823576b0031c43a2027b5ad69856264d9f7c9cda8e489"
     },
     "tools/test_invoke_source_0557.py": {
       "bytes": 4410,
