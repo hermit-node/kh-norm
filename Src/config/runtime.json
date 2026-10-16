@@ -21,7 +21,10 @@
     "task_round_limit": 128,
     "max_subtask_depth": 4,
     "max_length_continuations_per_slice": 3,
-    "max_oversize_recovery_cycles": 3
+    "max_oversize_recovery_cycles": 3,
+    "task_round_progress_review": 96,
+    "task_round_extension": 36,
+    "task_round_hard_limit": 384
   },
   "context_budget": {
     "enabled": true,

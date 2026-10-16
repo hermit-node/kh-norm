@@ -392,6 +392,7 @@ class N1Gatekeeper:
             "PostgreSQL retains the lossless execution context below. Produce only the SparkNotes/applicable working state "
             "that a fresh N2 slice needs to finish the same task correctly. Preserve settled decisions, verified facts, "
             "completed side effects that must not be repeated, unresolved work, and exact evidence/file/chunk cursors. "
+            "IMPORTANT: an assistant tool-call proposal without a following tool-result message was NOT executed; never list such a proposal as completed or verified. "
             "Discard raw bulk data, repeated chatter, obsolete hypotheses, and details irrelevant to finishing the task. "
             "A requeued slice is an internal continuation, NOT a new user turn. Return strict JSON only.\n\n"
             f"ORIGINAL TASK GOAL:\n{str(original_goal or '').strip()}\n\n"
@@ -456,6 +457,86 @@ class N1Gatekeeper:
         if next_action:
             lines.append("Next action: " + next_action)
         return "\n".join(lines).strip()
+
+
+    def review_task_round_progress(
+        self,
+        *,
+        task_id: str,
+        step_id: str,
+        task_rounds: int,
+        current_limit: int,
+        proposed_limit: int,
+        recent_evidence: list[dict[str, Any]],
+        step_state: list[dict[str, Any]],
+        progress_delta: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Decide whether a long-running task has earned another bounded round lease.
+
+        This is deliberately about *progress*, not activity. Dense productive turns are
+        allowed; repeated reads/reasoning without durable advancement should not buy
+        more runway. A failed N1 review is fail-closed for the extension only: the
+        task retains its already-granted rounds.
+        """
+        if not self.enabled:
+            return {
+                "extend": False,
+                "reason": "N1 disabled; no automatic task-round extension granted.",
+                "processing_failed": False,
+            }
+        schema = {
+            "type": "object",
+            "properties": {
+                "decision": {"type": "string", "enum": ["extend", "stop"]},
+                "reason": {"type": "string"},
+            },
+            "required": ["decision", "reason"],
+            "additionalProperties": False,
+        }
+        payload = {
+            "task_id": str(task_id),
+            "step_id": str(step_id),
+            "task_rounds": int(task_rounds),
+            "current_granted_limit": int(current_limit),
+            "proposed_granted_limit": int(proposed_limit),
+            "progress_since_previous_review": dict(progress_delta or {}),
+            "step_state": list(step_state or [])[-24:],
+            "recent_evidence": list(recent_evidence or [])[-24:],
+        }
+        prompt = (
+            "You are N1 reviewing whether an already-running Norm task has earned a small additional reasoning/tool-round lease. "
+            "Judge genuine forward progress, not raw activity or tool-call count. Dense turns with many useful tool calls are good. "
+            "EXTEND when the recent window materially advanced the task: completed/advanced steps or children, verified mutations, "
+            "resolved a prior failure, produced new distinct evidence that directly unlocked the next action, or otherwise changed durable task state. "
+            "STOP when the window is mostly churn: repeated checks of the same target, repeated failed actions, rediscovering the same conclusion, "
+            "or no meaningful movement toward completion. Do not demand that a long legitimate task finish within one window. "
+            "Return strict JSON only.\n\nTASK PROGRESS SNAPSHOT:\n" + json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+        )
+        profile = self._profile(
+            "task_budget_review", num_predict=900,
+            timeout_seconds=min(300.0, float(getattr(self.client, "timeout_seconds", None) or 300.0)),
+        )
+        try:
+            raw = self.client.generate(
+                prompt, think=profile["think"], temperature=profile["temperature"],
+                num_predict=profile["num_predict"], response_format=schema,
+                emit_stream=False, timeout_seconds=profile["timeout_seconds"],
+            )
+            parsed = OllamaClient.parse_json(raw)
+            decision = str(parsed.get("decision") or "stop").strip().lower()
+            reason = str(parsed.get("reason") or "").strip()[:1600]
+            return {
+                "extend": decision == "extend",
+                "reason": reason or ("genuine progress observed" if decision == "extend" else "insufficient genuine progress"),
+                "processing_failed": False,
+            }
+        except Exception as exc:
+            logging.exception("N1 task-round progress review failed task=%s step=%s", task_id, step_id)
+            return {
+                "extend": False,
+                "reason": f"N1 progress review failed: {type(exc).__name__}",
+                "processing_failed": True,
+            }
 
     def record_final_review_failure_pass(self) -> None:
         with self._lock:

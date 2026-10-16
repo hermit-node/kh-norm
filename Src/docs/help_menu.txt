@@ -52,6 +52,12 @@ Task control
       Explicitly resume scheduled maintenance that was suppressed or parked for attention.
   /flush-suppressed
       Permanently delete suppressed tasks and parked delivery records.
+  /failed
+      List recent failed tasks, newest first, including whether a durable manual-resume checkpoint exists.
+  /resume-failed N
+      Resume failed task index N (or use an exact task ID / unique task-ID prefix). The active round budget resets; lifetime telemetry is retained.
+  /flush-failed
+      Distill one general future-use lesson from failed tasks, then remove their runnable state, detailed task history/evidence, and stale background snapshots.
 
 Files / backup
   /delete-list

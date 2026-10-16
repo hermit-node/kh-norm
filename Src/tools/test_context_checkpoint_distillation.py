@@ -148,6 +148,7 @@ assert outcome["reason"] == "context_headroom_checkpoint"
 assert tools.executed == 0
 assert "not a new user request" in outcome["checkpoint"]
 assert outcome["resume_metadata"]["postgres_context_slice_index"] == 1
+assert outcome["resume_metadata"]["compact_resume_context"] is True
 assert gate.seen is not None
 assert gate.seen["original_goal"] == "original user task"
 row = durable.rows[("task", "step", 1)]
@@ -164,3 +165,16 @@ assert payload["context"]["continuation"] == outcome["checkpoint"]
 assert payload["instruction_source"] == "norm_internal"
 assert payload["original_user_request"] == "original user task"
 print("PASS context checkpoint distillation")
+
+# 0.54.2h did not write compact_resume_context, but it did persist these
+# headroom-yield markers. An already-parked h task must compact on its first i resume.
+legacy_job = PromptJob(
+    message_id="legacy-1", task_id="legacy", step_id="step", prompt="finish",
+    project_id="default", context="legacy distilled continuation", attempt=0, created_at=time.time(),
+    metadata={"last_yield_reason": "context_headroom_checkpoint", "context_checkpoint_remaining_fraction": 0.038},
+    chain_id="", previous_prompt_id="", next_prompt_id="", chain_index=0, recovery_attempted=False,
+)
+assert worker._compact_resume_requested(legacy_job) is True
+legacy_job.context = ""
+assert worker._compact_resume_requested(legacy_job) is False
+print("PASS legacy 0.54.2h compact-resume migration")

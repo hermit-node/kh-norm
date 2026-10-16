@@ -82,6 +82,9 @@ def _activity_app(
     suppress_task: Callable[[str | None, str], dict] | None,
     resume_maintenance: Callable[[], dict] | None,
     flush_suppressed: Callable[[], dict] | None,
+    failed_tasks: Callable[[int], dict] | None,
+    resume_failed: Callable[[str], dict] | None,
+    flush_failed: Callable[[], dict] | None,
     trash_list: Callable[[], dict] | None,
     trash_restore: Callable[[str], dict] | None,
     trash_purge: Callable[[], dict] | None,
@@ -236,6 +239,23 @@ def _activity_app(
                     if flush_suppressed is None:
                         return web.json_response({"error": "flush-suppressed control unavailable"}, status=503)
                     return web.json_response(await _call(flush_suppressed))
+                if path == "/control/failed":
+                    if failed_tasks is None:
+                        return web.json_response({"error": "failed-task control unavailable"}, status=503)
+                    limit = max(1, min(200, int(payload.get("limit") or 25)))
+                    return web.json_response(await _call(failed_tasks, limit))
+                if path == "/control/resume-failed":
+                    if resume_failed is None:
+                        return web.json_response({"error": "resume-failed control unavailable"}, status=503)
+                    selector = str(payload.get("selector") or "").strip()
+                    if not selector:
+                        return web.json_response({"error": "selector is required"}, status=400)
+                    result = await _call(resume_failed, selector)
+                    return web.json_response(result, status=200 if result.get("status") == "ok" else 409)
+                if path == "/control/flush-failed":
+                    if flush_failed is None:
+                        return web.json_response({"error": "flush-failed control unavailable"}, status=503)
+                    return web.json_response(await _call(flush_failed))
                 if path == "/control/delete-list":
                     if trash_list is None:
                         return web.json_response({"error": "trash list control unavailable"}, status=503)
@@ -291,6 +311,9 @@ def _activity_app(
             "/control/suppress-task",
             "/control/resume-maintenance",
             "/control/flush-suppressed",
+            "/control/failed",
+            "/control/resume-failed",
+            "/control/flush-failed",
             "/control/delete-list",
             "/control/restore-delete",
             "/control/delete-files",
@@ -316,6 +339,9 @@ def start_activity_server(
     suppress_task: Callable[[str | None, str], dict] | None = None,
     resume_maintenance: Callable[[], dict] | None = None,
     flush_suppressed: Callable[[], dict] | None = None,
+    failed_tasks: Callable[[int], dict] | None = None,
+    resume_failed: Callable[[str], dict] | None = None,
+    flush_failed: Callable[[], dict] | None = None,
     trash_list: Callable[[], dict] | None = None,
     trash_restore: Callable[[str], dict] | None = None,
     trash_purge: Callable[[], dict] | None = None,
@@ -338,6 +364,9 @@ def start_activity_server(
             suppress_task=suppress_task,
             resume_maintenance=resume_maintenance,
             flush_suppressed=flush_suppressed,
+            failed_tasks=failed_tasks,
+            resume_failed=resume_failed,
+            flush_failed=flush_failed,
             trash_list=trash_list,
             trash_restore=trash_restore,
             trash_purge=trash_purge,

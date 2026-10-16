@@ -454,6 +454,9 @@ class RedisPromptQueue:
     def _task_round_key(self, task_id: str) -> str:
         return f"{self.stream}:task-rounds:{task_id}"
 
+    def _task_round_budget_key(self, task_id: str) -> str:
+        return f"{self.stream}:task-round-budget:{task_id}"
+
     def task_rounds(self, task_id: str) -> int:
         value = self.r.get(self._task_round_key(task_id))
         return int(value or 0)
@@ -463,8 +466,34 @@ class RedisPromptQueue:
             raise ValueError("rounds must be non-negative")
         return int(self.r.incrby(self._task_round_key(task_id), int(rounds)))
 
+    def task_round_budget_state(
+        self, task_id: str, *, base_limit: int = 128, first_review: int = 96
+    ) -> dict[str, Any]:
+        raw = self.r.get(self._task_round_budget_key(task_id))
+        state: dict[str, Any] = {}
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    state = parsed
+            except (TypeError, ValueError, json.JSONDecodeError):
+                state = {}
+        state.setdefault("granted_limit", int(base_limit))
+        state.setdefault("next_review", int(first_review))
+        state.setdefault("reviews", 0)
+        state.setdefault("denied", False)
+        state.setdefault("last_review_round", 0)
+        return state
+
+    def set_task_round_budget_state(self, task_id: str, state: dict[str, Any]) -> None:
+        self.r.set(self._task_round_budget_key(task_id), json.dumps(dict(state or {}), ensure_ascii=False, sort_keys=True))
+
+    def reset_task_round_budget(self, task_id: str) -> None:
+        self.r.delete(self._task_round_budget_key(task_id))
+
     def reset_task_rounds(self, task_id: str) -> None:
         self.r.delete(self._task_round_key(task_id))
+        self.reset_task_round_budget(task_id)
 
     def yield_job(self, redis_id: str, job: PromptJob, checkpoint: str, *, reason: str, step_rounds: int, task_rounds: int) -> str:
         """Yield current node and its chain tail behind unrelated work, without failure."""
@@ -544,12 +573,12 @@ class RedisPromptQueue:
                 task_id = str(fields.get("task_id") or "").strip()
                 if task_id:
                     ids.add(task_id)
-        prefix = f"{self.stream}:task-rounds:"
-        for key in self.r.scan_iter(match=prefix + "*"):
-            text = key.decode() if isinstance(key, bytes) else str(key)
-            task_id = text[len(prefix):]
-            if task_id:
-                ids.add(task_id)
+        for prefix in (f"{self.stream}:task-rounds:", f"{self.stream}:task-round-budget:"):
+            for key in self.r.scan_iter(match=prefix + "*"):
+                text = key.decode() if isinstance(key, bytes) else str(key)
+                task_id = text[len(prefix):]
+                if task_id:
+                    ids.add(task_id)
         return ids
 
     def task_locations(self, task_id: str) -> dict[str, int]:
@@ -660,7 +689,7 @@ class RedisPromptQueue:
         return moved
 
     def cleanup_task(self, task_id: str) -> dict[str, int]:
-        counts = {"work": 0, "retry": 0, "escalation": 0, "dead": 0, "round_key": 0}
+        counts = {"work": 0, "retry": 0, "escalation": 0, "dead": 0, "round_key": 0, "budget_key": 0}
         streams = ((self.stream, "work"), (self.retry_stream, "retry"),
                    (self.escalation_stream, "escalation"), (self.dead_letter_stream, "dead"))
         for stream, label in streams:
@@ -671,6 +700,7 @@ class RedisPromptQueue:
                     self.r.xack(self.stream, self.group, *matched)
                 counts[label] += int(self.r.xdel(stream, *matched))
         counts["round_key"] = int(self.r.delete(self._task_round_key(task_id)))
+        counts["budget_key"] = int(self.r.delete(self._task_round_budget_key(task_id)))
         return counts
 
     # ------------------------------------------------------------------

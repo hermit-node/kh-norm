@@ -39,6 +39,9 @@ class NormConsole:
         self.suppress_task_url = control_base + "/suppress-task"
         self.resume_maintenance_url = control_base + "/resume-maintenance"
         self.flush_suppressed_url = control_base + "/flush-suppressed"
+        self.failed_url = control_base + "/failed"
+        self.resume_failed_url = control_base + "/resume-failed"
+        self.flush_failed_url = control_base + "/flush-failed"
         self.delete_list_url = control_base + "/delete-list"
         self.restore_delete_url = control_base + "/restore-delete"
         self.delete_files_url = control_base + "/delete-files"
@@ -267,6 +270,64 @@ class NormConsole:
         except Exception as exc:
             self.console.print(f"[red]Could not flush suppressed tasks: {exc}[/]")
 
+    def _failed_command(self, action: str, selector: str = "") -> None:
+        try:
+            if action == "list":
+                req = request.Request(
+                    self.failed_url,
+                    data=json.dumps({"limit": 50}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with request.urlopen(req, timeout=10) as response:
+                    result = json.loads(response.read().decode("utf-8"))
+                tasks = list(result.get("tasks") or [])
+                if not tasks:
+                    self.console.print("[yellow]No failed tasks.[/]")
+                    return
+                self.console.print("[bold]Failed tasks[/] (newest first; indexes are zero-based)")
+                for index, item in enumerate(tasks):
+                    resumable = "resume" if item.get("resumable") else "no-resume"
+                    title = str(item.get("title") or "[untitled]")
+                    task_id = str(item.get("task_id") or "")
+                    stage = str(item.get("failure_stage") or "unknown")
+                    rounds = int(item.get("rounds_at_failure") or 0)
+                    total = int(item.get("lifetime_rounds") or 0)
+                    self.console.print(
+                        f"  {index}: {title}  ({task_id})  [{stage}; {resumable}; rounds={rounds}; lifetime={total}]"
+                    )
+                return
+            if action == "resume":
+                req = request.Request(
+                    self.resume_failed_url,
+                    data=json.dumps({"selector": selector}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with request.urlopen(req, timeout=10) as response:
+                    result = json.loads(response.read().decode("utf-8"))
+                if result.get("resumed"):
+                    self.console.print(
+                        f"[yellow]Resumed failed task {result.get('title') or result.get('task_id')} with "
+                        f"{int(result.get('restored_jobs') or 0)} queued job(s); round budget reset.[/]"
+                    )
+                else:
+                    self.console.print(f"[yellow]Failed task not resumed: {result.get('reason') or result.get('status')}.[/]")
+                return
+            req = request.Request(self.flush_failed_url, data=b"{}", method="POST")
+            with request.urlopen(req, timeout=60) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            self.console.print(
+                f"[yellow]Flushed {int(result.get('deleted') or 0)} failed task(s); "
+                f"history rows {int(result.get('history_deleted') or 0)}; "
+                f"background snapshots invalidated {int(result.get('background_snapshots_invalidated') or 0)}.[/]"
+            )
+            lesson = str(result.get("lesson") or "").strip()
+            if lesson:
+                self.console.print(f"[cyan]Retained lesson:[/] {lesson}")
+        except Exception as exc:
+            self.console.print(f"[red]Failed-task operation failed: {exc}[/]")
+
     def _trash_command(self, action: str, deletion_id: str = "") -> None:
         try:
             if action == "list":
@@ -448,6 +509,12 @@ class NormConsole:
             threading.Thread(target=self._resume_maintenance, daemon=True).start()
         elif parts == ["/flush-suppressed"]:
             threading.Thread(target=self._flush_suppressed, daemon=True).start()
+        elif parts == ["/failed"]:
+            threading.Thread(target=self._failed_command, args=("list",), daemon=True).start()
+        elif parts and parts[0] == "/resume-failed" and len(parts) == 2:
+            threading.Thread(target=self._failed_command, args=("resume", parts[1]), daemon=True).start()
+        elif parts == ["/flush-failed"]:
+            threading.Thread(target=self._failed_command, args=("flush",), daemon=True).start()
         elif parts == ["/delete-list"]:
             threading.Thread(target=self._trash_command, args=("list",), daemon=True).start()
         elif parts and parts[0] == "/restore-delete" and len(parts) == 2:

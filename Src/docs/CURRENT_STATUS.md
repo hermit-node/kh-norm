@@ -1,6 +1,12 @@
 # Norm current status
 
-Current package: **Norm 0.54.2h** with **Installer 2.0.0**.
+Current package: **Norm 0.54.2i** with **Installer 2.0.0**.
+
+### Adaptive round leases + compact continuation (0.54.2i)
+
+- Task-round accounting remains unchanged, but 128 is no longer the only fixed outcome: N1 first reviews genuine progress at round 96 and can extend the granted budget by 36 rounds per review up to an absolute 384-round ceiling. Dense turns with many useful tool calls are not penalized; repeated checks/reasoning without durable state advancement do not earn another lease.
+- A budget safety-stop keeps a durable queue/checkpoint snapshot instead of becoming unrecoverable. `/failed` lists recent failed tasks, `/resume-failed N` restores the saved queue state with a fresh active round budget while retaining lifetime telemetry, and `/flush-failed` distills one reusable failure-prevention lesson before deleting failed task execution/history state and invalidating stale background snapshots.
+- A context-headroom checkpoint now marks the requeued slice as compact-resume. The next N2 request skips the bulky live working-memory/prior-step/background payloads and receives only the original/current instruction plus N1's compact continuation and evidence cursors; PostgreSQL keeps the lossless history. Existing 0.54.2h headroom checkpoints are recognized from their legacy yield markers on first resume. N1 explicitly treats a tool proposal without a following tool result as not executed.
 
 ### Single-primary-file planner discipline (0.54.2h)
 

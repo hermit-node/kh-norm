@@ -2,7 +2,13 @@
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.54.2h / Installer 2.0.0** package only. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.54.2i / Installer 2.0.0** package only. Version history belongs only in RELEASE_NOTES.md.
+
+### Adaptive round leases, resumable failed tasks, and compact headroom resume (0.54.2i)
+
+Norm 0.54.2i keeps the existing execution/tool behavior but turns the task-round ceiling into an N1-reviewed lease. N1 reviews genuine durable progress at round 96; productive tasks receive 36 more rounds at a time up to a hard ceiling of 384, while churn does not earn more runway. Budget safety-stops preserve a durable queue/checkpoint snapshot and can be listed with `/failed`, resumed with `/resume-failed N`, or learned-from-and-purged with `/flush-failed`. `/flush-failed` saves one generalized future-use lesson, removes failed-task execution/history state, and invalidates stale background-memory snapshots.
+
+Context-headroom requeues now resume from the compact N1 continuation instead of re-injecting the full task working memory, completed-step history, and background context that had already consumed the model window. PostgreSQL remains the lossless source of truth. N1 also treats a proposed tool call with no following tool result as unexecuted, preventing continuation notes from turning an interrupted proposal into a fictitious completed side effect.
 
 ### Single-primary-file planner discipline (0.54.2h)
 

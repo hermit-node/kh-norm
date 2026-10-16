@@ -339,6 +339,25 @@ class PostgresTaskLog:
                     updated_at timestamptz NOT NULL DEFAULT now()
                 )
             """).format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
+            cur.execute(sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {}.task_failures (
+                    task_id text PRIMARY KEY REFERENCES {}.task_runs(task_id) ON DELETE CASCADE,
+                    root_task_id text NOT NULL,
+                    failure_stage text NOT NULL,
+                    failure_reason text NOT NULL,
+                    resume_payload jsonb NOT NULL DEFAULT '{{}}'::jsonb,
+                    rounds_at_failure integer NOT NULL DEFAULT 0,
+                    lifetime_rounds integer NOT NULL DEFAULT 0,
+                    resume_count integer NOT NULL DEFAULT 0,
+                    resumable boolean NOT NULL DEFAULT false,
+                    failed_at timestamptz NOT NULL DEFAULT now(),
+                    resumed_at timestamptz,
+                    updated_at timestamptz NOT NULL DEFAULT now()
+                )
+            """).format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
+            cur.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {}.task_failures(failed_at DESC)").format(
+                sql.Identifier(f"idx_{self.schema}_task_failures_date"), sql.Identifier(self.schema)
+            ))
             cur.execute(sql.SQL("ALTER TABLE {}.task_runs ADD COLUMN IF NOT EXISTS effectiveness_note text").format(sql.Identifier(self.schema)))
             cur.execute(sql.SQL("ALTER TABLE {}.task_runs ADD COLUMN IF NOT EXISTS parent_task_id text").format(sql.Identifier(self.schema)))
             cur.execute(sql.SQL("ALTER TABLE {}.task_runs ADD COLUMN IF NOT EXISTS parent_step_id text").format(sql.Identifier(self.schema)))
@@ -706,6 +725,163 @@ class PostgresTaskLog:
                     raise ValueError(f"task is not suppressed: {task_id}")
             for task_id in members:
                 cur.execute(sql.SQL("UPDATE {}.task_runs SET status='running',updated_at=now() WHERE task_id=%s").format(sql.Identifier(self.schema)), (task_id,))
+
+    def record_task_failure(
+        self, task_id: str, *, root_task_id: str, stage: str, reason: str,
+        resume_payload: dict | None, rounds_at_failure: int, resumable: bool,
+    ) -> None:
+        task_id = str(task_id or "").strip()
+        if not task_id:
+            raise ValueError("task_id is required")
+        root_task_id = str(root_task_id or task_id).strip() or task_id
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("SELECT lifetime_rounds,resume_count FROM {}.task_failures WHERE task_id=%s").format(
+                sql.Identifier(self.schema)
+            ), (task_id,))
+            prior = cur.fetchone()
+            lifetime = int(prior[0] or 0) + max(0, int(rounds_at_failure or 0)) if prior else max(0, int(rounds_at_failure or 0))
+            resume_count = int(prior[1] or 0) if prior else 0
+            cur.execute(sql.SQL("""
+                INSERT INTO {}.task_failures(
+                    task_id,root_task_id,failure_stage,failure_reason,resume_payload,
+                    rounds_at_failure,lifetime_rounds,resume_count,resumable,failed_at,resumed_at,updated_at
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,now(),NULL,now())
+                ON CONFLICT(task_id) DO UPDATE SET
+                    root_task_id=EXCLUDED.root_task_id,
+                    failure_stage=EXCLUDED.failure_stage,
+                    failure_reason=EXCLUDED.failure_reason,
+                    resume_payload=EXCLUDED.resume_payload,
+                    rounds_at_failure=EXCLUDED.rounds_at_failure,
+                    lifetime_rounds=EXCLUDED.lifetime_rounds,
+                    resume_count=EXCLUDED.resume_count,
+                    resumable=EXCLUDED.resumable,
+                    failed_at=now(),resumed_at=NULL,updated_at=now()
+            """).format(sql.Identifier(self.schema)), (
+                task_id, root_task_id, str(stage or "unknown")[:200], str(reason or "")[:4000],
+                Jsonb(dict(resume_payload or {})), max(0, int(rounds_at_failure or 0)),
+                lifetime, resume_count, bool(resumable),
+            ))
+
+    def recent_failed_tasks(self, limit: int = 50) -> list[dict]:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                SELECT tr.task_id,tr.title,tr.task_kind,tr.parent_task_id,tr.task_depth,tr.updated_at,
+                       tf.root_task_id,tf.failure_stage,tf.failure_reason,tf.rounds_at_failure,
+                       tf.lifetime_rounds,tf.resume_count,tf.resumable,tf.failed_at,
+                       (SELECT ts.summary FROM {}.task_summaries ts WHERE ts.task_id=tr.task_id ORDER BY ts.created_at DESC LIMIT 1)
+                FROM {}.task_runs tr
+                LEFT JOIN {}.task_failures tf ON tf.task_id=tr.task_id
+                WHERE tr.status='failed'
+                ORDER BY COALESCE(tf.failed_at,tr.updated_at) DESC
+                LIMIT %s
+            """).format(sql.Identifier(self.schema), sql.Identifier(self.schema), sql.Identifier(self.schema)), (max(1, int(limit)),))
+            rows = cur.fetchall()
+        out = []
+        for row in rows:
+            out.append({
+                "task_id": str(row[0]), "title": str(row[1]), "task_kind": str(row[2] or "root"),
+                "parent_task_id": str(row[3] or ""), "task_depth": int(row[4] or 0),
+                "updated_at": row[5].isoformat() if row[5] else "", "root_task_id": str(row[6] or row[0]),
+                "failure_stage": str(row[7] or "unknown"), "failure_reason": str(row[8] or row[14] or "")[:2000],
+                "rounds_at_failure": int(row[9] or 0), "lifetime_rounds": int(row[10] or 0),
+                "resume_count": int(row[11] or 0), "resumable": bool(row[12]),
+                "failed_at": row[13].isoformat() if row[13] else (row[5].isoformat() if row[5] else ""),
+                "summary": str(row[14] or ""),
+            })
+        return out
+
+    def task_failure(self, task_id: str) -> dict | None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                SELECT root_task_id,failure_stage,failure_reason,resume_payload,rounds_at_failure,
+                       lifetime_rounds,resume_count,resumable,failed_at,resumed_at
+                FROM {}.task_failures WHERE task_id=%s
+            """).format(sql.Identifier(self.schema)), (task_id,))
+            row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "task_id": str(task_id), "root_task_id": str(row[0]), "failure_stage": str(row[1]),
+            "failure_reason": str(row[2]), "resume_payload": dict(row[3] or {}),
+            "rounds_at_failure": int(row[4] or 0), "lifetime_rounds": int(row[5] or 0),
+            "resume_count": int(row[6] or 0), "resumable": bool(row[7]),
+            "failed_at": row[8].isoformat() if row[8] else "",
+            "resumed_at": row[9].isoformat() if row[9] else "",
+        }
+
+    def resume_failed_task(self, task_id: str) -> dict:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("SELECT resumable,resume_payload,resume_count FROM {}.task_failures WHERE task_id=%s").format(
+                sql.Identifier(self.schema)
+            ), (task_id,))
+            row = cur.fetchone()
+            if not row:
+                raise ValueError(f"no resumable failure record for task: {task_id}")
+            if not bool(row[0]):
+                raise ValueError(f"failed task is not resumable: {task_id}")
+            payload = dict(row[1] or {})
+            cur.execute(sql.SQL("UPDATE {}.task_runs SET status='running',updated_at=now() WHERE task_id=%s AND status='failed'").format(
+                sql.Identifier(self.schema)
+            ), (task_id,))
+            if cur.rowcount != 1:
+                raise ValueError(f"task is not currently failed: {task_id}")
+            cur.execute(sql.SQL("UPDATE {}.task_failures SET resume_count=resume_count+1,resumed_at=now(),updated_at=now() WHERE task_id=%s").format(
+                sql.Identifier(self.schema)
+            ), (task_id,))
+        return payload
+
+    def re_fail_task_after_resume_error(self, task_id: str) -> None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("UPDATE {}.task_runs SET status='failed',updated_at=now() WHERE task_id=%s").format(
+                sql.Identifier(self.schema)
+            ), (task_id,))
+
+    def delete_failed_task_rows(self, task_ids: list[str]) -> int:
+        ids = [str(v) for v in dict.fromkeys(task_ids) if str(v or "").strip()]
+        if not ids:
+            return 0
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("SELECT task_id FROM {}.task_runs WHERE task_id=ANY(%s) AND status='failed'").format(
+                sql.Identifier(self.schema)
+            ), (ids,))
+            failed_ids = [str(row[0]) for row in cur.fetchall()]
+            if not failed_ids:
+                return 0
+            prepare_task_prune_cur(cur, self.schema, failed_ids)
+            cur.execute(sql.SQL("DELETE FROM {}.task_runs WHERE task_id=ANY(%s) AND status='failed'").format(
+                sql.Identifier(self.schema)
+            ), (failed_ids,))
+            return int(cur.rowcount or 0)
+
+    def purge_failed_task_history(self, task_ids: list[str]) -> int:
+        ids = [str(v) for v in dict.fromkeys(task_ids) if str(v or "").strip()]
+        if not ids:
+            return 0
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                DELETE FROM {}.task_history h
+                WHERE h.primary_task_id=ANY(%s)
+                   OR EXISTS (
+                       SELECT 1 FROM jsonb_array_elements_text(h.source_task_ids) src(task_id)
+                       WHERE src.task_id=ANY(%s)
+                   )
+            """).format(sql.Identifier(self.schema)), (ids, ids))
+            return int(cur.rowcount or 0)
+
+    def purge_task_maintenance_notes(self, task_ids: list[str], *, preserve_phase: str = "failed_task_lesson") -> int:
+        ids = [str(v) for v in dict.fromkeys(task_ids) if str(v or "").strip()]
+        if not ids:
+            return 0
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("DELETE FROM {}.runtime_maintenance_notes WHERE task_id=ANY(%s) AND phase<>%s").format(
+                sql.Identifier(self.schema)
+            ), (ids, str(preserve_phase)))
+            return int(cur.rowcount or 0)
+
+    def invalidate_background_snapshots(self) -> int:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("DELETE FROM {}.background_memory_snapshots").format(sql.Identifier(self.schema)))
+            return int(cur.rowcount or 0)
 
     def suppressed_task_ids(self, limit: int = 10000) -> list[str]:
         with self._connect() as conn, conn.cursor() as cur:

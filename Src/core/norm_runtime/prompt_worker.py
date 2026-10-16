@@ -38,7 +38,11 @@ class VerifierProtocolError(RuntimeError):
 
 
 class TaskRoundBudgetExceeded(RuntimeError):
-    pass
+    def __init__(self, message: str, *, checkpoint: str = "", step_rounds: int = 0, task_rounds: int = 0) -> None:
+        super().__init__(message)
+        self.checkpoint = str(checkpoint or "")
+        self.step_rounds = int(step_rounds or 0)
+        self.task_rounds = int(task_rounds or 0)
 
 
 class PromptWorker:
@@ -492,6 +496,166 @@ class PromptWorker:
             "cleanup_errors": cleanup_errors,
         }
 
+    def recent_failed_tasks(self, limit: int = 25) -> dict:
+        if not self.durable or not hasattr(self.durable, "recent_failed_tasks"):
+            return {"status": "unavailable", "count": 0, "tasks": []}
+        tasks = list(self.durable.recent_failed_tasks(limit=max(1, int(limit))) or [])
+        return {"status": "ok", "count": len(tasks), "tasks": tasks}
+
+    @staticmethod
+    def _resolve_failed_selector(tasks: list[dict], selector: str) -> dict:
+        selector = str(selector or "").strip()
+        if not tasks:
+            raise ValueError("there are no failed tasks")
+        if not selector:
+            raise ValueError("failed task selector is required")
+        if selector.isdigit():
+            index = int(selector)
+            if index < 0 or index >= len(tasks):
+                raise ValueError(f"failed task index {index} is out of range 0..{len(tasks)-1}")
+            return tasks[index]
+        exact = [item for item in tasks if str(item.get("task_id") or "") == selector]
+        if len(exact) == 1:
+            return exact[0]
+        prefix = [item for item in tasks if str(item.get("task_id") or "").startswith(selector)]
+        if len(prefix) == 1:
+            return prefix[0]
+        if len(prefix) > 1:
+            raise ValueError(f"task-id prefix {selector!r} matches multiple failed tasks; use a longer prefix")
+        raise ValueError(f"no failed task matched {selector!r}")
+
+    def resume_failed_task(self, selector: str) -> dict:
+        if not self.durable or not hasattr(self.durable, "recent_failed_tasks") or not hasattr(self.durable, "resume_failed_task"):
+            return {"status": "unavailable", "resumed": False, "reason": "durable failed-task state unavailable"}
+        tasks = list(self.durable.recent_failed_tasks(limit=500) or [])
+        selected = self._resolve_failed_selector(tasks, selector)
+        task_id = str(selected.get("task_id") or "")
+        if not bool(selected.get("resumable")):
+            return {"status": "conflict", "resumed": False, "task_id": task_id, "reason": "failed task has no resumable checkpoint"}
+
+        payload = self.durable.resume_failed_task(task_id)
+        queue_payload = payload.get("queue") if isinstance(payload, dict) else None
+        if not isinstance(queue_payload, dict):
+            self.durable.re_fail_task_after_resume_error(task_id)
+            return {"status": "error", "resumed": False, "task_id": task_id, "reason": "failure record has no queue snapshot"}
+
+        try:
+            self.queue.reset_task_rounds(task_id)
+            if hasattr(self.live, "cleanup"):
+                self.live.cleanup(task_id)
+            restored = self.queue.restore_task_jobs(queue_payload)
+            if not restored:
+                raise RuntimeError("no queued jobs were restored from the failure checkpoint")
+            failed_step = str(payload.get("failed_step_id") or selected.get("step_id") or "")
+            failed_name = str(payload.get("failed_step_name") or "manual-resume")
+            checkpoint = str(payload.get("checkpoint") or "Manual resume from durable failure checkpoint.")
+            if failed_step:
+                self.durable.checkpoint_step(StepResult(
+                    task_id=task_id, step_id=failed_step, name=failed_name,
+                    status=StepStatus.RUNNING, summary=checkpoint[:12000],
+                    verification="manual-resume", started_at=_utc_now(), completed_at=_utc_now(),
+                ))
+            return {
+                "status": "ok", "resumed": True, "task_id": task_id,
+                "title": str(selected.get("title") or ""),
+                "restored_jobs": len(restored),
+                "resume_count": int(selected.get("resume_count") or 0) + 1,
+                "round_budget": "reset",
+            }
+        except Exception:
+            self.durable.re_fail_task_after_resume_error(task_id)
+            self.queue.cleanup_task(task_id)
+            raise
+
+    def flush_failed(self) -> dict:
+        if not self.durable or not hasattr(self.durable, "recent_failed_tasks"):
+            return {"status": "unavailable", "deleted": 0, "reason": "durable failed-task state unavailable"}
+        failures = list(self.durable.recent_failed_tasks(limit=10000) or [])
+        task_ids = [str(item.get("task_id") or "") for item in failures if str(item.get("task_id") or "").strip()]
+        if not task_ids:
+            return {"status": "ok", "deleted": 0, "lesson": "", "reason": "no failed tasks"}
+
+        # Distill one general future-use lesson before deleting the detailed execution corpses.
+        samples = []
+        for item in failures[:80]:
+            samples.append(redact(
+                f"- stage={item.get('failure_stage') or 'unknown'}; title={item.get('title') or '[untitled]'}; "
+                f"reason={str(item.get('failure_reason') or '')[:900]}; summary={str(item.get('summary') or '')[:900]}"
+            ))
+        lesson_prompt = (
+            "Create one concise internal lesson for avoiding or recovering from these failed Norm tasks in the future. "
+            "Generalize the recurring failure mode and the workflow change that would prevent wasted churn. Preserve useful safeguards; "
+            "do not preserve task IDs, filenames that are irrelevant to the lesson, credentials, or verbose incident history. "
+            "Target 300-900 characters. Return only the lesson.\n\nFAILED TASK SAMPLE:\n" + "\n".join(samples)
+        )
+        lesson = ""
+        try:
+            lesson = str(self.client.generate(lesson_prompt, think=False, temperature=0.0, num_predict=420)).strip()
+        except Exception:
+            logging.exception("Failed-task lesson generation failed; using deterministic fallback")
+        if not lesson:
+            lesson = (
+                "When a task safety-stops, resume from the newest durable checkpoint and verified evidence instead of restarting broad discovery. "
+                "Treat repeated checks or repeated failures without state advancement as churn; decompose the blocked stage, verify the smallest corrective action, "
+                "and only grant more execution runway when durable progress is visible."
+            )
+        lesson = lesson[:1600]
+        try:
+            self.durable.record_maintenance_note(
+                "failed_task_lesson", lesson, details={
+                    "flushed_count": len(task_ids),
+                    "failure_stages": sorted({str(item.get("failure_stage") or "unknown") for item in failures}),
+                },
+            )
+        except Exception:
+            logging.exception("Could not persist failed-task lesson; refusing destructive flush")
+            raise
+
+        queue_cleanup = {"work": 0, "retry": 0, "escalation": 0, "dead": 0, "round_key": 0, "budget_key": 0}
+        cleanup_errors: list[str] = []
+        for task_id in task_ids:
+            try:
+                counts = self.queue.cleanup_task(task_id)
+                for key in queue_cleanup:
+                    queue_cleanup[key] += int(counts.get(key) or 0)
+            except Exception as exc:
+                cleanup_errors.append(f"queue:{task_id}:{type(exc).__name__}:{exc}")
+            try:
+                if hasattr(self.live, "cleanup"):
+                    self.live.cleanup(task_id)
+            except Exception as exc:
+                cleanup_errors.append(f"live:{task_id}:{type(exc).__name__}:{exc}")
+            try:
+                self._soft_delete_task_assets(task_id, suppressed=True)
+            except Exception as exc:
+                cleanup_errors.append(f"assets:{task_id}:{type(exc).__name__}:{exc}")
+            try:
+                if hasattr(self.durable, "purge_raw_thinking"):
+                    self.durable.purge_raw_thinking(task_id)
+            except Exception as exc:
+                cleanup_errors.append(f"thinking:{task_id}:{type(exc).__name__}:{exc}")
+            try:
+                paths = load_path_settings(self._runtime_root())
+                retention = Path(paths["workspace_root"]) / str(self._runtime_config().get("task_storage", {}).get("retention_manifest_dir", ".norm-task-retention"))
+                cleanup_task_temp(paths["temp_root"], task_id, self.durable, retention_root=retention, deletion_queue=(self._worker_tools().deletion_queue if self._worker_tools() is not None else None))
+            except Exception as exc:
+                cleanup_errors.append(f"temp:{task_id}:{type(exc).__name__}:{exc}")
+
+        history_deleted = self.durable.purge_failed_task_history(task_ids) if hasattr(self.durable, "purge_failed_task_history") else 0
+        notes_deleted = self.durable.purge_task_maintenance_notes(task_ids, preserve_phase="failed_task_lesson") if hasattr(self.durable, "purge_task_maintenance_notes") else 0
+        deleted = self.durable.delete_failed_task_rows(task_ids) if hasattr(self.durable, "delete_failed_task_rows") else 0
+        snapshots_invalidated = self.durable.invalidate_background_snapshots() if hasattr(self.durable, "invalidate_background_snapshots") else 0
+        return {
+            "status": "ok" if not cleanup_errors else "partial",
+            "deleted": int(deleted),
+            "lesson": lesson,
+            "history_deleted": int(history_deleted),
+            "maintenance_notes_deleted": int(notes_deleted),
+            "background_snapshots_invalidated": int(snapshots_invalidated),
+            "queue_cleanup": queue_cleanup,
+            "cleanup_errors": cleanup_errors,
+        }
+
     def wait_idle(self, timeout: float | None = None) -> bool:
         return self._idle.wait(timeout=timeout)
 
@@ -707,29 +871,42 @@ class PromptWorker:
             task_memory = ""
             prior = ""
             background = ""
-            resource_status = merge_resource_status((job.metadata or {}).get("resource_status"))
-            if hasattr(self.live, "working_memory"):
-                task_memory = self.live.working_memory(job.task_id)
-            if not task_memory.strip() and self.durable and hasattr(self.durable, "completed_step_context"):
-                try:
-                    prior = self.durable.completed_step_context(job.task_id, job.step_id, max_chars=None)
-                except psycopg.Error as exc:
-                    resource_status = merge_resource_status(
-                        resource_status,
-                        impaired_context_status("postgres", f"{type(exc).__name__}: {exc}"),
-                    )
-                    logging.warning("PostgreSQL prior-step context unavailable; continuing impaired task=%s step=%s error=%s", job.task_id, job.step_id, exc)
-            if self.durable and hasattr(self.durable, "background_memory_context"):
-                try:
-                    background = self.durable.background_memory_context(
-                        max_chars=int(self._runtime_config().get("memory", {}).get("background_context_chars", 32000))
-                    )
-                except psycopg.Error as exc:
-                    resource_status = merge_resource_status(
-                        resource_status,
-                        impaired_context_status("postgres", f"{type(exc).__name__}: {exc}"),
-                    )
-                    logging.warning("PostgreSQL background context unavailable; continuing impaired task=%s step=%s error=%s", job.task_id, job.step_id, exc)
+            metadata_resume = dict(job.metadata or {})
+            resource_status = merge_resource_status(metadata_resume.get("resource_status"))
+            compact_resume = self._compact_resume_requested(job)
+            if compact_resume:
+                # A context-headroom checkpoint already asked N1 to distill the full
+                # active execution state into job.context. Re-injecting Redis's entire
+                # task event stream here defeats that compaction and can restart the
+                # fresh model slice at ~95%+ context utilization. Keep Redis/Postgres
+                # lossless for audit/recovery, but feed N2 only the compact continuation.
+                logging.info(
+                    "Using compact continuation context task=%s step=%s continuation_chars=%s",
+                    job.task_id, job.step_id, len(str(job.context or "")),
+                )
+            else:
+                if hasattr(self.live, "working_memory"):
+                    task_memory = self.live.working_memory(job.task_id)
+                if not task_memory.strip() and self.durable and hasattr(self.durable, "completed_step_context"):
+                    try:
+                        prior = self.durable.completed_step_context(job.task_id, job.step_id, max_chars=None)
+                    except psycopg.Error as exc:
+                        resource_status = merge_resource_status(
+                            resource_status,
+                            impaired_context_status("postgres", f"{type(exc).__name__}: {exc}"),
+                        )
+                        logging.warning("PostgreSQL prior-step context unavailable; continuing impaired task=%s step=%s error=%s", job.task_id, job.step_id, exc)
+                if self.durable and hasattr(self.durable, "background_memory_context"):
+                    try:
+                        background = self.durable.background_memory_context(
+                            max_chars=int(self._runtime_config().get("memory", {}).get("background_context_chars", 32000))
+                        )
+                    except psycopg.Error as exc:
+                        resource_status = merge_resource_status(
+                            resource_status,
+                            impaired_context_status("postgres", f"{type(exc).__name__}: {exc}"),
+                        )
+                        logging.warning("PostgreSQL background context unavailable; continuing impaired task=%s step=%s error=%s", job.task_id, job.step_id, exc)
             recovery = self._progress_oversize_recovery(redis_id, job, prior)
             if recovery.get("parked"):
                 return
@@ -806,7 +983,10 @@ class PromptWorker:
                 self._handle_cancelled(redis_id, job, name, started, str(exc))
             return
         except TaskRoundBudgetExceeded as exc:
-            self._handle_pathological_failure(redis_id, job, name, started, "task-round-budget", str(exc))
+            self._handle_pathological_failure(
+                redis_id, job, name, started, "task-round-budget", str(exc),
+                resume_checkpoint=getattr(exc, "checkpoint", ""),
+            )
             return
         except VerifierProtocolError as exc:
             self._handle_pathological_failure(redis_id, job, name, started, "verifier", str(exc))
@@ -946,6 +1126,23 @@ class PromptWorker:
             "input_has_media": False, "output_requires_media": False,
             "expected_output": {"type": "answer", "format": "text"},
         }, job.prompt)
+
+    @staticmethod
+    def _compact_resume_requested(job: PromptJob) -> bool:
+        """Return True when a yielded step should resume from distilled context only.
+
+        0.54.2h already persisted distilled headroom checkpoints but did not add
+        ``compact_resume_context``. Its ``last_yield_reason`` and headroom-fraction
+        metadata are accepted as migration markers so an h task parked before an
+        upgrade gets the compact path on its first 0.54.2i resume.
+        """
+        metadata = dict(job.metadata or {})
+        if not str(job.context or "").strip():
+            return False
+        return bool(metadata.get("compact_resume_context")) or (
+            str(metadata.get("last_yield_reason") or "").strip() == "context_headroom_checkpoint"
+            or "context_checkpoint_remaining_fraction" in metadata
+        )
 
     def _typed_prompt(self, job: PromptJob, request_type: str, *, task_memory: str = "", prior: str = "", background: str = "", resource_status: dict | None = None) -> str:
         directives = {
@@ -1665,8 +1862,43 @@ class PromptWorker:
         )
         (self._runtime_root() / "SOS.readme").write_text(body, encoding="utf-8")
 
-    def _handle_pathological_failure(self, redis_id: str, job: PromptJob, name: str, started, stage: str, error: str) -> None:
-        self._write_sos(job, stage, error, "Inspect SOS and logs; fix the failing stage, then resubmit deliberately.")
+    def _handle_pathological_failure(
+        self, redis_id: str, job: PromptJob, name: str, started, stage: str, error: str,
+        *, resume_checkpoint: str = "",
+    ) -> None:
+        resumable = bool(str(resume_checkpoint or "").strip())
+        suggestion = (
+            "Use /failed then /resume-failed <index> to continue from the durable checkpoint."
+            if resumable else
+            "Inspect SOS and logs; fix the failing stage, then resubmit deliberately."
+        )
+        self._write_sos(job, stage, error, suggestion)
+
+        queue_snapshot = self.queue.snapshot_task_jobs(job.task_id) if resumable else {}
+        checkpoint = str(resume_checkpoint or "").strip()
+        if resumable and isinstance(queue_snapshot, dict):
+            # Replace the currently claimed node's stale context with the compact
+            # failure checkpoint. Future nodes remain intact in the same snapshot.
+            for item in list(queue_snapshot.get("jobs") or []):
+                data = item.get("job") if isinstance(item, dict) else None
+                if not isinstance(data, dict):
+                    continue
+                same_node = str(data.get("message_id") or "") == str(job.message_id or "")
+                same_step = str(data.get("step_id") or "") == str(job.step_id or "")
+                if not (same_node or same_step):
+                    continue
+                meta = dict(data.get("metadata") or {})
+                meta.update(dict(job.metadata or {}))
+                meta["compact_resume_context"] = True
+                meta["manual_failure_resume"] = True
+                meta["last_yield_reason"] = "task_round_budget"
+                data["metadata"] = meta
+                data["context"] = checkpoint
+                data["attempt"] = 0
+                data["recovery_attempted"] = False
+                data["created_at"] = time()
+                break
+
         result = StepResult(
             task_id=job.task_id, step_id=job.step_id, name=name,
             status=StepStatus.FAILED, summary=f"Stopped safely during {stage}",
@@ -1678,7 +1910,35 @@ class PromptWorker:
             self.durable.finalize_task(job.task_id, result.summary + ': ' + error[:1200], 'failed')
             if not self.durable.terminal_summary_verified(job.task_id):
                 raise RuntimeError('durable failure summary verification failed')
+            if hasattr(self.durable, "record_task_failure"):
+                root_id = job.task_id
+                if hasattr(self.durable, "root_task_id"):
+                    root_id = str(self.durable.root_task_id(job.task_id) or job.task_id)
+                self.durable.record_task_failure(
+                    job.task_id, root_task_id=root_id, stage=stage, reason=error[:4000],
+                    resume_payload={
+                        "queue": queue_snapshot,
+                        "checkpoint": checkpoint,
+                        "failed_step_id": job.step_id,
+                        "failed_step_name": name,
+                    },
+                    rounds_at_failure=self.queue.task_rounds(job.task_id),
+                    resumable=resumable,
+                )
         self.live.step_failed(job.task_id, job.step_id, error[:2000])
+
+        if resumable:
+            # Keep durable task artifacts/history intact for an explicit operator resume,
+            # but clear every live queue/counter copy so nothing auto-restarts.
+            queue_counts = self.queue.cleanup_task(job.task_id)
+            if hasattr(self.live, "cleanup"):
+                self.live.cleanup(job.task_id)
+            logging.error(
+                "Prompt safety-stopped resumably task=%s step=%s stage=%s queue=%s",
+                job.task_id, job.step_id, stage, queue_counts,
+            )
+            return
+
         self._clear_terminal_redis(job.task_id)
         logging.error("Prompt safety-stopped task=%s step=%s stage=%s", job.task_id, job.step_id, stage)
 
@@ -1733,6 +1993,119 @@ class PromptWorker:
         step_limit = max(1, int(worker.get("step_round_limit", 16)))
         task_limit = max(step_limit, int(worker.get("task_round_limit", 128)))
         return step_limit, task_limit
+
+    def _task_round_policy(self) -> dict[str, int]:
+        worker = self._runtime_config().get("worker", {}) or {}
+        step_limit = max(1, int(worker.get("step_round_limit", 16)))
+        base_limit = max(step_limit, int(worker.get("task_round_limit", 128)))
+        first_review = max(1, min(base_limit - 1, int(worker.get("task_round_progress_review", 96))))
+        extension = max(1, int(worker.get("task_round_extension", 36)))
+        hard_limit = max(base_limit, int(worker.get("task_round_hard_limit", 384)))
+        return {
+            "step_limit": step_limit,
+            "base_limit": base_limit,
+            "first_review": first_review,
+            "extension": extension,
+            "hard_limit": hard_limit,
+        }
+
+    def _task_progress_snapshot(self, job: PromptJob, *, previous_evidence_count: int = 0) -> tuple[dict, list[dict], list[dict]]:
+        step_state: list[dict] = []
+        if self.durable is not None and hasattr(self.durable, "task_plan_snapshot"):
+            try:
+                snap = self.durable.task_plan_snapshot(job.task_id) or {}
+                step_state = list(snap.get("steps") or [])
+            except Exception:
+                logging.exception("Could not read task plan snapshot for budget review task=%s", job.task_id)
+        evidence: list[dict] = []
+        if hasattr(self.live, "task_evidence"):
+            try:
+                evidence = list(self.live.task_evidence(job.task_id) or [])
+            except Exception:
+                logging.exception("Could not read live task evidence for budget review task=%s", job.task_id)
+        completed_steps = sum(1 for item in step_state if str(item.get("status") or "") == "completed")
+        running_steps = sum(1 for item in step_state if str(item.get("status") or "") == "running")
+        failed_steps = sum(1 for item in step_state if str(item.get("status") or "") == "failed")
+        mutations = 0
+        verified_mutations = 0
+        distinct_targets: set[str] = set()
+        for item in evidence:
+            if not isinstance(item, dict):
+                continue
+            tool = str(item.get("tool") or "")
+            result = item.get("result") if isinstance(item.get("result"), dict) else {}
+            arguments = item.get("arguments") if isinstance(item.get("arguments"), dict) else {}
+            path = str(result.get("path") or arguments.get("path") or "").strip()
+            if path:
+                distinct_targets.add(path)
+            if result.get("ok") and (tool in {"write_file", "replace_text"} or result.get("file_mutation")):
+                mutations += 1
+            if bool(item.get("deterministic_verification")) and result.get("ok"):
+                verified_mutations += 1
+        metrics = {
+            "evidence_count": len(evidence),
+            "completed_steps": completed_steps,
+            "running_steps": running_steps,
+            "failed_steps": failed_steps,
+            "verified_mutations": verified_mutations,
+            "mutations": mutations,
+            "distinct_targets": len(distinct_targets),
+        }
+        start = max(0, min(len(evidence), int(previous_evidence_count or 0)))
+        recent = evidence[start:]
+        return metrics, recent[-24:], step_state[-24:]
+
+    def _maybe_extend_task_round_budget(
+        self, job: PromptJob, task_rounds: int, current_limit: int, budget_state: dict, policy: dict[str, int]
+    ) -> tuple[int, dict]:
+        hard_limit = int(policy["hard_limit"])
+        if current_limit >= hard_limit or bool(budget_state.get("denied")):
+            return current_limit, budget_state
+        next_review = int(budget_state.get("next_review") or policy["first_review"])
+        if task_rounds < next_review:
+            return current_limit, budget_state
+
+        previous_metrics = dict(budget_state.get("metrics") or {})
+        metrics, recent_evidence, step_state = self._task_progress_snapshot(
+            job, previous_evidence_count=int(previous_metrics.get("evidence_count") or 0)
+        )
+        delta = {
+            key: int(metrics.get(key) or 0) - int(previous_metrics.get(key) or 0)
+            for key in ("evidence_count", "completed_steps", "verified_mutations", "mutations", "distinct_targets")
+        }
+        proposed_limit = min(hard_limit, current_limit + int(policy["extension"]))
+        if self.n1_gatekeeper is None or not hasattr(self.n1_gatekeeper, "review_task_round_progress"):
+            judgment = {"extend": False, "reason": "N1 progress review unavailable", "processing_failed": True}
+        else:
+            judgment = self.n1_gatekeeper.review_task_round_progress(
+                task_id=job.task_id, step_id=job.step_id, task_rounds=task_rounds,
+                current_limit=current_limit, proposed_limit=proposed_limit,
+                recent_evidence=recent_evidence, step_state=step_state, progress_delta=delta,
+            )
+        budget_state = dict(budget_state or {})
+        budget_state["reviews"] = int(budget_state.get("reviews") or 0) + 1
+        budget_state["last_review_round"] = int(task_rounds)
+        budget_state["last_review_reason"] = str(judgment.get("reason") or "")[:1600]
+        budget_state["metrics"] = metrics
+        if bool(judgment.get("extend")):
+            current_limit = proposed_limit
+            budget_state["granted_limit"] = current_limit
+            budget_state["next_review"] = min(hard_limit, next_review + int(policy["extension"]))
+            budget_state["denied"] = False
+            logging.info(
+                "N1 extended task round budget task=%s step=%s rounds=%s new_limit=%s next_review=%s reason=%s",
+                job.task_id, job.step_id, task_rounds, current_limit, budget_state["next_review"], budget_state["last_review_reason"][:500],
+            )
+        else:
+            budget_state["granted_limit"] = current_limit
+            budget_state["denied"] = True
+            logging.warning(
+                "N1 declined task round extension task=%s step=%s rounds=%s limit=%s reason=%s",
+                job.task_id, job.step_id, task_rounds, current_limit, budget_state["last_review_reason"][:500],
+            )
+        if hasattr(self.queue, "set_task_round_budget_state"):
+            self.queue.set_task_round_budget_state(job.task_id, budget_state)
+        return current_limit, budget_state
 
     def _worker_tools(self):
         if hasattr(self, "_slice_file_tools"):
@@ -3045,8 +3418,16 @@ class PromptWorker:
     def _run_tool_slice(self, job: PromptJob, prompt: str, tools) -> dict:
         import json
 
-        step_limit, task_limit = self._slice_limits()
+        policy = self._task_round_policy()
+        step_limit = int(policy["step_limit"])
         task_rounds = self.queue.task_rounds(job.task_id)
+        if hasattr(self.queue, "task_round_budget_state"):
+            budget_state = self.queue.task_round_budget_state(
+                job.task_id, base_limit=int(policy["base_limit"]), first_review=int(policy["first_review"])
+            )
+        else:
+            budget_state = {"granted_limit": int(policy["base_limit"]), "next_review": int(policy["first_review"])}
+        task_limit = min(int(policy["hard_limit"]), max(int(policy["base_limit"]), int(budget_state.get("granted_limit") or policy["base_limit"])))
         gate_instructions = (
             self.n1_gatekeeper.instructions()
             if self.n1_gatekeeper is not None
@@ -3082,6 +3463,11 @@ class PromptWorker:
         active_raw_stream_id = ""
         active_raw_piece = 0
         while step_rounds < step_limit and task_rounds < task_limit:
+            task_limit, budget_state = self._maybe_extend_task_round_budget(
+                job, task_rounds, task_limit, budget_state, policy
+            )
+            if task_rounds >= task_limit:
+                break
             new_context = self._consume_context_injections(job)
             if new_context:
                 messages.append({"role": "user", "content": self._context_injection_block(new_context)})
@@ -3626,9 +4012,28 @@ class PromptWorker:
 
         evidence.extend(self._verify_pending(job, pending_verification, tools))
         if task_rounds >= task_limit:
+            hard_limit = int(policy["hard_limit"])
+            boundary = "hard cap" if task_limit >= hard_limit else "N1-granted cap"
+            # A manual resume must start from compact *relevant* state, not from a
+            # raw recent-message tail. Reuse the same N1/PostgreSQL distillation
+            # path as a 5% context-headroom yield so completed work and exact open
+            # work survive while the spent model context does not.
+            budget_checkpoint, budget_resume_metadata = self._distilled_continuation_checkpoint(
+                job, prompt, messages,
+                reason="task_round_budget",
+                headroom={"remaining_fraction": 0.0, "prompt_eval_count": 0, "eval_count": 0, "context_limit_tokens": 0},
+                chunk_manager=chunk_manager,
+                step_rounds=step_rounds,
+                task_rounds=task_rounds,
+            )
+            metadata_now = dict(job.metadata or {})
+            metadata_now.update(budget_resume_metadata)
+            metadata_now["last_yield_reason"] = "task_round_budget"
+            job.metadata = metadata_now
             raise TaskRoundBudgetExceeded(
-                f"task tool/reasoning round budget exhausted ({task_rounds}/{task_limit}); "
-                "stopped instead of requeueing the same task indefinitely"
+                f"task tool/reasoning round budget exhausted ({task_rounds}/{task_limit}; {boundary}; hard={hard_limit}); "
+                "stopped instead of requeueing the same task indefinitely",
+                checkpoint=budget_checkpoint, step_rounds=step_rounds, task_rounds=task_rounds,
             )
         reason = "step_round_limit"
         checkpoint = self._continuation_checkpoint(
@@ -3889,7 +4294,7 @@ class PromptWorker:
         if self.n1_gatekeeper is not None and hasattr(self.n1_gatekeeper, "distill_continuation_checkpoint"):
             try:
                 checkpoint = self.n1_gatekeeper.distill_continuation_checkpoint(
-                    original_goal=job.prompt,
+                    original_goal=str((job.metadata or {}).get("task_user_prompt") or (job.metadata or {}).get("original_user_prompt") or job.prompt),
                     step_prompt=prompt,
                     archived_messages=source_messages,
                     retained_evidence=retained,
@@ -3909,6 +4314,7 @@ class PromptWorker:
         resume_metadata = {
             "chunked_evidence_streams": chunk_manager.snapshot_streams(),
             "context_checkpoint_remaining_fraction": float(headroom.get("remaining_fraction") or 0.0),
+            "compact_resume_context": True,
         }
         if slice_index:
             resume_metadata["postgres_context_slice_index"] = slice_index

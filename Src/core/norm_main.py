@@ -883,6 +883,28 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             result["delivery_errors"] = errors
         return result
 
+    def request_failed_tasks(limit: int = 25) -> dict:
+        worker_obj = resources.get("worker")
+        durable = resources.get("durable")
+        if worker_obj is not None and hasattr(worker_obj, "recent_failed_tasks"):
+            return worker_obj.recent_failed_tasks(limit=limit)
+        if durable is not None and hasattr(durable, "recent_failed_tasks"):
+            tasks = list(durable.recent_failed_tasks(limit=max(1, int(limit))) or [])
+            return {"status": "ok", "count": len(tasks), "tasks": tasks}
+        return {"status": "unavailable", "count": 0, "tasks": []}
+
+    def request_resume_failed(selector: str) -> dict:
+        worker_obj = resources.get("worker")
+        if worker_obj is None or not hasattr(worker_obj, "resume_failed_task"):
+            return {"status": "unavailable", "resumed": False, "reason": "worker is still initializing"}
+        return worker_obj.resume_failed_task(selector)
+
+    def request_flush_failed() -> dict:
+        worker_obj = resources.get("worker")
+        if worker_obj is None or not hasattr(worker_obj, "flush_failed"):
+            return {"status": "unavailable", "deleted": 0, "reason": "worker is still initializing"}
+        return worker_obj.flush_failed()
+
     def request_trash_list() -> dict:
         try:
             queue_obj = build_deletion_queue(root)
@@ -978,6 +1000,9 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             suppress_task=request_suppress_task,
             resume_maintenance=request_resume_maintenance,
             flush_suppressed=request_flush_suppressed,
+            failed_tasks=request_failed_tasks,
+            resume_failed=request_resume_failed,
+            flush_failed=request_flush_failed,
             trash_list=request_trash_list,
             trash_restore=request_trash_restore,
             trash_purge=request_trash_purge,

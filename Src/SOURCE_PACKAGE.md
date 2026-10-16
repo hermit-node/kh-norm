@@ -1,8 +1,15 @@
-# Norm 0.54.2h portable source package
+# Norm 0.54.2i portable source package
 
-This directory is the portable source payload for **Norm 0.54.2h**.
+This directory is the portable source payload for **Norm 0.54.2i**.
 
 The portable source package excludes generated or machine-private material such as .venv, compiled core\norm.exe, build output, Python caches, secrets, and private runtime state.
+
+## 0.54.2i progress leases, failed-task controls, and compact continuation
+
+- N1 reviews task progress at round 96 and grants 36-round extensions only when durable forward progress is real, with an absolute 384-round cap. Existing per-turn tool behavior is unchanged.
+- Budget failures preserve resumable queue/checkpoint state. `/failed`, `/resume-failed`, and `/flush-failed` expose operator recovery/cleanup; flush retains one generalized lesson and removes failed execution/history debris plus stale background snapshots.
+- Context-headroom continuation uses a fresh compact slice: the resumed N2 call skips already-consumed bulk task/prior/background context and relies on N1's distilled continuation plus durable PostgreSQL fallback. Existing 0.54.2h headroom checkpoints are recognized from their saved yield markers on first resume after upgrade. Tool proposals without results are explicitly treated as unexecuted during distillation.
+- Managed-plugin fallback remains pinned to the known-good 0.54.2g package because plugin payloads are unchanged.
 
 ## 0.54.2h planner-only file mutation discipline
 

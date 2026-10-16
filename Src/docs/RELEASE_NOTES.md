@@ -1,3 +1,12 @@
+0.54.2i — 2026-10-07 — Progress-leased task budgets, resumable failures, and real compact headroom resume
+
+- Kept existing per-turn tool behavior and task-round accounting. N1 now reviews durable forward progress at round 96 and may grant 36 additional rounds per review, repeatedly, up to an absolute 384-round cap. Dense useful tool-call turns are allowed; churn does not earn another lease.
+- Task-round safety stops now preserve a durable queue/checkpoint snapshot. Added `/failed`, `/resume-failed N|TASK-ID|PREFIX`, and `/flush-failed`. Manual resume resets the active round/budget window while retaining lifetime failure/resume telemetry.
+- `/flush-failed` asks Norm for one generalized failure-prevention/recovery lesson before deleting failed task execution/history rows, live Redis/task state, and stale background-memory snapshots. The compact lesson survives as a runtime maintenance note.
+- Fixed context-headroom continuation so a requeued slice does not rebuild the same exhausted prompt from full working memory, completed-step history, and background memory. The fresh slice uses N1's compact continuation plus normal task identity/instruction fields; PostgreSQL remains lossless. Legacy 0.54.2h headroom checkpoints are recognized from their saved yield/headroom markers, so already-parked h tasks compact correctly on first resume after upgrade.
+- N1 continuation distillation now treats an assistant tool-call proposal with no following tool result as unexecuted, preventing interrupted proposals from being recorded as completed side effects.
+- Retains 0.54.2h's planner-only one-primary-output-file guidance and the 0.54.2g managed-plugin/SSE fixes.
+
 0.54.2h — 2026-10-07 — Single-primary-file planner discipline
 
 - Planner guidance now tells Norm that each executable file-creation/file-editing step should mutate one primary output file, while allowing unlimited read-only source/context inspection.
