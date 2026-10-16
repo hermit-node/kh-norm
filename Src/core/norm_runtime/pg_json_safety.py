@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import math
+import logging
 from typing import Any
 
 
@@ -65,3 +66,50 @@ def normalize_pg_jsonb(value: Any) -> tuple[Any, list[dict[str, Any]]]:
         return item
 
     return walk(value, '$'), changes
+
+
+_LOG = logging.getLogger(__name__)
+
+
+def safe_jsonb(value: Any):
+    """Wrap any Norm-owned JSONB value with a safe psycopg 3 adapter.
+
+    This is a persistence-only conversion. Unlike setting process-global JSON
+    adapters, it cannot affect other PostgreSQL clients or execute-time values.
+    Object and array shapes are preserved for ordinary JSON data. Unavoidable
+    non-verbatim conversions emit a bounded warning with paths and hashes;
+    task_evidence additionally persists its existing per-row audit notice.
+    """
+    normalized, changes = normalize_pg_jsonb(value)
+    if changes:
+        _LOG.warning(
+            'PostgreSQL JSONB normalized %d invalid value(s); paths=%s; '
+            'persistence copy only, original tool payload unchanged',
+            len(changes),
+            [entry['path'] for entry in changes[:8]],
+        )
+    # Import here so the pure sanitizer can be regression-tested without a
+    # running PostgreSQL installation or the psycopg binary extension.
+    from psycopg.types.json import Jsonb
+    return Jsonb(normalized)
+
+
+def dumps_pg_json(value: Any) -> str:
+    """Canonical JSON/JSONB serializer for Norm-owned pooled connections.
+
+    Psycopg's ``set_json_dumps(..., conn)`` installs this function on each
+    connection once at pool creation. This protects direct ``Jsonb(value)``
+    call sites across the process; ``safe_jsonb`` additionally protects
+    direct/offline call sites not using the shared pool. The value supplied by
+    the caller is never mutated. Never use a process-global psycopg adapter.
+    """
+    import json
+    normalized, changes = normalize_pg_jsonb(value)
+    if changes:
+        _LOG.warning(
+            'PostgreSQL JSON/JSONB adapted %d incompatible value(s); paths=%s; '
+            'database representation differs from original',
+            len(changes), [entry['path'] for entry in changes[:8]],
+        )
+    # Do not let NaN or Infinity survive into PostgreSQL JSONB.
+    return json.dumps(normalized, ensure_ascii=False, allow_nan=False)

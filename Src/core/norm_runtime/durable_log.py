@@ -10,10 +10,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from psycopg import sql
-from psycopg.types.json import Jsonb
+from .pg_json_safety import safe_jsonb as Jsonb
 
 from .models import StepResult, TaskPlan
 from .pg_json_safety import normalize_pg_jsonb
+from .sql_query_builder import runtime_state_get_query, runtime_state_snapshot_query
 from .integrity_repair import prepare_task_prune_cur, repair_task_lineage_cur
 from .resource_status import merge_resource_status
 from .backup_retention import DEFAULT_BACKUP_LIMIT, prune_backup_files
@@ -2068,7 +2069,8 @@ class PostgresTaskLog:
         if not key:
             return default
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(sql.SQL("SELECT value FROM {}.runtime_state WHERE state_key=%s").format(sql.Identifier(self.schema)), (key,))
+            statement, params = runtime_state_get_query(self.schema, key)
+            cur.execute(statement, params)
             row = cur.fetchone()
         return row[0] if row else default
 
@@ -2081,7 +2083,8 @@ class PostgresTaskLog:
 
     def runtime_state_snapshot(self) -> dict:
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(sql.SQL("SELECT state_key,value,updated_at FROM {}.runtime_state ORDER BY state_key").format(sql.Identifier(self.schema)))
+            statement, params = runtime_state_snapshot_query(self.schema)
+            cur.execute(statement, params)
             return {str(k): {"value": v, "updated_at": at} for k,v,at in cur.fetchall()}
 
     def record_maintenance_note(self, phase: str, note: str, *, task_id: str | None = None, details: dict | None = None) -> None:

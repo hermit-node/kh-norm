@@ -1,6 +1,6 @@
 {
-  "package": "Norm-0.55.10r11r1-Browser-Evidence-Fix-Portable-Source",
-  "source_baseline": "Norm-0.55.10r11-Browser-Cooperation-Portable-Source.zip",
+  "package": "Norm-0.55.10r11r2-Browser-Postgres-Unified-Portable-Source",
+  "source_baseline": "Norm-0.55.10r11r1-Browser-Evidence-Fix-Portable-Source.zip",
   "files": [
     {
       "file": ".gitattributes",
@@ -24,8 +24,8 @@
     },
     {
       "file": "README.md",
-      "sha256": "530a07c0c27d4c9039549bad461924727ac1b1381b5f9f89095059074718d57b",
-      "bytes": 34035
+      "sha256": "b07563bf579c2432efc548aefcaf85eddc005461f9f60b9b54df331c7259eaf8",
+      "bytes": 35655
     },
     {
       "file": "Run-Norm-Terminals.bat",
@@ -39,8 +39,8 @@
     },
     {
       "file": "SOURCE_PACKAGE.md",
-      "sha256": "81b72c03625ea0f5fec48401f17bd87ea576f7f6fe2664a98e92ac12e9d82244",
-      "bytes": 27237
+      "sha256": "3cd800b2d842b3d00d903f78f42322aea6c658a87f2ec761bed8b8cf02214211",
+      "bytes": 28857
     },
     {
       "file": "Safe-Shutdown-Norm.bat",
@@ -154,8 +154,8 @@
     },
     {
       "file": "core/norm_runtime/context_snapshot.py",
-      "sha256": "c96a62a052be89914bb9aaba2077d1bc00527e561f1e7c499065fa8cd2e0bc40",
-      "bytes": 17815
+      "sha256": "d99b03522899d229b71d14b54b66e1106223761de711008d1ff6d6d17fc03f3b",
+      "bytes": 17628
     },
     {
       "file": "core/norm_runtime/contract_boundary.py",
@@ -184,8 +184,8 @@
     },
     {
       "file": "core/norm_runtime/durable_log.py",
-      "sha256": "cbd1addf2db3eb7b4bee9d019a389d1e66c7691fd1f5c90f87263543e8f2414d",
-      "bytes": 193355
+      "sha256": "e49c05d8e89bd5c4dfe72879a96ac8f48adec1001cdfcb6b0fe9a08e45776025",
+      "bytes": 193404
     },
     {
       "file": "core/norm_runtime/file_access_policy.py",
@@ -209,8 +209,8 @@
     },
     {
       "file": "core/norm_runtime/integrity_repair.py",
-      "sha256": "375847b9cfee78e1c6f7f6cb9e6d28cbae17e474cc408cf64b3d948f8f437d43",
-      "bytes": 23490
+      "sha256": "3f5d058b52834d74c2e35cb4e854578af2b728c20c0f9b2fb265704018b91131",
+      "bytes": 23007
     },
     {
       "file": "core/norm_runtime/invocation_source.py",
@@ -263,9 +263,14 @@
       "bytes": 3040
     },
     {
+      "file": "core/norm_runtime/pg_error_policy.py",
+      "sha256": "3f8774f3b53c7b0cf46ec67dcdb395900e1a879c523f251426f9cdb7c34ecb76",
+      "bytes": 797
+    },
+    {
       "file": "core/norm_runtime/pg_json_safety.py",
-      "sha256": "a08706f88ffb37743195b680764fa7c7538eb681726217b0e98573b59d66d58c",
-      "bytes": 3029
+      "sha256": "11c1fc8cd023c9a13cc388b7449ca89ba2db388e37802fb3c4d56df8285faa37",
+      "bytes": 5079
     },
     {
       "file": "core/norm_runtime/plugin_identity.py",
@@ -339,8 +344,13 @@
     },
     {
       "file": "core/norm_runtime/shutdown_snapshot.py",
-      "sha256": "261422771733dfedc7749418216ddfaeedeff8626dfc061b0e65756cfcd3f195",
-      "bytes": 6323
+      "sha256": "67ea84a14447d8da8e1872b15e53e46a08e97de0b81acd9200612d80535afc93",
+      "bytes": 6281
+    },
+    {
+      "file": "core/norm_runtime/sql_query_builder.py",
+      "sha256": "c19e2df292521712c3cc71219eacdf1bb767f2cedf7c284d366a6a4c762655b5",
+      "bytes": 1115
     },
     {
       "file": "core/norm_runtime/storage_context.py",
@@ -369,8 +379,8 @@
     },
     {
       "file": "core/requirements.txt",
-      "sha256": "723a7ac68fed95c611b671ba3c96727a40bded5cc997e8ad87d964bbbb9ba80c",
-      "bytes": 697
+      "sha256": "debbbfc2d84acfed034d050fe6ad955e763c89cef5d9f5d1f23f54ca1289b0bc",
+      "bytes": 715
     },
     {
       "file": "core/runtime_bootstrap.py",
@@ -684,8 +694,8 @@
     },
     {
       "file": "package-manifest.json",
-      "sha256": "1f16346a1e6dfd536ab9d7bab1b0da7fcd27424531b99967b773838546b53649",
-      "bytes": 39803
+      "sha256": "713afe798ef0a8b20eee63f6ee35b75893d432c742cfe8b1ae086bd332d1ec43",
+      "bytes": 39811
     },
     {
       "file": "plugins/README.md",
@@ -959,13 +969,13 @@
     },
     {
       "file": "plugins/postgres_pool/plugin.json",
-      "sha256": "bfeff4f1dae217f3ebdd24cf1a1c5037929caf900579527505f6c548c2b3105a",
+      "sha256": "c490d234b5d53e2ee40914987c18f92acefa76da48c9f137b43d7ad127ec0410",
       "bytes": 585
     },
     {
       "file": "plugins/postgres_pool/src/_pool.py",
-      "sha256": "1c8c149d5f640e53a8394c815c365039f7bfcb688103d78456593aa1305e22df",
-      "bytes": 9078
+      "sha256": "537e9ca7f4cb2c918b2af15d8d32f3b475cbb7dea9b51d9eefda98aa8a49d623",
+      "bytes": 10051
     },
     {
       "file": "plugins/postgres_pool/src/main.py",
@@ -1324,8 +1334,8 @@
     },
     {
       "file": "source-content-hashes.json",
-      "sha256": "c9f4c06cfcd5009be79dad0c58f948d6ffe8f720c08535a6933ca5604f7a7e11",
-      "bytes": 67935
+      "sha256": "c2b1d6fd00b876b2abf51b9b07db4981efe299f5e12685d6640c07bb9a1a1969",
+      "bytes": 68410
     },
     {
       "file": "tools/7zip/7z.dll",
@@ -1509,8 +1519,8 @@
     },
     {
       "file": "tools/requirements-lock.txt",
-      "sha256": "e244e4e24feaf21edcfe9ec61310228063cac631e58f07f70043942325d97aea",
-      "bytes": 1189
+      "sha256": "964693e092803b951027b58c52673a55227c6fdb97b7cb0ca4c28c0f93bf4bfd",
+      "bytes": 1207
     },
     {
       "file": "tools/restart_shared_browser_visual.py",
@@ -1876,6 +1886,11 @@
       "file": "tools/test_pdf_slash_and_dialogue_r5.py",
       "sha256": "58a363f2b89674dc221b52ccf8a65cc674ca7c2c9c10f00de195d23bfcd8f625",
       "bytes": 7024
+    },
+    {
+      "file": "tools/test_pg_boundary_r11r2.py",
+      "sha256": "cedccd60225bf4793426303e2ab232cf4cc2ba6d3bd5622b5cbb411bf73aed25",
+      "bytes": 6377
     },
     {
       "file": "tools/test_pg_evidence_unicode_r11r1.py",

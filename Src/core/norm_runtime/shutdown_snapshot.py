@@ -5,6 +5,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .settings import load_path_settings
+from psycopg import sql as pg_sql
 
 
 def _buffer_keys(live) -> list[str]:
@@ -29,7 +30,7 @@ def _durable_checkpoint(durable, task_id: str) -> list[str]:
     try:
         with durable._connect() as conn, conn.cursor() as cur:
             cur.execute(
-                f"SELECT title,status,updated_at FROM {durable.schema}.task_runs WHERE task_id=%s",
+                pg_sql.SQL("SELECT title,status,updated_at FROM {}.task_runs WHERE task_id=%s").format(pg_sql.Identifier(durable.schema)),
                 (task_id,),
             )
             row = cur.fetchone()
@@ -38,8 +39,8 @@ def _durable_checkpoint(durable, task_id: str) -> list[str]:
                 lines.append(f"Durable task status: {row[1]}")
                 lines.append(f"Durable task updated: {row[2]}")
             cur.execute(
-                f"SELECT step_id,name,status,summary,verification,completed_at "
-                f"FROM {durable.schema}.task_steps WHERE task_id=%s ORDER BY completed_at DESC LIMIT 1",
+                pg_sql.SQL("SELECT step_id,name,status,summary,verification,completed_at "
+                "FROM {}.task_steps WHERE task_id=%s ORDER BY completed_at DESC LIMIT 1").format(pg_sql.Identifier(durable.schema)),
                 (task_id,),
             )
             step = cur.fetchone()

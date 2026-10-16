@@ -11,6 +11,8 @@ from zoneinfo import ZoneInfo
 import redis
 
 from .settings import load_path_settings, load_document_paths
+from psycopg import sql as pg_sql
+from .sql_query_builder import runtime_state_snapshot_query
 
 NY = ZoneInfo("America/New_York")
 
@@ -115,14 +117,14 @@ def _log_snapshot(root: Path) -> dict:
     }
 
 def _postgres_snapshot(durable) -> dict:
-    s = durable.schema
+    s = pg_sql.Identifier(durable.schema)
     with durable._connect() as conn, conn.cursor() as cur:
-        cur.execute(f"""
+        cur.execute(pg_sql.SQL("""
             SELECT tr.task_id,tr.title,tr.status,tr.updated_at,tr.effectiveness_note,
-                   (SELECT ts.summary FROM {s}.task_summaries ts
+                   (SELECT ts.summary FROM {}.task_summaries ts
                     WHERE ts.task_id=tr.task_id ORDER BY ts.created_at DESC LIMIT 1)
-            FROM {s}.task_runs tr ORDER BY tr.updated_at DESC LIMIT 12
-        """)
+            FROM {}.task_runs tr ORDER BY tr.updated_at DESC LIMIT 12
+        """).format(s, s))
         recent = [
             {
                 "task_id": r[0], "title": r[1], "status": r[2],
@@ -132,16 +134,16 @@ def _postgres_snapshot(durable) -> dict:
             }
             for r in cur.fetchall()
         ]
-        cur.execute(f"SELECT task_id,title,updated_at FROM {s}.task_runs WHERE status='running' ORDER BY updated_at")
+        cur.execute(pg_sql.SQL("SELECT task_id,title,updated_at FROM {}.task_runs WHERE status='running' ORDER BY updated_at").format(s))
         running = [
             {"task_id": r[0], "title": r[1], "updated_at": r[2].astimezone(NY).isoformat(timespec="seconds")}
             for r in cur.fetchall()
         ]
-        cur.execute(f"""
+        cur.execute(pg_sql.SQL("""
             SELECT created_at,phase,task_id,note,details
-            FROM {s}.runtime_maintenance_notes
+            FROM {}.runtime_maintenance_notes
             ORDER BY created_at DESC LIMIT 10
-        """)
+        """).format(s))
         maintenance = [
             {
                 "created_at": r[0].astimezone(NY).isoformat(timespec="seconds"),
@@ -150,7 +152,8 @@ def _postgres_snapshot(durable) -> dict:
             }
             for r in cur.fetchall()
         ]
-        cur.execute(f"SELECT state_key,value,updated_at FROM {s}.runtime_state ORDER BY state_key")
+        statement, params = runtime_state_snapshot_query(durable.schema)
+        cur.execute(statement, params)
         runtime_state = {
             str(r[0]): {"value": r[1], "updated_at": r[2].astimezone(NY).isoformat(timespec="seconds")}
             for r in cur.fetchall()

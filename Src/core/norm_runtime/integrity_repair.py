@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from psycopg import sql
-from psycopg.types.json import Jsonb
+from .pg_json_safety import safe_jsonb as Jsonb
 
 _STOPWORDS = {
     "about", "after", "again", "also", "and", "are", "because", "been", "before", "being", "but", "can",

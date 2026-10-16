@@ -1,14 +1,14 @@
 {
-  "version": "0.55.10r12",
-  "variant": "Browser-Evidence-Fix",
-  "tag": "v0.55.10r12",
-  "source_archive_sha256": "80bedd7472e0f8a0ee7cd6a13643d7c0c0523f6b120740f54452163f81e15137",
-  "source_archive": "0.55.10r12--Browser-Evidence-Fix--80bedd7472e0.zip",
+  "version": "0.55.10r13",
+  "variant": "Browser-Postgres-Unified",
+  "tag": "v0.55.10r13",
+  "source_archive_sha256": "e26205713402ccffd377540db780f9c58fb6462ba787cefed724accbf25d1560",
+  "source_archive": "0.55.10r13--Browser-Postgres-Unified--e26205713402.zip",
   "quality": "source-inventory-verified",
   "known_issues": [
-    "Normalized from 0.55.10r11r1-browser-evidence-fix; old ZIP and mapping retained in the installer kit."
+    "Normalized from 0.55.10r11r2-browser-postgres-unified; old ZIP and mapping retained in the installer kit."
   ],
-  "published_source_files": 362,
+  "published_source_files": 365,
   "omitted_paths": [
     "backups/plugins-ini/plugins-20261014-151017-561326+0000-72956dfad8bb.ini",
     "config/plugins.ini",

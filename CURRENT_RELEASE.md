@@ -1,6 +1,6 @@
-# Norm 0.55.10r12 - Browser-Evidence-Fix
+# Norm 0.55.10r13 - Browser-Postgres-Unified
 
-Original archive SHA-256: 80bedd7472e0f8a0ee7cd6a13643d7c0c0523f6b120740f54452163f81e15137
+Original archive SHA-256: e26205713402ccffd377540db780f9c58fb6462ba787cefed724accbf25d1560
 
 Historical assessment: source-inventory-verified
 
@@ -8,6 +8,6 @@ Omitted private paths: backups/plugins-ini/plugins-20261014-151017-561326+0000-7
 
 Sanitized paths: core/norm_main.py, core/norm_runtime/aiohttp_host.py
 
-Historical caveats: Normalized from 0.55.10r11r1-browser-evidence-fix; old ZIP and mapping retained in the installer kit.
+Historical caveats: Normalized from 0.55.10r11r2-browser-postgres-unified; old ZIP and mapping retained in the installer kit.
 
 Public source snapshot is not identical to the original ZIP or guaranteed installable.

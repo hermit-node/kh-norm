@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "release": "0.55.10r12-browser-evidence-fix",
-  "baseline": "Norm-0.55.10r11-Browser-Cooperation-Portable-Source.zip",
-  "file_count": 431,
+  "release": "0.55.10r13-browser-postgres-unified",
+  "baseline": "Norm-0.55.10r11r1-Browser-Evidence-Fix-Portable-Source.zip",
+  "file_count": 434,
   "hash_algorithm": "sha256",
   "files": {
     ".gitattributes": {
@@ -22,8 +22,8 @@
       "sha256": "e774f5ea91a76af90b32d07d967a17a1e2741a3e99c67ee944536cb548e6a432"
     },
     "README.md": {
-      "bytes": 34035,
-      "sha256": "530a07c0c27d4c9039549bad461924727ac1b1381b5f9f89095059074718d57b"
+      "bytes": 35655,
+      "sha256": "b07563bf579c2432efc548aefcaf85eddc005461f9f60b9b54df331c7259eaf8"
     },
     "Run-Norm-Terminals.bat": {
       "bytes": 1005,
@@ -34,8 +34,8 @@
       "sha256": "b1caace3a4f4db1b3a5b455732dd1f49f89931a8e4da62804f3728968fc539b9"
     },
     "SOURCE_PACKAGE.md": {
-      "bytes": 27237,
-      "sha256": "81b72c03625ea0f5fec48401f17bd87ea576f7f6fe2664a98e92ac12e9d82244"
+      "bytes": 28857,
+      "sha256": "3cd800b2d842b3d00d903f78f42322aea6c658a87f2ec761bed8b8cf02214211"
     },
     "Safe-Shutdown-Norm.bat": {
       "bytes": 519,
@@ -62,8 +62,8 @@
       "sha256": "34c0c073df6e1b5a9985875f0f8297474611035a22567fc3dc621e9bda4b5cdc"
     },
     "config/settings.ini": {
-      "bytes": 3254,
-      "sha256": "5da503605f4af8c476a03bf44be428859c09dd3e902ebba74c4da3f607bbfd77"
+      "bytes": 3258,
+      "sha256": "d0865db0bfc094661df80f9b0a7c7775d9f2f19a9118135bd7113d4bf32a6c9a"
     },
     "core/norm_main.py": {
       "bytes": 69971,
@@ -126,8 +126,8 @@
       "sha256": "a4594aceab2a3e5aa81ab8cd671269c23f48fc5eb5ee05c15bfb868c2dac29ab"
     },
     "core/norm_runtime/context_snapshot.py": {
-      "bytes": 17815,
-      "sha256": "c96a62a052be89914bb9aaba2077d1bc00527e561f1e7c499065fa8cd2e0bc40"
+      "bytes": 17628,
+      "sha256": "d99b03522899d229b71d14b54b66e1106223761de711008d1ff6d6d17fc03f3b"
     },
     "core/norm_runtime/contract_boundary.py": {
       "bytes": 2477,
@@ -150,8 +150,8 @@
       "sha256": "c48a5f947af67d748e66100e13f9343444e2140b4dd32efa070fcda230e2dbdd"
     },
     "core/norm_runtime/durable_log.py": {
-      "bytes": 193355,
-      "sha256": "cbd1addf2db3eb7b4bee9d019a389d1e66c7691fd1f5c90f87263543e8f2414d"
+      "bytes": 193404,
+      "sha256": "e49c05d8e89bd5c4dfe72879a96ac8f48adec1001cdfcb6b0fe9a08e45776025"
     },
     "core/norm_runtime/file_access_policy.py": {
       "bytes": 5915,
@@ -170,8 +170,8 @@
       "sha256": "2b95579789b0a8a3203ea5c067afcd0738e6dfe12469971041d18cdaca82cccd"
     },
     "core/norm_runtime/integrity_repair.py": {
-      "bytes": 23490,
-      "sha256": "375847b9cfee78e1c6f7f6cb9e6d28cbae17e474cc408cf64b3d948f8f437d43"
+      "bytes": 23007,
+      "sha256": "3f5d058b52834d74c2e35cb4e854578af2b728c20c0f9b2fb265704018b91131"
     },
     "core/norm_runtime/invocation_source.py": {
       "bytes": 1604,
@@ -213,9 +213,13 @@
       "bytes": 3040,
       "sha256": "5954a7c23450a0c67311ee7080e52dbb28523e14fd3ba30b23099b547f45e4da"
     },
+    "core/norm_runtime/pg_error_policy.py": {
+      "bytes": 797,
+      "sha256": "3f8774f3b53c7b0cf46ec67dcdb395900e1a879c523f251426f9cdb7c34ecb76"
+    },
     "core/norm_runtime/pg_json_safety.py": {
-      "bytes": 3029,
-      "sha256": "a08706f88ffb37743195b680764fa7c7538eb681726217b0e98573b59d66d58c"
+      "bytes": 5079,
+      "sha256": "11c1fc8cd023c9a13cc388b7449ca89ba2db388e37802fb3c4d56df8285faa37"
     },
     "core/norm_runtime/plugin_identity.py": {
       "bytes": 6890,
@@ -274,8 +278,12 @@
       "sha256": "aa3bfcba3ca2e80733035f4242be6d747b97cd7356af26d878d9cd5bd959876c"
     },
     "core/norm_runtime/shutdown_snapshot.py": {
-      "bytes": 6323,
-      "sha256": "261422771733dfedc7749418216ddfaeedeff8626dfc061b0e65756cfcd3f195"
+      "bytes": 6281,
+      "sha256": "67ea84a14447d8da8e1872b15e53e46a08e97de0b81acd9200612d80535afc93"
+    },
+    "core/norm_runtime/sql_query_builder.py": {
+      "bytes": 1115,
+      "sha256": "c19e2df292521712c3cc71219eacdf1bb767f2cedf7c284d366a6a4c762655b5"
     },
     "core/norm_runtime/storage_context.py": {
       "bytes": 7627,
@@ -298,8 +306,8 @@
       "sha256": "34d07c9d3508a1892d5b418d7a1e03c552cba306d784ed8cd86453f5b88a7a6d"
     },
     "core/requirements.txt": {
-      "bytes": 697,
-      "sha256": "723a7ac68fed95c611b671ba3c96727a40bded5cc997e8ad87d964bbbb9ba80c"
+      "bytes": 715,
+      "sha256": "debbbfc2d84acfed034d050fe6ad955e763c89cef5d9f5d1f23f54ca1289b0bc"
     },
     "core/runtime_bootstrap.py": {
       "bytes": 16232,
@@ -550,8 +558,8 @@
       "sha256": "814cf6e096ac167f56bbb47c98287818949ec13c65843574b3a733698c91f982"
     },
     "package-manifest.json": {
-      "bytes": 39803,
-      "sha256": "1f16346a1e6dfd536ab9d7bab1b0da7fcd27424531b99967b773838546b53649"
+      "bytes": 39811,
+      "sha256": "713afe798ef0a8b20eee63f6ee35b75893d432c742cfe8b1ae086bd332d1ec43"
     },
     "plugins/README.md": {
       "bytes": 903,
@@ -771,11 +779,11 @@
     },
     "plugins/postgres_pool/plugin.json": {
       "bytes": 585,
-      "sha256": "bfeff4f1dae217f3ebdd24cf1a1c5037929caf900579527505f6c548c2b3105a"
+      "sha256": "c490d234b5d53e2ee40914987c18f92acefa76da48c9f137b43d7ad127ec0410"
     },
     "plugins/postgres_pool/src/_pool.py": {
-      "bytes": 9078,
-      "sha256": "1c8c149d5f640e53a8394c815c365039f7bfcb688103d78456593aa1305e22df"
+      "bytes": 10051,
+      "sha256": "537e9ca7f4cb2c918b2af15d8d32f3b475cbb7dea9b51d9eefda98aa8a49d623"
     },
     "plugins/postgres_pool/src/main.py": {
       "bytes": 7388,
@@ -1206,8 +1214,8 @@
       "sha256": "8ad47d5281c1bbc9e073d6436a45222490144ac9f571b105b8de1b2829265040"
     },
     "tools/requirements-lock.txt": {
-      "bytes": 1189,
-      "sha256": "e244e4e24feaf21edcfe9ec61310228063cac631e58f07f70043942325d97aea"
+      "bytes": 1207,
+      "sha256": "964693e092803b951027b58c52673a55227c6fdb97b7cb0ca4c28c0f93bf4bfd"
     },
     "tools/restart_shared_browser_visual.py": {
       "bytes": 2903,
@@ -1500,6 +1508,10 @@
     "tools/test_pdf_slash_and_dialogue_r5.py": {
       "bytes": 7024,
       "sha256": "58a363f2b89674dc221b52ccf8a65cc674ca7c2c9c10f00de195d23bfcd8f625"
+    },
+    "tools/test_pg_boundary_r11r2.py": {
+      "bytes": 6377,
+      "sha256": "cedccd60225bf4793426303e2ab232cf4cc2ba6d3bd5622b5cbb411bf73aed25"
     },
     "tools/test_pg_evidence_unicode_r11r1.py": {
       "bytes": 5179,

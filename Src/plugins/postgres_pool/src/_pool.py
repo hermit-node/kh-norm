@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import logging
 from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock
@@ -11,6 +12,19 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg_pool import ConnectionPool
 
 _ALLOWED_CONNECTIONS = ("norm",)
+_LOG = logging.getLogger(__name__)
+
+
+def _configure_norm_json(conn: psycopg.Connection) -> None:
+    """Use one JSON/JSONB adaptation policy on every canonical pool connection.
+
+    This is per connection, never a process-global override. It also applies
+    to pool users beyond PostgresTaskLog (e.g., plugins/postgres_pool tools).
+    """
+    from psycopg.types.json import set_json_dumps
+    from norm_runtime.pg_json_safety import dumps_pg_json
+    set_json_dumps(dumps_pg_json, conn)
+
 
 
 class PostgresPool:
@@ -143,6 +157,7 @@ class PostgresPool:
                         max_idle=max_idle,
                         max_lifetime=max_lifetime,
                         check=ConnectionPool.check_connection,
+                        configure=_configure_norm_json,
                         name=f"norm-{name}",
                     )
                     pool.open(wait=True, timeout=timeout)
@@ -168,7 +183,19 @@ class PostgresPool:
         if pool is None:
             raise RuntimeError("PostgreSQL pool is not configured")
         with pool.connection(timeout=default_timeout if timeout is None else float(timeout)) as conn:
-            yield conn
+            try:
+                yield conn
+            except psycopg.Error as exc:
+                from norm_runtime.pg_error_policy import classify_sqlstate
+                # Log classification only; the transaction manager still rolls
+                # back and original error propagates. Never automatically
+                # repeat external tools or database writes from this layer.
+                _LOG.warning(
+                    "PostgreSQL operation failed connection=%s kind=%s sqlstate=%s",
+                    key, classify_sqlstate(getattr(exc, "sqlstate", None)),
+                    getattr(exc, "sqlstate", None),
+                )
+                raise
 
     @classmethod
     def dsn(cls, name: str = "norm") -> str:
