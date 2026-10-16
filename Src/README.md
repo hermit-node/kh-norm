@@ -1,3 +1,11 @@
+## Norm 0.55.10r4 — Qt Focus restored as the default
+
+The default workspace is **the original October 11 NormWorkspace-Qt-Focus**, written in PySide6 and using Win32 to host real terminal HWNDs. The original app.py is preserved as tools/workspace/qt_focus_original_source.py; the modified production source is tools/workspace/app.py.
+
+**Run-Norm.bat** opens Qt Focus immediately. Qt Focus starts Norm using tools/workspace/start_roles.py, which calls Run-Norm.bat --service-only, then starts only missing operator sessions. The three existing terminal panes and focus handling remain intact. **Quit Norm** runs the existing verified shutdown procedure, preserving reversible trash. The new Fonts button uses a native Qt dialog; role font settings apply to newly created terminals.
+
+The older C++ workspace code is kept only as reference and is **not** the default. r3 Visual PDF hybrid and OCR are retained, but have not been tested against a live authenticated ChatGPT conversation.
+
 ## Visual PDF (0.55.10r3)
 
 Visual PDF now scrolls toward the oldest history, samples moving loading icons, then repeatedly scrolls and captures overlapping screenshots downward. The final PDF is HYBRID: normal words become visible, selectable OCR text; photos, code, math, diagrams and tables remain pixel-preserved image cutouts. **No full-page screenshot with another text layer on top.** A standalone stitched PNG is saved for reference. A synthetic comparison showed a 61.9% smaller hybrid PDF; actual results vary. Unknown images are not guaranteed to be separable from OCR, and live ChatGPT history completeness has not been verified. The authenticated browser never needs a reload or hidden window for capture.

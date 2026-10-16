@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "release": "0.55.10r3",
-  "baseline": "Norm-0.55.10r2-portable-source.zip",
-  "file_count": 376,
+  "release": "0.55.10r4",
+  "baseline": "Norm-0.55.10r3-portable-source.zip",
+  "file_count": 381,
   "hash_algorithm": "sha256",
   "files": {
     ".gitattributes": {
@@ -22,12 +22,12 @@
       "sha256": "e774f5ea91a76af90b32d07d967a17a1e2741a3e99c67ee944536cb548e6a432"
     },
     "README.md": {
-      "bytes": 29426,
-      "sha256": "57bed01574d169deaff35bb4893ef75ba961f6cc5b3f1b57fe99c90ba65166da"
+      "bytes": 30413,
+      "sha256": "22ea94948bf8f4e10eacda3d1350fc0b31d08ee39540b8a1f938ad513e4c51bb"
     },
     "Run-Norm.bat": {
-      "bytes": 4558,
-      "sha256": "3c94b4f2901a94be583c5fc40628b87451ed5c22299a3617fa0e7864de766440"
+      "bytes": 4655,
+      "sha256": "b1caace3a4f4db1b3a5b455732dd1f49f89931a8e4da62804f3728968fc539b9"
     },
     "SOURCE_PACKAGE.md": {
       "bytes": 22501,
@@ -322,8 +322,8 @@
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
     },
     "docs/RELEASE_NOTES.md": {
-      "bytes": 152561,
-      "sha256": "9a387176c0ce6aaacfb495e5cca59828818c825732834865877748bde109494b"
+      "bytes": 155142,
+      "sha256": "b76e8823d046e1ce287a7f4fca6de82b1c9afe5c0dbec3a478971cfcdea8d74e"
     },
     "docs/SHARED_BROWSER.md": {
       "bytes": 6642,
@@ -386,8 +386,8 @@
       "sha256": "814cf6e096ac167f56bbb47c98287818949ec13c65843574b3a733698c91f982"
     },
     "package-manifest.json": {
-      "bytes": 36752,
-      "sha256": "876078524dc4b215a874362dbcb62017d21a692236c18e7d74a3a5468b31527d"
+      "bytes": 37587,
+      "sha256": "209b6818d426e07287d9aca5c8215f4d44d2fdf9c404d15bace9fdb22da1be8f"
     },
     "plugins/README.md": {
       "bytes": 721,
@@ -1134,8 +1134,8 @@
       "sha256": "0664995174a3a01d1bab7911e52d0a207c92cba806fc13443768c5ab4b07bdb3"
     },
     "tools/start_workspace.py": {
-      "bytes": 2146,
-      "sha256": "a270cc692ae3c3eb54910efb20c05cfed0f16e0ced204d5be557e52dac4ae66e"
+      "bytes": 2201,
+      "sha256": "14619cc4a2b3d542b1c1cefd64cff5ebfa46e407eda6febda6fbc4e9a1f40a2f"
     },
     "tools/test_archive_adapter.py": {
       "bytes": 2071,
@@ -1329,6 +1329,10 @@
       "bytes": 3073,
       "sha256": "da659fa0a5930c39cfb7ac00087cbb6a2bf8d8fabcfeb18ef5a9149931645281"
     },
+    "tools/test_qt_focus_lifecycle_r4.py": {
+      "bytes": 4855,
+      "sha256": "e6558e0e13256e6e14b56feb75a669c28829faf776722770b4c25b4b9c60f515"
+    },
     "tools/test_r10_contract_integration.py": {
       "bytes": 12809,
       "sha256": "d7ce87d425bd453706c46eacd313d1ebdd026fc53eabd755d936eb5173a233ec"
@@ -1469,9 +1473,17 @@
       "bytes": 1722,
       "sha256": "b6c9378e642f22b54c9d97751a5974d861a723625f1db82c5a0c34d7e14364f8"
     },
+    "tools/workspace/NormWorkspace-Qt.json": {
+      "bytes": 984,
+      "sha256": "221a8652e374849ab7ea329a3e4e43b3e68334cc711fb515033a1568830a208e"
+    },
+    "tools/workspace/NormWorkspace-Triad.ico": {
+      "bytes": 60143,
+      "sha256": "737364cbdc7b3e168328cc89f824492ad6bf685ba71700df5cc553c047d5a2dd"
+    },
     "tools/workspace/app.py": {
-      "bytes": 51738,
-      "sha256": "a399b6f1084cc747936526959fa664de99f5af18baafa9b921834cddc56906d7"
+      "bytes": 51976,
+      "sha256": "798570178e1a26ff8b6956c77df19f2c145a4fc124982d69c12627360c03c079"
     },
     "tools/workspace/font_profiles.py": {
       "bytes": 8333,
@@ -1500,6 +1512,14 @@
     "tools/workspace/native/start_native_roles.py": {
       "bytes": 2904,
       "sha256": "63eea3dd268422adb72d8d9f956830055d4a176c262bd776cc5d43eb5b6ff882"
+    },
+    "tools/workspace/qt_focus_original_source.py": {
+      "bytes": 45995,
+      "sha256": "4db8eace1b1b67cb7d7ff2b818abd95b56fecf72756a7a85c67210ffe09a8508"
+    },
+    "tools/workspace/qt_focus_regression_test.py": {
+      "bytes": 4527,
+      "sha256": "f972c982c7d36a7435904818f62463359f8c623c3d3cf043c135f68f35287af1"
     },
     "tools/workspace/start_roles.py": {
       "bytes": 1236,

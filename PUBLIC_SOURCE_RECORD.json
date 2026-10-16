@@ -1,12 +1,12 @@
 {
-  "version": "0.55.10r3",
+  "version": "0.55.10r4",
   "variant": "release",
-  "tag": "v0.55.10r3-release",
-  "source_archive_sha256": "e33c762b8a13f9580183290af2457257e13a4fc97eaa7d2dccef10f6a90137bd",
-  "source_archive": "0.55.10r3--release--e33c762b8a13.zip",
+  "tag": "v0.55.10r4",
+  "source_archive_sha256": "ecb7d349ffc2b971e0728ed9e77f3341cef3c893a6f84fbee92d1db6074d4bbb",
+  "source_archive": "0.55.10r4--release--ecb7d349ffc2.zip",
   "quality": "source-inventory-verified",
   "known_issues": [],
-  "published_source_files": 335,
+  "published_source_files": 340,
   "omitted_paths": [
     "config/plugins.ini",
     "config/settings.ini",

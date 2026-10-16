@@ -1,14 +1,15 @@
 @echo off
 setlocal EnableExtensions
 set "ROOT=%~dp0"
-REM Normal launch opens native C++ workspace FIRST; it boots the
-REM service/roles itself. --service-only remains the nonrecursive backend path.
+REM Normal launch opens the actual Oct 11 Qt Focus workspace immediately.
+REM The workspace calls start_roles.py, which uses --service-only for backend.
+REM --service-only must NEVER open another workspace (no recursion).
 if /I "%~1"=="--service-only" goto :backend_boot
-if exist "%ROOT%tools\workspace\native\NormWorkspace.exe" (
-    start "" "%ROOT%tools\workspace\native\NormWorkspace.exe" --root "%ROOT:~0,-1%"
+if exist "%ROOT%tools\start_workspace.py" if exist "%ROOT%.venv\Scripts\python.exe" (
+    "%ROOT%.venv\Scripts\python.exe" -B "%ROOT%tools\start_workspace.py"
     exit /b %ERRORLEVEL%
 )
-echo ERROR: Native workspace missing; refusing silent fallback to Qt.
+echo ERROR: Qt Focus workspace launcher or Python environment is missing.
 exit /b 2
 
 :backend_boot

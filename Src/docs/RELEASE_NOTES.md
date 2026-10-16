@@ -1,3 +1,14 @@
+## Norm 0.55.10r4 — restore the actual 2026-10-11 Qt Focus workspace (2026-10-12)
+
+- The user-selected authoritative workspace is N_Workspace/NormWorkspace-Qt-Focus, not fonts-v3, Geometry-v4 or Triad-v5. Original app.py from NormWorkspace-Qt-Focus-source.zip (18:29, Oct 11) is preserved byte-identical as tools/workspace/qt_focus_original_source.py, with original icon and user-saved Qt Focus layout/active-role preferences.
+- Default Run-Norm.bat now launches the Qt Focus source via C:/Norm/.venv/Scripts/pythonw.exe, not the previously selected C++ workspace. The QT Focus window immediately runs current start_roles.py, which invokes the existing Run-Norm.bat --service-only branch and the file-locked, idempotent operator launcher. Already-existing sessions are reused; only missing roles are launched.
+- Removed the erroneous suppression of all bootstrapping when one operator PID exists but zero of three expected HWNDs are attachable. Unknown independent duplicates remain controlled by start_operator_consoles.py, not blindly spawned by UI.
+- Preserve the original Qt Focus Win32 child-window embedding, native mouse-hook focus restoration, freeform draggable overlapping panes, card z-order, selected role, and Unicode UTF-8 window title. The original October 11 focus regression suite passes unchanged except an isolate-safe source path update.
+- Added explicit Quit Norm button and close-interception using safe_shutdown_norm.py. Shutdown failures keep the UI open. A new normal service/BAT shutdown marker closes the workspace, while older markers are ignored. Operator/trash cleanup semantics are delegated to the existing shutdown helper; soft-delete queue is not purged.
+- Added native-platform Qt font picker with Workspace UI, Runtime, Replies and Prompt options. Fonts are persisted through the existing workspace INI updater; terminal role settings apply to new WT sessions and do not restart active terminals.
+- Added Win64-safe named-mutex guard to prevent multiple Qt Focus containers. The old C++ binaries remain in the source tree for historical rollback only and are not launched by default. Unrelated Norm modules and all user-increased conversation-service budgets are retained.
+- Offline tests: original Qt Focus focus/geometry regression, partial-role/idempotent startup, shutdown success/failure, external signal, celery worker inventory, reversible-trash handling, Verbatim Lines write protections and r3 hybrid Visual PDF all passed. No live Norm install/service, authenticated browser, cookies, or user data modified to produce this release.
+
 ## Norm 0.55.10r3 — hybrid Visual PDF and browser-preserving scroll capture (2026-10-12)
 
 - Based on 0.55.10r2 native C++ workspace and normal startup/shutdown, unchanged. All user conversation generation budgets preserved.
