@@ -1,3 +1,16 @@
+# Norm 0.55.9r5 ? loose-source 8KB executable and selective failure cleanup
+
+Norm keeps N1/N2 authority, existing plug-ins, Redis state, and its Python
+source files. core/norm.exe becomes a prebuilt 8KB .NET launcher that starts
+the existing .venv's Python interpreter to run core/norm_main.py.
+It contains no Python code. The installer verifies the launcher and tests
+Celery as a source-mode import before promoting the candidate.
+
+Use /failed to identify failed tasks, then /flush-failed INDEX or TASK_ID
+to clean up just one failure. Bare /flush-failed retains legacy bulk behavior.
+Historical folder trash/orphans, GUI controls, and quiet Celery workers from
+r4 remain present; no runnable task is reset by the installer build process.
+
 # Norm 0.55.9r4 - integrated reversible folder trash and quiet workers
 
 This build preserves N1 verification-pool/tool authorization, N2 reasoning

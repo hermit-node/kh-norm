@@ -359,3 +359,14 @@ completed N1/N2 task due to an optional tool transport failure.
 Directory payloads must be first-class Redis/JSON trash records. Inventories must include legacy orphan directories without guessing their original paths; do not purge held orphans.
 Silent Windows Celery workers use pythonw.exe. Keep N1 before_tool/after_tool and N2 planning/conclusion/recovery unchanged; verify these with source and frozen tests.
 Desktop GUI uses a Windows interactive-session helper on authenticated loopback; read-only capabilities are integrated, input remains disabled pending further testing.
+## 0.55.9r5 loose Python executable contract
+core/norm.exe is a prebuilt 8KB .NET Framework launcher, not an embedded
+or frozen Python executable. Every installed Python module and plugin remains
+a loose versioned file, running in the existing .venv. No per-install
+PyInstaller build is required. Source-mode checks must have frozen_celery=false.
+Source ZIP supplies tools/launcher/norm.exe plus its SHA256 sidecar, C# source,
+build/test scripts and standalone launcher documentation. The installer must
+fail before promotion if the binary/source validation fails.
+The original final-conclusion recovery, N1 authorization, N2 workflow and
+Redis Celery DB4 transport are not modified by the launcher transition.
+Single-task /flush-failed must not invalidate unrelated memory/snapshots.

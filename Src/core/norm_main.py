@@ -925,11 +925,11 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             return {"status": "unavailable", "resumed": False, "reason": "worker is still initializing"}
         return worker_obj.resume_failed_task(selector)
 
-    def request_flush_failed() -> dict:
+    def request_flush_failed(selector: str = "") -> dict:
         worker_obj = resources.get("worker")
         if worker_obj is None or not hasattr(worker_obj, "flush_failed"):
             return {"status": "unavailable", "deleted": 0, "reason": "worker is still initializing"}
-        return worker_obj.flush_failed()
+        return worker_obj.flush_failed(selector)
 
     def request_trash_stage(path: str) -> dict:
         # Operator slash-command path: never enqueue an N2 task.

@@ -619,49 +619,61 @@ class PromptWorker:
             self.queue.cleanup_task(task_id)
             raise
 
-    def flush_failed(self) -> dict:
+    def flush_failed(self, selector: str = "") -> dict:
+        """Flush all failures (legacy), or only one selected failed task.
+
+        The targeted path never invalidates global snapshots or purges shared
+        consolidated task history. Indexes match /failed (newest first).
+        """
         if not self.durable or not hasattr(self.durable, "recent_failed_tasks"):
             return {"status": "unavailable", "deleted": 0, "reason": "durable failed-task state unavailable"}
         failures = list(self.durable.recent_failed_tasks(limit=10000) or [])
+        selector = str(selector or "").strip()
+        single = bool(selector)
+        if single:
+            selected = self._resolve_failed_selector(failures, selector)
+            failures = [selected]
         task_ids = [str(item.get("task_id") or "") for item in failures if str(item.get("task_id") or "").strip()]
         if not task_ids:
             return {"status": "ok", "deleted": 0, "lesson": "", "reason": "no failed tasks"}
 
-        # Distill one general future-use lesson before deleting the detailed execution corpses.
-        samples = []
-        for item in failures[:80]:
-            samples.append(redact(
-                f"- stage={item.get('failure_stage') or 'unknown'}; title={item.get('title') or '[untitled]'}; "
-                f"reason={str(item.get('failure_reason') or '')[:900]}; summary={str(item.get('summary') or '')[:900]}"
-            ))
-        lesson_prompt = (
-            "Create one concise internal lesson for avoiding or recovering from these failed Norm tasks in the future. "
-            "Generalize the recurring failure mode and the workflow change that would prevent wasted churn. Preserve useful safeguards; "
-            "do not preserve task IDs, filenames that are irrelevant to the lesson, credentials, or verbose incident history. "
-            "Target 300-900 characters. Return only the lesson.\n\nFAILED TASK SAMPLE:\n" + "\n".join(samples)
-        )
         lesson = ""
-        try:
-            lesson = str(self.client.generate(lesson_prompt, think=False, temperature=0.0, num_predict=420)).strip()
-        except Exception:
-            logging.exception("Failed-task lesson generation failed; using deterministic fallback")
-        if not lesson:
-            lesson = (
-                "When a task safety-stops, resume from the newest durable checkpoint and verified evidence instead of restarting broad discovery. "
-                "Treat repeated checks or repeated failures without state advancement as churn; decompose the blocked stage, verify the smallest corrective action, "
-                "and only grant more execution runway when durable progress is visible."
+        if not single:
+            # Distill one general future-use lesson before deleting the detailed execution corpses.
+            samples = []
+            for item in failures[:80]:
+                samples.append(redact(
+                    f"- stage={item.get('failure_stage') or 'unknown'}; title={item.get('title') or '[untitled]'}; "
+                    f"reason={str(item.get('failure_reason') or '')[:900]}; summary={str(item.get('summary') or '')[:900]}"
+                ))
+            lesson_prompt = (
+                "Create one concise internal lesson for avoiding or recovering from these failed Norm tasks in the future. "
+                "Generalize the recurring failure mode and the workflow change that would prevent wasted churn. Preserve useful safeguards; "
+                "do not preserve task IDs, filenames that are irrelevant to the lesson, credentials, or verbose incident history. "
+                "Target 300-900 characters. Return only the lesson.\n\nFAILED TASK SAMPLE:\n" + "\n".join(samples)
             )
-        lesson = lesson[:1600]
-        try:
-            self.durable.record_maintenance_note(
-                "failed_task_lesson", lesson, details={
-                    "flushed_count": len(task_ids),
-                    "failure_stages": sorted({str(item.get("failure_stage") or "unknown") for item in failures}),
-                },
-            )
-        except Exception:
-            logging.exception("Could not persist failed-task lesson; refusing destructive flush")
-            raise
+            lesson = ""
+            try:
+                lesson = str(self.client.generate(lesson_prompt, think=False, temperature=0.0, num_predict=420)).strip()
+            except Exception:
+                logging.exception("Failed-task lesson generation failed; using deterministic fallback")
+            if not lesson:
+                lesson = (
+                    "When a task safety-stops, resume from the newest durable checkpoint and verified evidence instead of restarting broad discovery. "
+                    "Treat repeated checks or repeated failures without state advancement as churn; decompose the blocked stage, verify the smallest corrective action, "
+                    "and only grant more execution runway when durable progress is visible."
+                )
+            lesson = lesson[:1600]
+            try:
+                self.durable.record_maintenance_note(
+                    "failed_task_lesson", lesson, details={
+                        "flushed_count": len(task_ids),
+                        "failure_stages": sorted({str(item.get("failure_stage") or "unknown") for item in failures}),
+                    },
+                )
+            except Exception:
+                logging.exception("Could not persist failed-task lesson; refusing destructive flush")
+                raise
 
         queue_cleanup = {"work": 0, "retry": 0, "escalation": 0, "dead": 0, "round_key": 0, "budget_key": 0}
         cleanup_errors: list[str] = []
@@ -693,13 +705,19 @@ class PromptWorker:
             except Exception as exc:
                 cleanup_errors.append(f"temp:{task_id}:{type(exc).__name__}:{exc}")
 
-        history_deleted = self.durable.purge_failed_task_history(task_ids) if hasattr(self.durable, "purge_failed_task_history") else 0
+        # A targeted flush may not remove consolidated multi-task history.
+        history_deleted = (self.durable.purge_failed_task_history(task_ids)
+                           if not single and hasattr(self.durable, "purge_failed_task_history") else 0)
         notes_deleted = self.durable.purge_task_maintenance_notes(task_ids, preserve_phase="failed_task_lesson") if hasattr(self.durable, "purge_task_maintenance_notes") else 0
         deleted = self.durable.delete_failed_task_rows(task_ids) if hasattr(self.durable, "delete_failed_task_rows") else 0
-        snapshots_invalidated = self.durable.invalidate_background_snapshots() if hasattr(self.durable, "invalidate_background_snapshots") else 0
+        # Avoid global memory invalidation when dismissing just one failure.
+        snapshots_invalidated = (self.durable.invalidate_background_snapshots()
+                                 if not single and hasattr(self.durable, "invalidate_background_snapshots") else 0)
         return {
             "status": "ok" if not cleanup_errors else "partial",
             "deleted": int(deleted),
+            "scope": "single" if single else "all",
+            "task_ids": task_ids,
             "lesson": lesson,
             "history_deleted": int(history_deleted),
             "maintenance_notes_deleted": int(notes_deleted),

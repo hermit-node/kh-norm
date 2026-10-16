@@ -315,7 +315,10 @@ class NormConsole:
                 else:
                     self.console.print(f"[yellow]Failed task not resumed: {result.get('reason') or result.get('status')}.[/]")
                 return
-            req = request.Request(self.flush_failed_url, data=b"{}", method="POST")
+            req = request.Request(
+                self.flush_failed_url,
+                data=json.dumps({"selector": "" if selector.lower() == "all" else selector}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST")
             with request.urlopen(req, timeout=60) as response:
                 result = json.loads(response.read().decode("utf-8"))
             self.console.print(
@@ -528,8 +531,10 @@ class NormConsole:
             threading.Thread(target=self._failed_command, args=("list",), daemon=True).start()
         elif parts and parts[0] == "/resume-failed" and len(parts) == 2:
             threading.Thread(target=self._failed_command, args=("resume", parts[1]), daemon=True).start()
-        elif parts == ["/flush-failed"]:
-            threading.Thread(target=self._failed_command, args=("flush",), daemon=True).start()
+        elif parts and parts[0] == "/flush-failed" and len(parts) <= 2:
+            threading.Thread(target=self._failed_command,
+                             args=("flush", parts[1] if len(parts) == 2 else ""),
+                             daemon=True).start()
         elif parts and parts[0] == "/soft-delete":
             source = stripped[len("/soft-delete"):].strip()
             if len(source) >= 2 and source[0] == source[-1] == '"':

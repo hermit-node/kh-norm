@@ -29,3 +29,4 @@ Norm console — quick reference
 Use /help plugins for plugin commands; the remaining legacy controls
 are documented in docs/help_full.txt.
 Trash: /soft-delete "PATH", /delete-list, /restore-delete ID, /delete-files.
+/flush-failed [INDEX|TASK_ID|all]   Flush selected failed task or all (bare means all)

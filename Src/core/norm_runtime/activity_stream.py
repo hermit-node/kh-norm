@@ -84,7 +84,7 @@ def _activity_app(
     flush_suppressed: Callable[[], dict] | None,
     failed_tasks: Callable[[int], dict] | None,
     resume_failed: Callable[[str], dict] | None,
-    flush_failed: Callable[[], dict] | None,
+    flush_failed: Callable[[str], dict] | None,
     trash_stage: Callable[[str], dict] | None,
     trash_list: Callable[[], dict] | None,
     trash_restore: Callable[[str], dict] | None,
@@ -277,7 +277,7 @@ def _activity_app(
                 if path == "/control/flush-failed":
                     if flush_failed is None:
                         return web.json_response({"error": "flush-failed control unavailable"}, status=503)
-                    return web.json_response(await _call(flush_failed))
+                    return web.json_response(await _call(flush_failed, str(payload.get("selector") or "").strip()))
                 if path == "/control/soft-delete":
                     if trash_stage is None:
                         return web.json_response({"error": "soft-delete control unavailable"}, status=503)
@@ -373,7 +373,7 @@ def start_activity_server(
     flush_suppressed: Callable[[], dict] | None = None,
     failed_tasks: Callable[[int], dict] | None = None,
     resume_failed: Callable[[str], dict] | None = None,
-    flush_failed: Callable[[], dict] | None = None,
+    flush_failed: Callable[[str], dict] | None = None,
     trash_stage: Callable[[str], dict] | None = None,
     trash_list: Callable[[], dict] | None = None,
     trash_restore: Callable[[str], dict] | None = None,

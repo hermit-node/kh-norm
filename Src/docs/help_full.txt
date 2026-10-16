@@ -56,8 +56,12 @@ Task control
       List recent failed tasks, newest first, including whether a durable manual-resume checkpoint exists.
   /resume-failed N
       Resume failed task index N (or use an exact task ID / unique task-ID prefix). The active round budget resets; lifetime telemetry is retained.
+  /flush-failed INDEX|TASK_ID
+      Flush one selected failed task without touching other failed or running tasks. Indexes are zero-based from /failed.
+  /flush-failed all
+      Legacy bulk flush: distill one lesson, clear all failed records and invalidate stale background snapshots.
   /flush-failed
-      Distill one general future-use lesson from failed tasks, then remove their runnable state, detailed task history/evidence, and stale background snapshots.
+      Alias for the legacy bulk flush. Use a selector for individual cleanup.
 
 Files / backup
   /soft-delete "PATH"

@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "release": "0.55.9r4",
-  "baseline": "Norm-0.55.9r3-portable-source.zip",
-  "file_count": 307,
+  "release": "0.55.9r5",
+  "baseline": "Norm-0.55.9r4-portable-source.zip",
+  "file_count": 314,
   "hash_algorithm": "SHA-256",
   "files": {
     ".gitattributes": {
@@ -18,16 +18,16 @@
       "sha256": "e774f5ea91a76af90b32d07d967a17a1e2741a3e99c67ee944536cb548e6a432"
     },
     "README.md": {
-      "bytes": 22108,
-      "sha256": "0bedbb7dcee07ddb73903bd9de47fa182b8c578602dc8396c18a5b444c072c7d"
+      "bytes": 22849,
+      "sha256": "cd9429b4650591c782e0dea02876072206850882863d60a06188f189d56cf4de"
     },
     "Run-Norm.bat": {
       "bytes": 4006,
       "sha256": "8c89b7cb41b39ee2f363d26e452bf3ed87fd965caffdb63fe9465cd17af07e36"
     },
     "SOURCE_PACKAGE.md": {
-      "bytes": 21972,
-      "sha256": "dd0f5be8ec1737a787faf408525434b3e7c18b5e7c97d7db516a2da95853448e"
+      "bytes": 22713,
+      "sha256": "54ad8dcc8b14e3bbf6bce5d545a4f47858a9cc2d0d0d91cfbd8b016546640d61"
     },
     "Safe-Shutdown-Norm.bat": {
       "bytes": 1568,
@@ -47,11 +47,11 @@
     },
     "config/settings.ini": {
       "bytes": 2739,
-      "sha256": "675ea20fa65343e625b88a06b791a028a3c5a9603ad3fd05a0b87c13684a6b85"
+      "sha256": "f8e1ad96808b90ef2be0c968a08f1344701486f88c62f9dbd86de0ca831155cf"
     },
     "core/norm_main.py": {
-      "bytes": 67642,
-      "sha256": "3f8672e37dc9b99834f16099753ad9506ead758989152b8244f9a450a5749d86"
+      "bytes": 67668,
+      "sha256": "b05c858fa80e6b701cd424d05dee3ef35da078a25f1d6e812e4a57b12452a8b9"
     },
     "core/norm_runtime/__init__.py": {
       "bytes": 2,
@@ -62,8 +62,8 @@
       "sha256": "a08bf3a38d55af51adf07f9ea46fa69a23a920e53620c0734605b82260353cce"
     },
     "core/norm_runtime/activity_stream.py": {
-      "bytes": 20204,
-      "sha256": "608092b7c7d2377bd9796ca957570f7f765bd48080375b6586bf9d4120880ce4"
+      "bytes": 20254,
+      "sha256": "fa90026198641d28ec99077c29a472f495d7cee427b9b589209a5c4e2c39cf62"
     },
     "core/norm_runtime/aiohttp_host.py": {
       "bytes": 5776,
@@ -214,8 +214,8 @@
       "sha256": "b2c39070add4e948be4998d75a72f4305661c130f6e7ba1b223f30ac7097bd32"
     },
     "core/norm_runtime/prompt_worker.py": {
-      "bytes": 329573,
-      "sha256": "414bf16d82cdffb05b500db55a4e32e3ebeb524800a16cf3e7e2523c9627e335"
+      "bytes": 330551,
+      "sha256": "a36111d8da3f73ba9dbb6381f4aa154f55d9f4a7cfa92a2c17db5199b5aa6f19"
     },
     "core/norm_runtime/protocol.py": {
       "bytes": 14182,
@@ -230,8 +230,8 @@
       "sha256": "5f2b684bc92e91ccb0a4a304b8e246146544b2608dc37ad61d7e1eeba2a959cd"
     },
     "core/norm_runtime/rich_console.py": {
-      "bytes": 35491,
-      "sha256": "00f01193194d6442b3e0c09072a91715d3d3121851eb456fdca6e07f518b001e"
+      "bytes": 35793,
+      "sha256": "b0539cd1dc03dc9108525e396f00a4b5c261629653cfc360e6d0f3ec537e72f2"
     },
     "core/norm_runtime/secret_redaction.py": {
       "bytes": 2736,
@@ -278,8 +278,8 @@
       "sha256": "1fcd208613e23083e27e1b4d8ae131b52dca4bb1b71a4190571c380cf4fd4ca3"
     },
     "docs/DEVELOPMENT_NOTES.md": {
-      "bytes": 24105,
-      "sha256": "d113b5c5d8905111511b3fc1960cad1dc2f360b5e9299947b4d47cf92f0a9d29"
+      "bytes": 24890,
+      "sha256": "383be53013fe38040408c3dce9c58e75df91683d51c468b8b0f7c05b7b9561a2"
     },
     "docs/FUTURE_IMPLEMENTATION_NOTES.md": {
       "bytes": 4268,
@@ -298,20 +298,20 @@
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
     },
     "docs/RELEASE_NOTES.md": {
-      "bytes": 126797,
-      "sha256": "ad8fc9d237415b13f40c9a93f7bffaf92d2fda71514efef51ec3b35e1e07756c"
+      "bytes": 128053,
+      "sha256": "54edc69d5f9522d208d97c3abcf1d0e24db34ebf7989cc324a3a6777bde46421"
     },
     "docs/VOICE_OPERATOR_COMMANDS_PATCH.md": {
       "bytes": 1796,
       "sha256": "20e98bc34a2a51ca046679253501b201be3e44408d1bdf8d0f122b0ca0053c9b"
     },
     "docs/help_full.txt": {
-      "bytes": 5347,
-      "sha256": "f761b7cf2e773029cca400bf96372ca8bca503de28f91752157b70890f963651"
+      "bytes": 5549,
+      "sha256": "89cc53117ffaa47f90c6c7779490e366194b05c11f9e81372634b5da33e9430e"
     },
     "docs/help_menu.txt": {
-      "bytes": 1648,
-      "sha256": "8bc894ae9229384dc09df6412f3b50dd9cf2d31b3f9fca9ed70cff2a1d082e3f"
+      "bytes": 1735,
+      "sha256": "923816f08be954d1b29c8c1b568b8c3cd714db0fa44929f6f555d2e7b721b377"
     },
     "make-listener.bat": {
       "bytes": 367,
@@ -354,8 +354,8 @@
       "sha256": "814cf6e096ac167f56bbb47c98287818949ec13c65843574b3a733698c91f982"
     },
     "package-manifest.json": {
-      "bytes": 43045,
-      "sha256": "4c83d294a98323e730a0f97a35d3ec5c5ed4db4ad8f0e8e2c95f2a3a5d66bc6b"
+      "bytes": 26792,
+      "sha256": "64feff2babfc92c9f3e05a48524a836b0502ceadd576724c35ec665731dde1e8"
     },
     "plugins/README.md": {
       "bytes": 721,
@@ -917,6 +917,30 @@
       "bytes": 9182,
       "sha256": "3d4e31a747a62215b0f676ffedbc34f265c959bb4d55459fa055eb94c8d486fa"
     },
+    "tools/launcher/NormLauncher.cs": {
+      "bytes": 8793,
+      "sha256": "ea08e1685684eec4d9848d6d76d802d55defd8b61b7aa07b0ee0c3b55843b372"
+    },
+    "tools/launcher/README-LAUNCHER.md": {
+      "bytes": 1795,
+      "sha256": "f95e3a782e798b4ad00ca66fcef1ef6b3f3239f70497e261cb51bccbc961b090"
+    },
+    "tools/launcher/build_launcher.py": {
+      "bytes": 1095,
+      "sha256": "0afdd4bdfc98ee89e82b322cea2d0ef06c4299cf667e4d1d5642b1c4e3d819f8"
+    },
+    "tools/launcher/norm.exe": {
+      "bytes": 8192,
+      "sha256": "39024d3c832ae33e0cbebd89c3fc6306f17e677b4c0fe301eb54c5baab41436e"
+    },
+    "tools/launcher/norm.exe.sha256": {
+      "bytes": 75,
+      "sha256": "2271a0b3c4819ea8fe68d5e1e97f6573439ad0963865ef1b46588c5de852bfab"
+    },
+    "tools/launcher/test_launcher.py": {
+      "bytes": 5352,
+      "sha256": "c264ee21a170e731cc558345d0e66bbb1040db0f683622a6fb331dfb5d949283"
+    },
     "tools/norm-network-map.cmd": {
       "bytes": 256,
       "sha256": "b58a3133cb250ccd32485237796ed2d16343d088635aa02735c5fe62892c61ad"
@@ -942,8 +966,8 @@
       "sha256": "b79bdd7a02ba5a54049b24d1f1d63247f02dad2c4f756ddfe7ef2e70b8053df7"
     },
     "tools/norm_gui_prompt.py": {
-      "bytes": 48411,
-      "sha256": "829260855dd15ec357eed4deae29dc9aca843b006b4b18fe45293eb7ce0e0a4d"
+      "bytes": 48646,
+      "sha256": "676c601407e4f5a64b7854f780ff5d0f8314ae9e48d7e15a296e0a580629d77b"
     },
     "tools/norm_gui_reply.py": {
       "bytes": 4723,
@@ -1044,6 +1068,10 @@
     "tools/test_deletion_folder_r4.py": {
       "bytes": 5604,
       "sha256": "c451a02cebc245d54a49f8c84f245636b6ac21cc680dfcd670dc63e68e039e1d"
+    },
+    "tools/test_failed_task_flush_r5.py": {
+      "bytes": 3520,
+      "sha256": "62d5f24de0659d1d664c5c55afcaf15b1cc996e30358276e898360e0cf331f6e"
     },
     "tools/test_failed_task_resume.py": {
       "bytes": 2947,

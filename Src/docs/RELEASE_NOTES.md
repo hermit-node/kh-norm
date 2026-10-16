@@ -1,3 +1,21 @@
+## Norm 0.55.9r5 — selective failure cleanup and lightweight launcher
+
+- /flush-failed <index|task_id|unique_prefix> targets exactly one failed
+  task using the same index convention as /failed. Invalid selectors do
+  not flush anything. Existing bare /flush-failed (all) remains available.
+- Selected-task cleanup runs without a model call, leaves unrelated failures
+  alone, and does not globally purge consolidated task history or invalidate
+  all background snapshots. The old bulk path still distills a lesson.
+- The standard installer now stages the provided prebuilt 8 KB Windows
+  .NET Framework launcher instead of compiling core/norm.exe with PyInstaller.
+- The launcher invokes .venv\Scripts\python.exe core\norm_main.py, forwards
+  arguments and exit codes, sets NORM_ROOT/CWD and uses a Windows Job Object
+  to terminate its Python child when the launcher is terminated.
+- The installer verifies the prebuilt binary SHA-256/PE header, then runs
+  the actual loose Norm source --self-test-celery and --version using the
+  intended virtual environment BEFORE promoting the candidate.
+- No replacement of C:\Norm and no deletion of failed task rows was performed
+  while authoring this version. No active-task/suppression behavior was changed.
 ## Norm 0.55.9r4 - integrated fixes (test candidate)
 
 - Original N1 gate, N2 planning and final-conclusion logic preserved.

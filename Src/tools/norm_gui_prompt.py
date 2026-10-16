@@ -710,12 +710,15 @@ def main() -> int:
                 except Exception as exc:
                     print(f"Resume failed: {exc}")
                 continue
-            if lowered == "/flush-failed":
+            if lowered == "/flush-failed" or lowered.startswith("/flush-failed "):
+                selector = text[len("/flush-failed"):].strip()
+                if selector.lower() == "all":
+                    selector = ""
                 try:
-                    result = post_json(ep["flush_failed"], {}, timeout=20)
+                    result = post_json(ep["flush_failed"], {"selector": selector}, timeout=90)
                     print(json.dumps(result, ensure_ascii=False, indent=2))
                 except Exception as exc:
-                    print(f"Could not flush failed-task records: {exc}")
+                    print(f"Could not flush failed-task records: {exc}. Check /failed before retrying.")
                 continue
             if lowered == "/queue" or lowered.startswith("/queue "):
                 parts = text.split()
