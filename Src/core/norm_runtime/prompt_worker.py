@@ -528,7 +528,7 @@ class PromptWorker:
         try:
             maintainer = DeepHistoryMaintainer(
                 self.durable, self.client, runtime_root=self._runtime_root(), config=memory_cfg,
-                queue=self.queue, drain_event=self._drain,
+                queue=self.queue, drain_event=self._drain, n1_gatekeeper=self.n1_gatekeeper,
             )
             recovery_cleanup = (
                 maintainer.cleanup_recovery_state()
@@ -3613,15 +3613,21 @@ class PromptWorker:
             )
             return
         now = _utc_now()
-        scheduled_days = max(1, int(memory_cfg.get("scheduled_memory_interval_days", 7)))
-        last_cleanup = self._runtime_state_time(self.durable.get_runtime_state("last_successful_cleanup_at"))
-        scheduled_due = last_cleanup is None or last_cleanup <= now - timedelta(days=scheduled_days)
-        if marker is None and not scheduled_due:
+        reductive_days = max(1, int(memory_cfg.get("scheduled_memory_interval_days", 7)))
+        destructive_days = max(reductive_days, int(memory_cfg.get("destructive_memory_interval_days", 21)))
+        legacy_last = self._runtime_state_time(self.durable.get_runtime_state("last_successful_cleanup_at"))
+        last_reductive = self._runtime_state_time(self.durable.get_runtime_state("last_successful_reductive_cleanup_at")) or legacy_last
+        last_destructive = self._runtime_state_time(self.durable.get_runtime_state("last_successful_destructive_cleanup_at")) or legacy_last
+        reductive_due = last_reductive is None or last_reductive <= now - timedelta(days=reductive_days)
+        destructive_due = last_destructive is None or last_destructive <= now - timedelta(days=destructive_days)
+        if marker is None and not (reductive_due or destructive_due):
             return
         resumed = marker is not None
         if marker is None:
-            last_mode = str(self.durable.get_runtime_state("last_successful_scheduled_memory_mode", "") or "").strip().lower()
-            next_mode = "full" if last_mode == "regular" else "regular"
+            # Independent clocks: weekly reductive maintenance, with a destructive
+            # long-cycle pass every ~3 weeks. When both are due, destructive wins
+            # and also satisfies that week's reductive maintenance.
+            next_mode = "destructive" if destructive_due else "regular"
             marker = {
                 "status": "cleanup_started", "run_id": str(uuid.uuid4()),
                 "mode": next_mode,
@@ -3654,7 +3660,7 @@ class PromptWorker:
                 purge = self._purge_image_analysis_outputs()
             maintainer = DeepHistoryMaintainer(
                 self.durable, self.client, runtime_root=self._runtime_root(), config=memory_cfg,
-                queue=self.queue, drain_event=self._drain,
+                queue=self.queue, drain_event=self._drain, n1_gatekeeper=self.n1_gatekeeper,
             )
             marker["phase"] = "recovery_state_cleanup"
             client.set(active_key, json.dumps(marker, sort_keys=True))
@@ -3667,9 +3673,10 @@ class PromptWorker:
                 )
                 if hasattr(self.durable, "purge_validation_history") else {"skipped": "unsupported"}
             )
-            marker["phase"] = "full_history" if mode == "full" else "background_memory"
+            destructive_mode = mode in {"full", "destructive"}
+            marker["phase"] = "destructive_history" if destructive_mode else "background_memory"
             client.set(active_key, json.dumps(marker, sort_keys=True))
-            if mode == "full":
+            if destructive_mode:
                 result = maintainer.run(force=True, full=True, recent_only=False)
                 if result is None:
                     result = {"status": "success", "work": "no_eligible_history"}
@@ -3677,10 +3684,19 @@ class PromptWorker:
                     raise RuntimeError(f"full maintenance did not complete successfully: {result}")
             else:
                 summary = maintainer.rebuild_background_snapshot(incremental=True)
-                result = {"status": "success", "background_chars": len(summary or "")}
+                result = {
+                    "status": "success",
+                    "background_chars": len(summary or ""),
+                    "n1_maintenance_judgments": (self.n1_gatekeeper.maintenance_judgment_stats() if self.n1_gatekeeper is not None and hasattr(self.n1_gatekeeper, "maintenance_judgment_stats") else {}),
+                }
             completed = _utc_now()
             self.durable.set_runtime_state("last_successful_cleanup_at", completed.isoformat())
             self.durable.set_runtime_state("last_successful_scheduled_memory_mode", mode)
+            if destructive_mode:
+                self.durable.set_runtime_state("last_successful_destructive_cleanup_at", completed.isoformat())
+                self.durable.set_runtime_state("last_successful_reductive_cleanup_at", completed.isoformat())
+            else:
+                self.durable.set_runtime_state("last_successful_reductive_cleanup_at", completed.isoformat())
             self.durable.record_maintenance_note(
                 "weekly_cleanup", f"{mode.capitalize()} cleanup completed successfully.",
                 details={"status": "success", "mode": mode, "run_id": run_id,

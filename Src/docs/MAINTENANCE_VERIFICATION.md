@@ -85,7 +85,7 @@ Current result: **4 tests passed**.
 
 PASS: python tools\test_n1_gatekeeper.py.
 
-Current checks pass for schema instrumentation, pass-through identity, loop reset/block behavior, Redis evidence reuse, raw fresh-result forwarding, mutation pass-through, mutation invalidation, parent-directory invalidation, and repeated non-cacheable-call blocking.
+Current checks pass for schema instrumentation, pass-through identity, loop reset/block behavior, Redis evidence reuse, raw fresh-result forwarding, mutation pass-through, mutation invalidation, parent-directory invalidation, repeated non-cacheable-call blocking, and maintenance accept/retry judgment.
 
 ## Validation refresh
 
@@ -151,11 +151,12 @@ Source inspection verifies:
 
 Source inspection verifies:
 
-- scheduled memory maintenance alternates successful regular/full passes;
+- scheduled memory maintenance uses independent 7-day reductive and 21-day destructive clocks;
+- N2 performs maintenance ranking/rewrite while N1 judges accept/retry, with destructive deletion requiring explicit N1 approval;
 - failed scheduled runs retain/resume the same recorded mode;
 - manual /memory-condense is recent-only;
 - /memory-condense -deep is manual-only bounded older-history compaction/validation without hierarchical merging;
-- scheduled/manual full sweep the complete date-ordered historical archive;
+- scheduled destructive/manual full sweep the complete date-ordered historical archive;
 - memory-maintenance settings are re-read when a pass starts.
 
 ## Full-condensation QA and merge safety

@@ -14,7 +14,7 @@ from .settings import load_path_settings
 
 
 class DeepHistoryMaintainer:
-    def __init__(self, durable, client, *, runtime_root, config: dict, queue=None, drain_event=None) -> None:
+    def __init__(self, durable, client, *, runtime_root, config: dict, queue=None, drain_event=None, n1_gatekeeper=None) -> None:
         self.durable = durable
         self.client = client
         self.runtime_root = Path(runtime_root).resolve()
@@ -22,6 +22,7 @@ class DeepHistoryMaintainer:
         self.config = config
         self.queue = queue
         self.drain_event = drain_event
+        self.n1_gatekeeper = n1_gatekeeper
 
     @staticmethod
     def _normalized_request(text: str) -> str:
@@ -39,6 +40,71 @@ class DeepHistoryMaintainer:
             "required": ["outcome", "lessons", "future_note"],
             "additionalProperties": False,
         }
+
+    @staticmethod
+    def _destructive_archive_schema() -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "disposition": {"type": "string", "enum": ["keep", "destroy"]},
+                "reason": {"type": "string", "maxLength": 800},
+                "outcome": {"type": "string", "maxLength": 3000},
+                "lessons": {"type": "string", "maxLength": 2600},
+                "future_note": {"type": "string", "maxLength": 1800},
+            },
+            "required": ["disposition", "reason", "outcome", "lessons", "future_note"],
+            "additionalProperties": False,
+        }
+
+    def _n1_judge(self, *, mode: str, source_text: str, candidate: str, attempt: int, max_attempts: int, ideal_chars: int, acceptable_chars: int, proposed_disposition: str = "keep") -> dict:
+        gate = self.n1_gatekeeper
+        if gate is None or not hasattr(gate, "judge_memory_condensation"):
+            destructive_delete = mode == "destructive" and proposed_disposition == "destroy"
+            decision = "retry" if destructive_delete else ("accept" if len(candidate) <= ideal_chars or attempt >= max_attempts else "retry")
+            return {
+                "decision": decision,
+                "reason": "No N1 maintenance judge available; destructive deletion not authorized." if destructive_delete else "No N1 maintenance judge available; bounded fallback used.",
+                "retry_instruction": "Preserve this record; N1 is required to authorize destruction." if destructive_delete else ("Compress further while preserving important state." if decision == "retry" else ""),
+            }
+        return gate.judge_memory_condensation(
+            mode=mode, source_text=source_text, candidate=candidate, attempt=attempt,
+            max_attempts=max_attempts, ideal_chars=ideal_chars, acceptable_chars=acceptable_chars,
+            proposed_disposition=proposed_disposition,
+        )
+
+    def _condense_plain_with_n1(self, *, prompt: str, source_text: str, mode: str, ideal_chars: int, acceptable_chars: int, num_predict: int, max_attempts: int, response_so_far: str = "", on_partial=None) -> tuple[str, list[dict]]:
+        candidates: list[str] = []
+        judgments: list[dict] = []
+        current_prompt = prompt
+        resume = response_so_far
+        for attempt in range(1, max_attempts + 1):
+            candidate = self.client.generate_complete_text(
+                current_prompt, think=False, temperature=0.0, num_predict=num_predict, max_segments=2,
+                response_so_far=resume if attempt == 1 else "", on_partial=on_partial if attempt == 1 else None,
+            ).strip()
+            if not candidate:
+                continue
+            candidates.append(candidate)
+            judgment = self._n1_judge(
+                mode=mode, source_text=source_text, candidate=candidate, attempt=attempt,
+                max_attempts=max_attempts, ideal_chars=ideal_chars, acceptable_chars=acceptable_chars,
+            )
+            judgments.append({"attempt": attempt, "chars": len(candidate), **judgment})
+            if str(judgment.get("decision") or "").lower() == "accept":
+                return candidate, judgments
+            instruction = str(judgment.get("retry_instruction") or "Compress further while preserving important state.").strip()
+            current_prompt = (
+                "Rewrite the candidate below as a better maintenance condensation. Follow N1's critique exactly. "
+                f"Ideal early-stop size <= {ideal_chars} characters; practical ceiling <= {acceptable_chars}. "
+                "Do not invent facts. Return plain text only.\n\n"
+                f"N1 CRITIQUE: {instruction}\n\nSOURCE EXCERPT:\n{source_text[:18000]}\n\nCANDIDATE:\n{candidate}"
+            )
+        if not candidates:
+            raise RuntimeError("maintenance condensation returned blank on every attempt")
+        under_ceiling = [c for c in candidates if len(c) <= acceptable_chars]
+        if under_ceiling:
+            return min(under_ceiling, key=len), judgments
+        return min(candidates, key=len), judgments
 
     @staticmethod
     def _full_merge_schema() -> dict:
@@ -368,7 +434,7 @@ class DeepHistoryMaintainer:
             "records_after_merge": len(final_records),
         }
 
-    def _summarize_group(self, group: list[dict], *, newer_context: list[dict] | None = None) -> dict:
+    def _summarize_group(self, group: list[dict], *, newer_context: list[dict] | None = None, destructive: bool = False) -> dict | None:
         primary = self._choose_primary(group)
         payload = []
         for item in group:
@@ -387,46 +453,108 @@ class DeepHistoryMaintainer:
                 "evidence": item.get("evidence", [])[:12],
             })
         newer = list(newer_context or [])
-        prompt = (
-            "Compress this terminal Norm task history into one durable reusable record. Repeated attempts of the same request may be present. "
-            "Outcome: preserve the task/request, the meaningful execution steps or itinerary needed to reconstruct the work, final state/results, and important artifact/data pointers. "
-            "Lessons: preserve tools actually used, efficiency/what worked or failed, reusable fixes, constraints, and useful technical lessons. "
-            "Future_note: preserve concise notes for improvement: what to do differently/better next time and how to reuse prior work instead of repeating it. "
-            "When RELEVANT NEWER COMPACT HISTORY is supplied, treat newer durable state as authoritative only when it materially addresses the same fact, behavior, constraint, or lesson. Remove or correct older guidance that newer evidence supersedes or proves wrong. Keep an older fact only when it remains useful as clearly historical context. Do not let weakly related newer records overwrite unrelated history. "
-            "Do not preserve routine chatter, verifier narration, transient smoke details, credentials, or redundant failures that taught nothing. Consolidation must delete semantic redundancy: if the same state appears multiple times, preserve/reference the initial authoritative instance and represent later repetitions only as that state happening again with a timezone-aware timestamp. Default timestamps to America/New_York when unspecified. "
-            "Return only the structured JSON required by the schema.\n\nTASK ATTEMPTS:\n"
-            + json.dumps(payload, ensure_ascii=False)
-            + ("\n\nRELEVANT NEWER COMPACT HISTORY:\n" + json.dumps(newer, ensure_ascii=False, default=str) if newer else "")
-        )
+        if destructive:
+            prompt = (
+                "This is Norm's DESTRUCTIVE long-cycle memory maintenance. Review this terminal task history and first decide whether it still has durable future value. "
+                "You may return disposition='destroy' when the material is now useless to future work: obsolete TODOs whose work is complete, superseded state, abandoned intermediate plans, stale failures with no reusable lesson, redundant chronology, or facts now implicit in the stable baseline. "
+                "Do NOT destroy current constraints, active obligations, durable decisions/preferences, reusable technical lessons, or still-useful artifact/data pointers. "
+                "If disposition='keep', compress it into one durable reusable record: outcome=current durable state/results; lessons=reusable fixes/constraints/what worked or failed; future_note=only still-useful next-time guidance. "
+                "When newer compact history materially supersedes this record, prefer the newer state and destroy or rewrite stale wording rather than carrying 'still unimplemented' or similar historical garbage forward. "
+                "N2 owns this ranking/destruction proposal; N1 will judge the result afterward. Return only the structured JSON required by the schema.\n\nTASK ATTEMPTS:\n"
+                + json.dumps(payload, ensure_ascii=False)
+                + ("\n\nRELEVANT NEWER COMPACT HISTORY:\n" + json.dumps(newer, ensure_ascii=False, default=str) if newer else "")
+            )
+            schema = self._destructive_archive_schema()
+        else:
+            prompt = (
+                "Compress this terminal Norm task history into one durable reusable record. Repeated attempts of the same request may be present. "
+                "Outcome: preserve the task/request, the meaningful execution steps or itinerary needed to reconstruct the work, final state/results, and important artifact/data pointers. "
+                "Lessons: preserve tools actually used, efficiency/what worked or failed, reusable fixes, constraints, and useful technical lessons. "
+                "Future_note: preserve concise notes for improvement: what to do differently/better next time and how to reuse prior work instead of repeating it. "
+                "When RELEVANT NEWER COMPACT HISTORY is supplied, treat newer durable state as authoritative only when it materially addresses the same fact, behavior, constraint, or lesson. Remove or correct older guidance that newer evidence supersedes or proves wrong. Keep an older fact only when it remains useful as clearly historical context. Do not let weakly related newer records overwrite unrelated history. "
+                "Do not preserve routine chatter, verifier narration, transient smoke details, credentials, or redundant failures that taught nothing. Consolidation must delete semantic redundancy: if the same state appears multiple times, preserve/reference the initial authoritative instance and represent later repetitions only as that state happening again with a timezone-aware timestamp. Default timestamps to America/New_York when unspecified. "
+                "Return only the structured JSON required by the schema.\n\nTASK ATTEMPTS:\n"
+                + json.dumps(payload, ensure_ascii=False)
+                + ("\n\nRELEVANT NEWER COMPACT HISTORY:\n" + json.dumps(newer, ensure_ascii=False, default=str) if newer else "")
+            )
+            schema = self._archive_schema()
+
+        max_attempts = max(1, min(8, int(self.config.get("consolidation_max_attempts", 4))))
+        ideal_chars = max(800, int(self.config.get("consolidation_batch_target_chars", 1800)))
+        acceptable_chars = max(ideal_chars, int(self.config.get("consolidation_batch_accept_chars", 3400)))
         last_error = None
-        for _ in range(3):
+        best: tuple[int, dict] | None = None
+        best_safe_keep: tuple[int, dict] | None = None
+        accepted = False
+        current_prompt = prompt
+        for attempt in range(1, max_attempts + 1):
             try:
-                raw = self.client.generate(prompt, think=False, temperature=0.0, num_predict=1800, response_format=self._archive_schema())
+                raw = self.client.generate(current_prompt, think=False, temperature=0.0, num_predict=1800, response_format=schema)
                 parsed = self.client.parse_json(raw)
-                if not all(str(parsed.get(k) or "").strip() for k in ("outcome", "lessons", "future_note")):
+                disposition = str(parsed.get("disposition") or "keep").strip().lower() if destructive else "keep"
+                if disposition not in {"keep", "destroy"}:
+                    raise ValueError("invalid destructive disposition")
+                if disposition == "keep" and not all(str(parsed.get(k) or "").strip() for k in ("outcome", "lessons", "future_note")):
                     raise ValueError("archive summary contained blank required fields")
-                return {
-                    "primary_task_id": primary["task_id"],
-                    "task_date": primary["started_at"].date(),
-                    "title": primary["title"],
-                    "status": primary["status"],
-                    "original_request": primary.get("original_request") or primary["title"],
-                    "outcome": str(parsed["outcome"]).strip(),
-                    "lessons": str(parsed["lessons"]).strip(),
-                    "future_note": str(parsed["future_note"]).strip(),
-                    "source_task_ids": list(dict.fromkeys(
-                        source_id
-                        for item in group
-                        for source_id in ([str(item["task_id"])] + [str(v) for v in (item.get("source_task_ids") or [])])
-                    )),
-                    "task_kind": str(primary.get("task_kind") or "root"),
-                    "parent_task_id": str(primary.get("parent_task_id") or ""),
-                    "parent_step_id": str(primary.get("parent_step_id") or ""),
-                    "task_depth": int(primary.get("task_depth") or 0),
-                }
+                candidate_text = json.dumps(parsed, ensure_ascii=False, sort_keys=True)
+                score = len(candidate_text)
+                if best is None or score < best[0]:
+                    best = (score, parsed)
+                if disposition == "keep" and (best_safe_keep is None or score < best_safe_keep[0]):
+                    best_safe_keep = (score, parsed)
+                judgment = self._n1_judge(
+                    mode="destructive" if destructive else "reductive",
+                    source_text=json.dumps({"attempts": payload, "newer": newer}, ensure_ascii=False, default=str),
+                    candidate=candidate_text, attempt=attempt, max_attempts=max_attempts,
+                    ideal_chars=ideal_chars, acceptable_chars=acceptable_chars,
+                    proposed_disposition=disposition,
+                )
+                if str(judgment.get("decision") or "").lower() == "accept":
+                    best = (score, parsed)
+                    accepted = True
+                    break
+                instruction = str(judgment.get("retry_instruction") or "Improve density and preserve only durable useful state.").strip()
+                current_prompt = (
+                    prompt
+                    + "\n\nN1 REVIEW OF PRIOR CANDIDATE:\n"
+                    + instruction
+                    + "\n\nPRIOR CANDIDATE:\n"
+                    + candidate_text
+                    + "\nReturn a revised structured JSON record only."
+                )
             except Exception as exc:
                 last_error = exc
-        raise RuntimeError(f"task-history compression failed after 3 attempts: {last_error}")
+        if best is None:
+            raise RuntimeError(f"task-history compression failed after {max_attempts} attempts: {last_error}")
+        parsed = best[1]
+        if destructive and str(parsed.get("disposition") or "keep").strip().lower() == "destroy":
+            if not accepted:
+                if best_safe_keep is not None:
+                    parsed = best_safe_keep[1]
+                else:
+                    raise RuntimeError(f"N1 did not approve destructive discard for task {primary['task_id']} after {max_attempts} attempts")
+            else:
+                logging.info("N1 approved destructive memory discard primary_task_id=%s reason=%s", primary["task_id"], str(parsed.get("reason") or "")[:500])
+                return None
+        return {
+            "primary_task_id": primary["task_id"],
+            "task_date": primary["started_at"].date(),
+            "title": primary["title"],
+            "status": primary["status"],
+            "original_request": primary.get("original_request") or primary["title"],
+            "outcome": str(parsed["outcome"]).strip(),
+            "lessons": str(parsed["lessons"]).strip(),
+            "future_note": str(parsed["future_note"]).strip(),
+            "source_task_ids": list(dict.fromkeys(
+                source_id
+                for item in group
+                for source_id in ([str(item["task_id"])] + [str(v) for v in (item.get("source_task_ids") or [])])
+            )),
+            "task_kind": str(primary.get("task_kind") or "root"),
+            "parent_task_id": str(primary.get("parent_task_id") or ""),
+            "parent_step_id": str(primary.get("parent_step_id") or ""),
+            "task_depth": int(primary.get("task_depth") or 0),
+        }
 
     def _repair_compact_record(self, group: list[dict], record: dict, verdict: dict, replay: str) -> dict:
         primary = self._choose_primary(group)
@@ -802,7 +930,10 @@ class DeepHistoryMaintainer:
                 return ""
         batch_chars = max(4000, int(self.config.get("consolidation_batch_chars", 14000)))
         batch_target_chars = max(800, int(self.config.get("consolidation_batch_target_chars", 1800)))
+        batch_accept_chars = max(batch_target_chars, int(self.config.get("consolidation_batch_accept_chars", 3400)))
+        max_attempts = max(1, min(8, int(self.config.get("consolidation_max_attempts", 4))))
         snapshot_target_chars = max(2500, int(self.config.get("consolidation_snapshot_target_chars", 6000)))
+        snapshot_accept_chars = max(snapshot_target_chars, int(self.config.get("consolidation_snapshot_accept_chars", max(9000, snapshot_target_chars))))
         lines = [f"[{record['at'].isoformat()}][{record['source']}] {record['text']}" for record in records]
         chunks, current, used = [], [], 0
         for line in lines:
@@ -825,8 +956,8 @@ class DeepHistoryMaintainer:
             prompt = (
                 "Distill this PostgreSQL history slice into SMALL working-memory notes, not a rewritten transcript. "
                 "Keep only information that is likely to materially change a future answer or action: current project state, durable decisions, stable preferences, unresolved obligations, reusable technical lessons, and artifact/data pointers that remain operationally useful. "
-                "Aggressively merge repeated updates about the same project/fact into one current-state statement plus at most one reusable lesson or constraint. "
-                "DROP routine chatter, successful smoke-test narration, one-off examples, transient values/market levels, temporary shorthand/terminology, intermediate attempts, redundant chronology, and details already recoverable from compact task_history unless they are needed to understand current state. "
+                "This is a REDUCTIVE pass: rank information by future usefulness. Give important/current state, decisions, constraints, active obligations, and durable lessons enough detail; make less-important material much smaller. "
+                "Merge exact duplicates and superseded wording. Reduce routine chatter, smoke-test narration, one-off examples, transient values, temporary shorthand, intermediate attempts, and redundant chronology to the smallest trace that preserves useful context rather than treating low importance alone as permission to erase a distinct subject. "
                 "Do NOT produce one bullet/line per source record. Fewer synthesized items are better. Preserve a timestamp only when timing itself remains meaningful. "
                 f"Compression target: about {batch_target_chars} characters. Treat this as a strong target, not a reason to fail the maintenance run. Do not invent facts. Return plain text only.\n\n" + chunk
             )
@@ -834,31 +965,19 @@ class DeepHistoryMaintainer:
             def save_batch_partial(text: str, complete: bool, segment: int, idx=index) -> None:
                 state.update({"current_index": idx, "current_partial": text, "current_complete": bool(complete), "current_segment": int(segment)})
                 self._checkpoint_write(checkpoint_path, state)
-            part = self.client.generate_complete_text(
-                prompt, think=False, temperature=0.0, num_predict=900, max_segments=2,
-                response_so_far=resume, on_partial=save_batch_partial,
-            ).strip()
-            if not part:
-                raise RuntimeError(f"background condensation returned blank batch {index + 1}/{len(chunks)}")
-            if len(part) > int(batch_target_chars * 1.20):
-                tighten = (
-                    "Rewrite the candidate below as materially smaller working memory. "
-                    "It is still too close to source-by-source narration. Merge duplicates, remove examples/transient details, and keep only state/decisions/preferences/unresolved obligations/reusable lessons that can change future work. "
-                    f"Aim for <= {batch_target_chars} characters, plain text only. If the source is unusually information-dense, preserve the smallest sufficient version instead of padding or narrating.\n\nCANDIDATE:\n" + part
+            part, judgments = self._condense_plain_with_n1(
+                prompt=prompt, source_text=chunk, mode="reductive",
+                ideal_chars=batch_target_chars, acceptable_chars=batch_accept_chars,
+                num_predict=900, max_attempts=max_attempts, response_so_far=resume, on_partial=save_batch_partial,
+            )
+            state.setdefault("n1_batch_judgments", {})[str(index)] = judgments
+            if len(part) > batch_accept_chars:
+                over_target = state.setdefault("over_target_batches", [])
+                over_target.append({"index": index, "chars": len(part), "ideal": batch_target_chars, "ceiling": batch_accept_chars})
+                logging.warning(
+                    "Background condensation batch %s/%s remained above practical ceiling chars=%s ideal=%s ceiling=%s after %s N2 attempt(s); keeping N1-approved/best valid result",
+                    index + 1, len(chunks), len(part), batch_target_chars, batch_accept_chars, len(judgments),
                 )
-                tightened = self.client.generate_complete_text(
-                    tighten, think=False, temperature=0.0, num_predict=900, max_segments=2,
-                ).strip()
-                if tightened and len(tightened) < len(part):
-                    part = tightened
-                if len(part) > int(batch_target_chars * 1.20):
-                    over_target = state.setdefault("over_target_batches", [])
-                    over_target.append({"index": index, "chars": len(part), "target": batch_target_chars})
-                    logging.warning(
-                        "Background condensation batch %s/%s remained above soft target chars=%s target=%s; "
-                        "keeping the smallest valid condensation instead of failing weekly maintenance",
-                        index + 1, len(chunks), len(part), batch_target_chars,
-                    )
             partials.append(part)
             state.update({"completed_batches": partials, "current_index": index + 1, "current_partial": "", "current_complete": True})
             self._checkpoint_write(checkpoint_path, state)
@@ -877,32 +996,20 @@ class DeepHistoryMaintainer:
         def save_merge_partial(text: str, complete: bool, segment: int) -> None:
             state.update({"stage": "merge", "merge_partial": text, "merge_complete": bool(complete), "merge_segment": int(segment)})
             self._checkpoint_write(checkpoint_path, state)
-        summary = self.client.generate_complete_text(
-            merge_prompt, think=False, temperature=0.0, num_predict=1800, max_segments=2,
+        summary, merge_judgments = self._condense_plain_with_n1(
+            prompt=merge_prompt, source_text=(base + combined), mode="reductive",
+            ideal_chars=snapshot_target_chars, acceptable_chars=snapshot_accept_chars,
+            num_predict=1800, max_attempts=max_attempts,
             response_so_far=str(state.get("merge_partial") or ""), on_partial=save_merge_partial,
-        ).strip()
-        if not summary:
-            raise RuntimeError("background condensation merge returned blank")
-        if len(summary) > int(snapshot_target_chars * 1.15):
-            tighten = (
-                "The candidate below is too verbose for background working memory. Re-condense it; do not continue it. "
-                "Remove source-by-source narration, repeated project state, examples, transient values, and anything safely recoverable from task_history. "
-                "Keep only current state, durable decisions/preferences, unresolved obligations, and reusable lessons that materially affect future work. "
-                f"Aim for <= {snapshot_target_chars} characters, plain text only. If that exact size would destroy useful state, return the smallest sufficient snapshot rather than failing.\n\nCANDIDATE:\n" + summary
+        )
+        state["n1_merge_judgments"] = merge_judgments
+        if len(summary) > snapshot_accept_chars:
+            logging.warning(
+                "Background condensation merge remained above practical ceiling chars=%s ideal=%s ceiling=%s after %s N2 attempt(s); saving N1-approved/best valid snapshot",
+                len(summary), snapshot_target_chars, snapshot_accept_chars, len(merge_judgments),
             )
-            tightened = self.client.generate_complete_text(
-                tighten, think=False, temperature=0.0, num_predict=1800, max_segments=2,
-            ).strip()
-            if tightened and len(tightened) < len(summary):
-                summary = tightened
-            if len(summary) > int(snapshot_target_chars * 1.15):
-                logging.warning(
-                    "Background condensation merge remained above soft target chars=%s target=%s; "
-                    "saving the smallest valid snapshot instead of failing weekly maintenance",
-                    len(summary), snapshot_target_chars,
-                )
-                state["merge_over_target"] = {"chars": len(summary), "target": snapshot_target_chars}
-                self._checkpoint_write(checkpoint_path, state)
+            state["merge_over_target"] = {"chars": len(summary), "ideal": snapshot_target_chars, "ceiling": snapshot_accept_chars}
+            self._checkpoint_write(checkpoint_path, state)
         source_through = max(record["at"] for record in (delta_all if incremental else records))
         self.durable.save_background_snapshot(summary, source_through)
         self.durable.keep_latest_background_snapshot()
@@ -959,6 +1066,9 @@ class DeepHistoryMaintainer:
         records: list[dict] = []
         primary_ids: list[str] = []
         replay_results: list[dict] = []
+        destroyed_groups = 0
+        destroyed_source_tasks = 0
+        destroyed_task_ids: set[str] = set()
         merge_stats = {
             "merge_attempt_clusters": 0,
             "merged_groups": 0,
@@ -988,7 +1098,12 @@ class DeepHistoryMaintainer:
                     batch_records: list[dict] = []
                     for group in batch_groups:
                         newer_context = self._relevant_newer_records(group, records, limit=8)
-                        record = self._summarize_group(group, newer_context=newer_context)
+                        record = self._summarize_group(group, newer_context=newer_context, destructive=True)
+                        if record is None:
+                            destroyed_groups += 1
+                            destroyed_source_tasks += len(group)
+                            destroyed_task_ids.update(str(item.get("task_id") or "") for item in group if str(item.get("task_id") or ""))
+                            continue
                         batch_records.append(record)
                         records.append(record)
 
@@ -1025,7 +1140,7 @@ class DeepHistoryMaintainer:
                         batch_replays.append(result)
                         replay_results.append(result)
 
-                    if not batch_replays or not all(item["passed"] for item in batch_replays):
+                    if batch_records and (not batch_replays or not all(item["passed"] for item in batch_replays)):
                         self.durable.record_maintenance_note(
                             "deep_history_consolidation",
                             "Full compact-history refresh failed replay validation; existing compact and raw history were preserved and SQL backup retained.",
@@ -1050,12 +1165,17 @@ class DeepHistoryMaintainer:
                 records, merge_stats = self._full_merge_records(
                     records, max_size=full_merge_max_records
                 )
-                primary_ids = self.durable.upsert_task_history(records, validated=False)
+                primary_ids = self.durable.upsert_task_history(records, validated=False) if records else []
             elif deep_sampled:
                 for batch_index, batch_groups in enumerate(validation_batches, start=1):
                     batch_records: list[dict] = []
                     for group in batch_groups:
-                        record = self._summarize_group(group)
+                        record = self._summarize_group(group, destructive=True)
+                        if record is None:
+                            destroyed_groups += 1
+                            destroyed_source_tasks += len(group)
+                            destroyed_task_ids.update(str(item.get("task_id") or "") for item in group if str(item.get("task_id") or ""))
+                            continue
                         batch_records.append(record)
                         records.append(record)
 
@@ -1092,7 +1212,7 @@ class DeepHistoryMaintainer:
                         batch_replays.append(result)
                         replay_results.append(result)
 
-                    if not batch_replays or not all(item["passed"] for item in batch_replays):
+                    if batch_records and (not batch_replays or not all(item["passed"] for item in batch_replays)):
                         self.durable.record_maintenance_note(
                             "deep_history_consolidation",
                             "Deep compact-history batch failed sampled replay validation; raw history was preserved and SQL backup retained.",
@@ -1113,9 +1233,9 @@ class DeepHistoryMaintainer:
                             "validation_batches": len(validation_batches),
                             "replays": batch_replays,
                         }
-                primary_ids = self.durable.upsert_task_history(records, validated=False)
+                primary_ids = self.durable.upsert_task_history(records, validated=False) if records else []
             else:
-                records = [self._summarize_group(group) for group in groups]
+                records = [record for group in groups if (record := self._summarize_group(group, destructive=False)) is not None]
                 batch_replays: list[dict] = []
                 for index, record in enumerate(list(records)):
                     passed, verdict, replay = self._replay_one(record)
@@ -1156,12 +1276,21 @@ class DeepHistoryMaintainer:
                         "validation_batches": 1,
                         "replays": batch_replays,
                     }
-                primary_ids = self.durable.upsert_task_history(records, validated=False)
+                primary_ids = self.durable.upsert_task_history(records, validated=False) if records else []
 
-            self.durable.mark_task_history_validated(primary_ids)
+            if primary_ids:
+                self.durable.mark_task_history_validated(primary_ids)
             raw_task_ids = [str(item["task_id"]) for item in raw_candidates]
             source_task_ids = [task_id for record in records for task_id in record["source_task_ids"]]
-            deleted_tasks = self.durable.delete_validated_archived_tasks(raw_task_ids) if raw_task_ids else 0
+            raw_destroyed_ids = [task_id for task_id in raw_task_ids if task_id in destroyed_task_ids]
+            raw_archived_ids = [task_id for task_id in raw_task_ids if task_id not in destroyed_task_ids]
+            deleted_tasks = self.durable.delete_validated_archived_tasks(raw_archived_ids) if raw_archived_ids else 0
+            destructively_deleted_tasks = (
+                self.durable.delete_n1_approved_discarded_tasks(
+                    raw_destroyed_ids, approval="n1-approved-destructive-maintenance"
+                )
+                if raw_destroyed_ids else 0
+            )
             compact_rows_replaced = 0
             if full and hasattr(self.durable, "delete_task_history_rows"):
                 refreshed_primary_ids = {str(v) for v in primary_ids}
@@ -1194,6 +1323,9 @@ class DeepHistoryMaintainer:
                 "replay_samples_passed": len(replay_results),
                 "compact_records_in_pass": len(records),
                 "compact_rows_replaced": compact_rows_replaced,
+                "destructively_discarded_groups": destroyed_groups,
+                "destructively_discarded_source_tasks": destroyed_source_tasks,
+                "destructively_deleted_raw_tasks": destructively_deleted_tasks,
                 "recent_only": bool(recent_only and not full),
                 "regular_memory_window_days": regular_window_days if recent_only and not full else None,
                 **merge_stats,
@@ -1203,6 +1335,7 @@ class DeepHistoryMaintainer:
                 "superseded_memories_deleted": superseded_deleted,
                 "durable_archive": "task_history", "aggregate_archive_char_cap": None,
                 "backup_deleted": True,
+                "n1_maintenance_judgments": (self.n1_gatekeeper.maintenance_judgment_stats() if self.n1_gatekeeper is not None and hasattr(self.n1_gatekeeper, "maintenance_judgment_stats") else {}),
             }
             self.durable.record_maintenance_note(
                 "deep_history_consolidation", "Old Norm history was compacted, replay-validated, hard-pruned, and the temporary SQL backup was deleted.",

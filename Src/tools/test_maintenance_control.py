@@ -133,17 +133,20 @@ class MaintenanceControlTests(unittest.TestCase):
         self.assertTrue(status["parked"])
         self.assertEqual(status["status"], "requires_attention")
 
-    def test_regular_snapshot_contract_is_tight_and_not_source_by_source(self):
+    def test_regular_snapshot_contract_is_n1_gated_and_reductive(self):
         source = (ROOT / "core" / "norm_runtime" / "history_maintenance.py").read_text(encoding="utf-8")
+        worker = (ROOT / "core" / "norm_runtime" / "prompt_worker.py").read_text(encoding="utf-8")
         config = (ROOT / "config" / "runtime.json").read_text(encoding="utf-8")
-        self.assertIn("consolidation_batch_target_chars", config)
-        self.assertIn("consolidation_snapshot_target_chars", config)
+        self.assertIn('"consolidation_batch_target_chars": 1800', config)
+        self.assertIn('"consolidation_batch_accept_chars": 3400', config)
+        self.assertIn('"consolidation_max_attempts": 4', config)
+        self.assertIn('"destructive_memory_interval_days": 21', config)
         self.assertIn("Do NOT produce one bullet/line per source record", source)
-        self.assertIn("This is NOT an archive", source)
-        self.assertIn("do not continue it", source)
-        self.assertIn("num_predict=900, max_segments=2", source)
-        self.assertIn("num_predict=1800, max_segments=2", source)
-        self.assertIn("soft target", source)
+        self.assertIn("This is a REDUCTIVE pass", source)
+        self.assertIn("_condense_plain_with_n1", source)
+        self.assertIn("practical ceiling", source)
+        self.assertIn('next_mode = "destructive" if destructive_due else "regular"', worker)
+        self.assertIn('mode in {"full", "destructive"}', worker)
         self.assertNotIn("refused compression target", source)
 
     def test_output_truncation_parks_scheduled_maintenance(self):

@@ -73,7 +73,7 @@ memory.regular_memory_window_days defaults to 14. Regular background snapshot tu
 
 The regular background snapshot is working memory, not archival memory. PostgreSQL task_history retains reconstructable detail. Batch/final prompts must aggressively synthesize repeated project updates, preserve only current state/durable decisions/stable preferences/unresolved obligations/reusable lessons/still-useful pointers, and explicitly reject one-output-item-per-source behavior. Transient examples, temporary shorthand, routine successful checks, superseded states, and detail recoverable from task_history are disposable.
 
-Regular batch condensation uses a bounded 900 × 2 generation budget; the final working-memory merge uses 1800 × 2. If either result exceeds its configured character target tolerance, Norm asks the model to re-condense the candidate rather than blindly continuing it.
+Regular batch condensation is N1-gated for up to four N2 attempts. N2 ranks and rewrites; N1 judges accept/retry. A batch at or below 1,800 characters is the ideal early-stop result; 3,400 characters is the practical ceiling. `max_segments` remains generation continuation, not retry count. The final working-memory merge uses its own larger 6,000-character ideal / 9,000-character practical ceiling.
 
 Manual force means run now, not ignore history scope.
 
@@ -83,13 +83,13 @@ A failed compact record may be repaired from its own authoritative task source a
 
 ## Scheduled maintenance contract
 
-Scheduled maintenance alternates **regular -> full -> regular -> full** using memory.scheduled_memory_interval_days (default 7).
+Scheduled maintenance uses independent clocks: **reductive** runs every `memory.scheduled_memory_interval_days` (default 7), while **destructive** runs every `memory.destructive_memory_interval_days` (default 21). A destructive run also satisfies the currently due reductive pass.
 
-The last successful scheduled mode is durable PostgreSQL runtime state. Transient crashes/failures may retain the Redis active marker for same-mode resume; alternation advances only after successful completion. ModelOutputTruncated is deterministic attention state, not an automatic retry signal: Norm writes durable weekly_maintenance_parked state, marks the Redis run requires_attention with auto_resume=false, and waits for explicit operator resume.
+The last successful reductive and destructive timestamps are durable PostgreSQL runtime state. Transient crashes/failures may retain the Redis active marker for same-mode resume; each clock advances only after successful completion. ModelOutputTruncated is deterministic attention state, not an automatic retry signal: Norm writes durable weekly_maintenance_parked state, marks the Redis run requires_attention with auto_resume=false, and waits for explicit operator resume.
 
 Scheduled maintenance is first-class operator-visible work. The worker idle flag is cleared while it runs; /status/busy carries a maintenance object; /queue and /queue-full display active or parked maintenance even when the prompt queue is empty. If there is no active/queued user task ahead of it, /suppress-task durably parks the maintenance run, checkpoints existing maintenance state, cancels the active model call, and disables automatic resume. /resume-task maintenance clears the durable park and explicitly resumes the saved run when the worker is idle.
 
-Scheduled regular uses recent incremental background-memory condensation. Scheduled full sweeps the complete historical archive with the full hierarchical validation/merge rules below.
+Scheduled reductive uses recent incremental background-memory condensation. Scheduled destructive sweeps the complete historical archive with the full hierarchical validation/merge rules below and may omit N2-proposed useless records only after explicit N1 approval.
 
 Deep history is manual-only through /memory-condense -deep. Manual deep processes older terminal raw history, bounded by deep_history_max_tasks_per_pass, sorts resulting compact rows by date, groups them by deep_history_full_batch_rows, and validates up to deep_history_full_samples_per_batch isolated compact memories from each batch. It does not perform hierarchical multi-memory merging.
 

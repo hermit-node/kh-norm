@@ -104,7 +104,11 @@
     "deep_history_full_merge_max_records": 6,
     "deep_history_backup_dir": "%USERPROFILE%\\Documents\\Norm-backups\\history-maintenance",
     "recovery_stale_hours": 24,
-    "recovery_cleanup_max_trees": 20
+    "recovery_cleanup_max_trees": 20,
+    "destructive_memory_interval_days": 21,
+    "consolidation_batch_accept_chars": 3400,
+    "consolidation_max_attempts": 4,
+    "consolidation_snapshot_accept_chars": 9000
   },
   "ingrained_details": {
     "enabled": true,

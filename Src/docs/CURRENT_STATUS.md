@@ -1,6 +1,6 @@
 # Norm current status
 
-Current package: **Norm 0.53.21** with **Installer 1.6.10-unified**.
+Current package: **Norm 0.53.22** with **Installer 1.6.10-unified**.
 
 This file is a current-state snapshot only.
 
@@ -19,13 +19,21 @@ This file is a current-state snapshot only.
 
 ## Agent boundary
 
-- N2 is the reasoning/execution worker.
-- N1 is the model-tool gatekeeper and loop supervisor.
+- N2 is the reasoning/execution worker and the semantic editor/ranker for memory condensation.
+- N1 is the model-tool gatekeeper, loop supervisor, and maintenance critic. N1 judges N2 maintenance candidates and owns accept/retry; it does not rewrite the summary itself.
 - User ingress and N2 user-facing output are passed through unchanged.
 - N1 owns verified-result reuse/check-in for model-requested information tools.
 - Exact same-step repeat requests can reuse raw results.
 - Successful mutations invalidate affected validation/cache targets.
 - Deterministic post-write verification remains a runtime safety invariant outside model approval.
+
+## Scheduled memory maintenance
+
+- Reductive background maintenance runs on an independent 7-day clock. N2 emphasizes important/current material and compresses less-important context; N1 reviews each candidate.
+- Each condensation gets at most four N2 attempts. N1 may accept early when the result is adequate and <=1,800 characters; 3,400 characters is the practical batch ceiling, not a fatal failure threshold.
+- Destructive long-cycle maintenance runs on an independent 21-day clock. N2 may propose that obsolete/useless compact history be discarded entirely; N1 must approve each destruction.
+- A destructive run also satisfies that week's reductive clock, preventing an immediate second maintenance run.
+- N1 maintenance judgment counters are exposed in maintenance result details/logging.
 
 ## Session model and operator help
 
@@ -62,7 +70,7 @@ The scheduled regular background snapshot is a small working-memory layer, not a
 
 Manual recent compact-record validation is separate: every compact record reconstruction is isolated and has a maximum generation budget of **4,800 tokens × 4 continuation segments**. Replays are disposable and never carry into the next record.
 
-Scheduled memory maintenance alternates **regular -> full -> regular -> full** on the configured interval (default 7 days). Transient failures may resume the same mode and do not advance alternation. Deterministic output truncation parks the run as requires_attention with auto-resume disabled. /status/busy, /queue, and /queue-full expose maintenance; /suppress-task can park it when no user task is ahead; /resume-task maintenance explicitly resumes it. Scheduled full sweeps the complete historical compact/raw archive. Deep is manual-only through /memory-condense -deep and performs bounded older-history compaction/validation without hierarchical merging.
+Scheduled memory maintenance uses independent clocks: **reductive every 7 days** and **destructive every 21 days**. When both are due, destructive runs and also satisfies that week's reductive clock. Transient failures resume the same recorded mode. Deterministic output truncation parks the run as requires_attention with auto-resume disabled. /status/busy, /queue, and /queue-full expose maintenance; /suppress-task can park it when no user task is ahead; /resume-task maintenance explicitly resumes it. The destructive pass sweeps the complete historical compact/raw archive; N2 may propose destroying useless history, but N1 must approve each destructive omission. Deep remains manual-only through /memory-condense -deep and performs bounded older-history compaction/validation without hierarchical merging.
 
 Full historical condensation defaults:
 
@@ -122,7 +130,7 @@ Package validation proves the shipped source/package contract. It does not by it
 ## Optional web-browser plugin
 
 This 0.53.20 package includes `plugins\web_browser` v1.0.0. It exposes real-browser page opening/text extraction, CSS-selected link discovery, bounded crawling, Bing/Bing News result discovery, and file-link download into the Norm workspace. Browser state persists under `Documents\Norm\workspace\web\sessions`. The plugin runs its Playwright/Beautiful Soup/Soup Sieve/Trafilatura worker through the installed Norm virtual environment rather than embedding those libraries into `norm.exe`.
-### Plugin settings registry (0.53.21)
+### Plugin settings registry (0.53.22)
 
 Schema-2 plugins declare non-secret defaults in `plugin.json` under `settings`. `PluginManager.refresh()` materializes/reconciles `config/plugins.ini` on startup and hot-rescan: declared operator values are preserved, missing/invalid values get defaults, and dangling keys/sections are removed after a rotating backup. Secrets stay in the configured external `.env`. Plugin/config/file/SQL/archive backup classes retain at most 12 newest backup sets.
 

@@ -1,5 +1,16 @@
 # Norm release notes
 
+## 0.53.22 — 2026-10-05 — N1-gated reductive/destructive memory maintenance
+
+- Scheduled memory maintenance now uses independent clocks: a **7-day reductive pass** and a **21-day destructive pass**. When both are due, the destructive pass runs and also satisfies that week's reductive maintenance; the old alternating regular/full every seven days behavior is removed.
+- Weekly/background condensation is explicitly reductive. N2 ranks information by future usefulness, preserves important/current state with more detail, and aggressively minimizes lower-value context instead of treating low importance by itself as permission to erase a distinct subject.
+- N1 now has an explicit maintenance job: after every N2 condensation candidate, N1 judges whether to accept it or send N2 back for another rewrite. N2 remains the semantic editor/ranker; N1 is the critic/gatekeeper and does not perform the rewrite itself.
+- Batch condensation uses up to four N2 attempts. A good N1-approved result at or below 1,800 characters stops early; otherwise N1 may continue retries toward the 1,800 ideal while 3,400 characters is the practical batch ceiling. Final bounded attempts keep the best semantically valid result instead of aborting maintenance solely for length.
+- The long-cycle pass is destructive rather than merely 'deeper compression'. N2 may propose `destroy` for obsolete TODOs, superseded state, abandoned intermediate plans, stale failures with no reusable lesson, redundant chronology, and facts already implicit in the stable baseline. N1 must approve the destruction before the compact record is omitted.
+- Destructive raw-task pruning uses a separate N1-approved path instead of weakening normal archive safety. Ordinary pruning still requires validated compact-history coverage; destructive deletion additionally requires the exact maintenance approval token and terminal task status.
+- N1 maintenance judgments are logged and counted (`total`, `accept`, `retry`, `destructive_accept`) so a quiet gatekeeper is observable even when it approves work.
+- Added focused N1/maintenance regressions for retry/accept behavior and N1-approved destructive discard; updated maintenance-control contract tests for the 1,800 ideal / 3,400 ceiling / 21-day destructive schedule.
+
 ## 0.53.21 — 2026-10-05 — manifest-driven plugin settings and bounded backups
 
 - Added manifest-driven `config/plugins.ini`: every Schema-2 plugin carries a `settings` declaration in `plugin.json`; `PluginManager.refresh()` reconciles settings on startup and every hot-rescan. Existing declared values survive, missing/invalid values fall back to plugin defaults, and dangling keys/sections are pruned only after a backup is written.

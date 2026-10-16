@@ -2092,6 +2092,33 @@ class PostgresTaskLog:
             cur.execute(sql.SQL("DELETE FROM {}.task_runs WHERE task_id=ANY(%s)").format(sql.Identifier(self.schema)), (task_ids,))
             return int(cur.rowcount)
 
+    def delete_n1_approved_discarded_tasks(self, task_ids: list[str], *, approval: str) -> int:
+        """Hard-prune terminal task rows explicitly discarded by destructive maintenance.
+
+        This is deliberately separate from delete_validated_archived_tasks(): ordinary
+        archival pruning must remain covered by validated task_history. The destructive
+        maintenance caller must pass the exact approval token after N2 proposes destroy,
+        N1 accepts it, and the run has already created its SQL safety backup.
+        """
+        if str(approval or "") != "n1-approved-destructive-maintenance":
+            raise RuntimeError("refusing destructive task prune without N1 maintenance approval token")
+        task_ids = [str(v) for v in dict.fromkeys(task_ids) if str(v).strip()]
+        if not task_ids:
+            return 0
+        with self._connect() as conn, conn.cursor() as cur:
+            s = sql.Identifier(self.schema)
+            cur.execute(
+                sql.SQL("SELECT task_id,status FROM {}.task_runs WHERE task_id=ANY(%s)").format(s),
+                (task_ids,),
+            )
+            rows = [(str(task_id), str(status or "")) for task_id, status in cur.fetchall()]
+            nonterminal = [task_id for task_id, status in rows if status not in {"completed", "failed", "cancelled"}]
+            if nonterminal:
+                raise RuntimeError(f"refusing destructive prune of nonterminal tasks: {nonterminal[:5]}")
+            prepare_task_prune_cur(cur, self.schema, task_ids)
+            cur.execute(sql.SQL("DELETE FROM {}.task_runs WHERE task_id=ANY(%s)").format(s), (task_ids,))
+            return int(cur.rowcount)
+
     def delete_superseded_memories(self) -> int:
         with self._connect() as conn, conn.cursor() as cur:
             s = sql.Identifier(self.schema)

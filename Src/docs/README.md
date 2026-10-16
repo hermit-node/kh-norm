@@ -2,7 +2,12 @@
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.53.21 / Installer 1.6.10-unified** package only. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.53.22 / Installer 1.6.10-unified** package only. Version history belongs only in RELEASE_NOTES.md.
+
+### N1-gated memory maintenance (0.53.22)
+
+Scheduled memory has two independent modes. The weekly 7-day pass is reductive: N2 ranks and rewrites, preserving important/current information and shrinking less-important context. N1 judges each N2 candidate and decides accept/retry. Up to four attempts are allowed; <=1,800 characters is the ideal early-stop size and 3,400 characters is the practical batch ceiling. The 21-day long-cycle pass is destructive: N2 may propose removal of obsolete/useless memory, but N1 must approve destruction before the record is omitted.
+
 
 ## Runtime layout
 
@@ -10,7 +15,7 @@ Default installation root: C:\Norm.
 
 - core\ — runtime source and compiled norm.exe target.
 - config\settings.ini — core Norm paths, services, plugin root, file-access policy, and connection configuration.
-- config\plugins.ini — optional remote-plugin/shared-model configuration; not created unless remote integrations are enabled.
+- config\plugins.ini — generated/reconciled plugin settings registry populated from Schema-2 plugin manifests; disabled integrations remain inert.
 - config\runtime.json — worker, model, maintenance, queue, storage, and memory policy.
 - docs\ — maintained current-state documentation plus the release ledger.
 - plugins\ — first-party and operator-added dynamic plugins.
@@ -116,15 +121,16 @@ Recent-only condensation does not globally prune old conversation history.
 
 ### Scheduled maintenance
 
-Scheduled memory maintenance alternates successful passes:
+Scheduled memory maintenance uses two independent clocks:
 
-    regular -> full -> regular -> full -> ...
+    reductive every 7 days
+    destructive every 21 days
 
-The interval is controlled by memory.scheduled_memory_interval_days (default 7). A transient crash/failure can retain the same recorded mode for resume; alternation advances only after success. A deterministic ModelOutputTruncated failure is different: Norm durably parks the maintenance run as requires_attention and disables automatic retry until the operator explicitly resumes it.
+The reductive interval is controlled by memory.scheduled_memory_interval_days (default 7); the destructive interval is controlled by memory.destructive_memory_interval_days (default 21). When both are due, destructive runs and also satisfies that week's reductive pass. A transient crash/failure retains the same recorded mode for resume. A deterministic ModelOutputTruncated failure is different: Norm durably parks the maintenance run as requires_attention and disables automatic retry until the operator explicitly resumes it.
 
 Scheduled maintenance is visible through /status/busy, /queue, and /queue-full. When no user task is ahead of it, /suppress-task parks the active maintenance run and cancels its model call. /resume-task maintenance explicitly resumes a suppressed/requires_attention maintenance checkpoint.
 
-Scheduled regular uses the recent-window background condensation path. Scheduled full sweeps the complete historical archive, validates every configured date-ordered row batch by sampling, then performs one conservative hierarchical merge level over neighboring compact rows.
+Scheduled reductive uses the recent-window background condensation path. Scheduled destructive sweeps the complete historical archive, lets N2 propose useless records for deletion, requires N1 approval for each destructive omission, validates the surviving configured date-ordered row batches by sampling, then performs one conservative hierarchical merge level over neighboring compact rows.
 
 Deep history is not scheduled automatically. Use /memory-condense -deep when you want a bounded older raw-history compaction/validation pass without hierarchical merging.
 
@@ -239,7 +245,7 @@ Installer 1.6.9 performs managed in-place updates, preserves persistent machine 
 - FUTURE_IMPLEMENTATION_NOTES.md — active unimplemented backlog only.
 - MAINTENANCE_VERIFICATION.md — current package validation evidence.
 - RELEASE_NOTES.md — the only maintained historical/version ledger.
-### Plugin settings registry (0.53.21)
+### Plugin settings registry (0.53.22)
 
 Schema-2 plugins declare non-secret defaults in `plugin.json` under `settings`. `PluginManager.refresh()` materializes/reconciles `config/plugins.ini` on startup and hot-rescan: declared operator values are preserved, missing/invalid values get defaults, and dangling keys/sections are removed after a rotating backup. Secrets stay in the configured external `.env`. Plugin/config/file/SQL/archive backup classes retain at most 12 newest backup sets.
 

@@ -32,6 +32,8 @@ class FakeClient:
             })
         if "rabbit hole" in prompt:
             return json.dumps({"instruction": "Use the result already supplied and continue; do not repeat this request."})
+        if "maintenance gatekeeper" in prompt:
+            return json.dumps({"decision": "retry", "reason": "candidate can be tighter", "retry_instruction": "Keep important state and compress low-value detail."})
         if "fresh information tool just returned" in prompt:
             return json.dumps({"value": "0.53.14"})
         raise AssertionError(prompt[:200])
@@ -210,6 +212,25 @@ def test_file_mutation_invalidates_parent_directory_cache():
     assert directory in live.invalidated
     assert gate.before_tool(task_id="t", step_id="s", name="list_directory", arguments=list_args).execute is True
 
+def test_memory_condensation_judgment_and_final_bound():
+    gate = N1Gatekeeper(FakeClient(), FakeLive())
+    first = gate.judge_memory_condensation(
+        mode="reductive", source_text="important source", candidate="x" * 2200,
+        attempt=1, max_attempts=4, ideal_chars=1800, acceptable_chars=3400,
+    )
+    assert first["decision"] == "retry"
+    final = gate.judge_memory_condensation(
+        mode="destructive", source_text="obsolete state", candidate="{\"disposition\":\"destroy\"}",
+        proposed_disposition="destroy", attempt=4, max_attempts=4, ideal_chars=1800, acceptable_chars=3400,
+    )
+    assert final["decision"] == "retry"
+    stats = gate.maintenance_judgment_stats()
+    assert stats["total"] == 2
+    assert stats["retry"] == 2
+    assert stats["accept"] == 0
+    assert stats["destructive_accept"] == 0
+
+
 def test_third_repeated_noncacheable_call_is_blocked():
     gate = N1Gatekeeper(FakeClient(), FakeLive(), loop_repeat_threshold=3)
     args = {"command": "echo hi"}
@@ -230,6 +251,7 @@ if __name__ == "__main__":
         test_mutations_pass_without_n1_verification_metadata,
         test_mutation_invalidates_prior_raw_read,
         test_file_mutation_invalidates_parent_directory_cache,
+        test_memory_condensation_judgment_and_final_bound,
         test_third_repeated_noncacheable_call_is_blocked,
     ):
         fn()

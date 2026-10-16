@@ -1,6 +1,6 @@
-# Norm 0.53.21
+# Norm 0.53.22
 
-Original archive SHA-256: fea11bd58a2b47e9f785a2cae9b2d62a3cc6a8598eccb1c70962b875e2f9a2ac
+Original archive SHA-256: 1a05014fc801b79f9a5b114100d45ef4e461e3a6dbc3b7e643c58f93c4ede786
 
 Historical assessment: static/CLI PASS, historical
 

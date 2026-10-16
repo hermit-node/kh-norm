@@ -97,6 +97,7 @@ class N1Gatekeeper:
         self._loop_reset_emitted: OrderedDict[str, None] = OrderedDict()
         self._turn_history: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
         self._turn_loop_judgments: OrderedDict[str, None] = OrderedDict()
+        self._maintenance_judgments = {"total": 0, "accept": 0, "retry": 0, "destructive_accept": 0}
 
     @staticmethod
     def information_tool(name: str) -> bool:
@@ -552,6 +553,126 @@ class N1Gatekeeper:
         except Exception:
             logging.exception("N1 Redis reuse decision failed; allowing fresh tool execution")
             return "execute", "", "N1 decision failed; fresh execution allowed"
+
+
+    def judge_memory_condensation(
+        self,
+        *,
+        mode: str,
+        source_text: str,
+        candidate: str,
+        attempt: int,
+        max_attempts: int,
+        ideal_chars: int,
+        acceptable_chars: int,
+        proposed_disposition: str = "keep",
+    ) -> dict[str, Any]:
+        """Judge an N2 maintenance rewrite and decide whether N2 should try again.
+
+        N2 owns semantic ranking/editing. N1 only critiques the candidate and either
+        accepts it or asks N2 for another bounded attempt. The method is intentionally
+        side-effect free except for counters/logging so maintenance can checkpoint its
+        own state independently.
+        """
+        mode = "destructive" if str(mode).strip().lower() == "destructive" else "reductive"
+        candidate = str(candidate or "").strip()
+        proposed_disposition = str(proposed_disposition or "keep").strip().lower()
+        attempt = max(1, int(attempt))
+        max_attempts = max(attempt, int(max_attempts))
+        ideal_chars = max(1, int(ideal_chars))
+        acceptable_chars = max(ideal_chars, int(acceptable_chars))
+
+        if not self.enabled:
+            destructive_delete = mode == "destructive" and proposed_disposition == "destroy"
+            decision = "retry" if destructive_delete else ("accept" if len(candidate) <= ideal_chars or attempt >= max_attempts else "retry")
+            return {
+                "decision": decision,
+                "reason": "N1 disabled; destructive deletion cannot be approved." if destructive_delete else "N1 disabled; deterministic maintenance fallback used.",
+                "retry_instruction": "Preserve this record; N1 is unavailable to authorize destruction." if destructive_delete else ("Compress further without dropping important current state." if decision == "retry" else ""),
+            }
+
+        policy = (
+            "REDUCTIVE: N2 should rank information by future usefulness, give important/current items more detail, "
+            "and make low-value material much smaller. It may merge exact duplicates and superseded wording, but it "
+            "should not erase a distinct still-potentially-useful subject merely because it is less important."
+            if mode == "reductive" else
+            "DESTRUCTIVE: N2 may throw away material that has no durable future value: obsolete TODOs, superseded state, "
+            "intermediate attempts, stale failures, redundant chronology, and facts now implicit in the stable baseline. "
+            "Do not approve destruction if it removes a current constraint, active obligation, durable decision, reusable lesson, "
+            "or artifact/data pointer that remains operationally useful."
+        )
+        prompt = (
+            "You are N1, Norm's maintenance gatekeeper. N2 produced a memory-condensation candidate. "
+            "N2 owns ranking and rewriting; your only job is to judge the result and choose ACCEPT or RETRY. "
+            + policy + " "
+            f"The ideal early-stop size is <= {ideal_chars} characters. If the candidate is larger than that and another attempt remains, "
+            f"prefer RETRY when N2 can plausibly improve density. The practical ceiling is <= {acceptable_chars}; candidates above it strongly favor RETRY. "
+            "Do not demand shorter text when that would lose important information. On the final allowed attempt, ACCEPT the best semantically valid result even if over the ceiling, unless it is materially wrong or unsafe. "
+            "If proposed_disposition is 'destroy', judge whether the source truly has no durable future value. "
+            "Return strict JSON only: decision ('accept' or 'retry'), reason (short), retry_instruction (short; blank on accept).\n\n"
+            + json.dumps({
+                "mode": mode,
+                "attempt": attempt,
+                "max_attempts": max_attempts,
+                "candidate_chars": len(candidate),
+                "ideal_chars": ideal_chars,
+                "acceptable_chars": acceptable_chars,
+                "proposed_disposition": proposed_disposition,
+                "source_excerpt": str(source_text or "")[:30000],
+                "candidate": candidate[:16000],
+            }, ensure_ascii=False, default=str)
+        )
+        schema = {
+            "type": "object",
+            "properties": {
+                "decision": {"type": "string", "enum": ["accept", "retry"]},
+                "reason": {"type": "string"},
+                "retry_instruction": {"type": "string"},
+            },
+            "required": ["decision", "reason", "retry_instruction"],
+            "additionalProperties": False,
+        }
+        try:
+            raw = self.client.generate(
+                prompt, think=True, temperature=0.0, num_predict=500,
+                response_format=schema, emit_stream=False,
+            )
+            parsed = OllamaClient.parse_json(raw)
+            decision = str(parsed.get("decision") or "retry").strip().lower()
+            if decision not in {"accept", "retry"}:
+                decision = "retry"
+            if attempt >= max_attempts and decision == "retry" and not (mode == "destructive" and proposed_disposition == "destroy"):
+                decision = "accept"
+                parsed["reason"] = (str(parsed.get("reason") or "") + " Final bounded attempt reached; accepting best non-destructive valid candidate.").strip()
+                parsed["retry_instruction"] = ""
+            with self._lock:
+                self._maintenance_judgments["total"] += 1
+                self._maintenance_judgments[decision] += 1
+                if decision == "accept" and mode == "destructive" and proposed_disposition == "destroy":
+                    self._maintenance_judgments["destructive_accept"] += 1
+            logging.info(
+                "N1 maintenance judgment mode=%s attempt=%s/%s chars=%s ideal=%s ceiling=%s disposition=%s decision=%s reason=%s",
+                mode, attempt, max_attempts, len(candidate), ideal_chars, acceptable_chars,
+                proposed_disposition, decision, str(parsed.get("reason") or "")[:500],
+            )
+            return {
+                "decision": decision,
+                "reason": str(parsed.get("reason") or "").strip(),
+                "retry_instruction": str(parsed.get("retry_instruction") or "").strip() if decision == "retry" else "",
+            }
+        except Exception as exc:
+            logging.exception("N1 maintenance judgment failed")
+            destructive_delete = mode == "destructive" and proposed_disposition == "destroy"
+            decision = "retry" if destructive_delete else ("accept" if attempt >= max_attempts else "retry")
+            return {
+                "decision": decision,
+                "reason": f"N1 judgment failed: {type(exc).__name__}; destructive deletion not authorized." if destructive_delete else f"N1 judgment failed: {type(exc).__name__}; bounded fallback used.",
+                "retry_instruction": "Preserve this record; N1 did not successfully authorize destruction." if destructive_delete else ("Compress further while preserving important current state." if decision == "retry" else ""),
+            }
+
+    def maintenance_judgment_stats(self) -> dict[str, int]:
+        with self._lock:
+            return dict(self._maintenance_judgments)
 
     def before_tool(self, *, task_id: str, step_id: str, name: str, arguments: dict[str, Any]) -> GateOutcome:
         clean, target, need = self._clean_request(name, arguments)
