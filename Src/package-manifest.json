@@ -1,7 +1,7 @@
 {
   "package_schema": 1,
   "name": "Norm",
-  "version": "0.55.10r2",
+  "version": "0.55.10r3",
   "package_type": "portable-source",
   "source_dir": "core",
   "entrypoint": "core/norm_main.py",
@@ -649,5 +649,15 @@
     "default": "native_cpp_win32",
     "legacy_qt_launcher": "tools/workspace/app.py (retained for rollback; no longer default)",
     "font_changes": "Win32 ChooseFont dialog; applied to newly created WT roles"
+  },
+  "visual_pdf": {
+    "capture": "top discovery then scroll-and-screenshot downward",
+    "top_discovery": "upward scroll, scroll thumb/first-turn metadata; 5s fast path if initially at top, 60s stationary after upward search",
+    "loading": "6 visual samples of potential spinner regions at random intervals of 1-3 seconds; wait 5s if animated, retry",
+    "downward_capture": "overlapping source and delayed screenshots; overlap-consistency replacement of torn frames",
+    "output": "visible native OCR text; only original screenshot crops for nontext image/math/code regions; no full-page PDF raster overlay",
+    "ocr": "PyMuPDF embedded OCR + shipped eng.traineddata (Apache 2.0)",
+    "fidelity": "visual code/image crops preserved; full stitched PNG available for fallback",
+    "status": "offline regression verified; real authenticated ChatGPT DOM not tested"
   }
 }

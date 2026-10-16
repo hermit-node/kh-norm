@@ -1,0 +1,1 @@
+eng.traineddata from tesseract-ocr/tessdata_fast.\nLicense: Apache License 2.0, see LICENSE-tessdata_fast.txt.\nEnglish OCR pixels->Unicode text used only by Visual PDF hybrid export.\nNo system Tesseract executable is required: PyMuPDF already embeds OCR.\n

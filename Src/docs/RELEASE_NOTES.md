@@ -1,3 +1,16 @@
+## Norm 0.55.10r3 — hybrid Visual PDF and browser-preserving scroll capture (2026-10-12)
+
+- Based on 0.55.10r2 native C++ workspace and normal startup/shutdown, unchanged. All user conversation generation budgets preserved.
+- Discover the true oldest currently accessible conversation turn by repeatedly scrolling upward, checking scrollbar position, first message fingerprint, loaded count and scrollable height. If the user starts at the top, use a five-second stable fast path; otherwise require sixty seconds without new history before beginning capture.
+- The visible browser toolbar reports top-search and loader sampling progress rather than appearing idle while the document is being discovered.
+- Detect possible loading-icon regions and compare one initial screenshot with five additional samples at randomized 1–3-second intervals; when the loader animates, wait five seconds and retry the scroll. Stationary decorative icons are ignored temporarily. Same policy for upward and downward navigation.
+- Capture and overlap successive scrolling screenshots from top to bottom; take slightly delayed alternate screenshots and choose the globally most consistent overlapping sequence before stitching. Stop only after the scrollbar and last-turn metadata remain stable; do not assume three identical screenshots prove completeness.
+- Produce a HYBRID PDF: OCR text is rendered once as selectable, visible native PDF text (built-in Helvetica where possible); original image/code/math/table/diagram regions are retained at screenshot pixel resolution as raster cutouts. No invisible OCR layer over a full-page raster, so there is no duplicate printed text. Photographic crops use JPEG when smaller, sharp artwork lossless PNG.
+- Save the full stitched PNG separately as visual evidence/recovery, but NOT embedded in the PDF. Smart page cuts continue to use existing speaker and ink detection; image regions are inserted only on their corresponding pages.
+- Included eng.traineddata from tesseract-ocr/tessdata_fast and its Apache-2.0 license; uses existing PyMuPDF OCR functions with no external Tesseract installation. No fonts bundled.
+- Offline regression: 98 native OCR words, 1 original pixel crop, 0 embedded full-page screenshot layers; 172,599-byte hybrid versus 453,342-byte full-raster PDF (61.9% smaller for THIS fixture; results vary with images, fonts and text density).
+- No browser window hidden/recreated, no logged-in profile/cache/cookies touched, no live user conversation export attempted. Authenticated dynamic ChatGPT history completeness remains unverified.
+
 ## Norm 0.55.10r2 — original native C++ workspace as one-click Norm frontend (2026-10-12)
 
 - Baseline: the fully verified 0.55.10r1 shutdown/source release. No active installation or browser account/profile was modified.

@@ -6,9 +6,7 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
-from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
-from reportlab.lib.utils import ImageReader
 from speaker_pdf import analyze,paginate
 
 Image.MAX_IMAGE_PIXELS=None
@@ -47,33 +45,82 @@ def build_visual_pdf(job,base):
     folder=Path(job['folder'])
     frames=job['frames']
     if not frames:raise ValueError('Capture had no scroll frames')
-    images=[]
-    for f in frames:
-        im=Image.open(f['path'])
-        im.load()
-        images.append(im.convert('RGB'))
-    w,h=images[0].size
-    if any(i.size!=(w,h) for i in images):
-        raise ValueError('Browser viewport changed size mid-capture')
-    positions=[int(round(f['y']-frames[0]['y'])) for f in frames]
+    # Preserve both compositor samples for each scroll position. Select the
+    # globally most overlap-consistent sequence without altering the originals.
+    with Image.open(frames[0]['path']) as first:
+        scale_y=first.height / max(1,(job.get('clip') or (0,0,0,first.height))[3])
+    positions=[int(round((f['y']-frames[0]['y'])*scale_y)) for f in frames]
     if positions[0]!=0 or any(b<=a for a,b in zip(positions,positions[1:])):
         raise ValueError('Non-monotonic scroll offsets')
+    with Image.open(frames[0]['path']) as first:
+        first_w,first_h=first.size
+    if (positions[-1]+first_h)>340000 or first_w*(positions[-1]+first_h)>420000000:
+        raise ValueError('Stitched image exceeds configured memory safety limit')
+    alternatives=[[str(frame['path'])]+(
+        [str(frame['alt_path'])] if frame.get('alt_path') else [])
+        for frame in frames]
+    previous=[]
+    backrefs=[]
+    cost=[0.0]*len(alternatives[0])
+    shapes=set()
+    for i,paths in enumerate(alternatives):
+        candidates=[]
+        for path in paths:
+            with Image.open(path) as image:
+                candidate=image.convert('RGB')
+                candidate.load()
+                candidates.append(candidate)
+                shapes.add(candidate.size)
+        if len(shapes)>1:
+            raise ValueError('Browser viewport changed size mid-capture')
+        if i==0:
+            backrefs.append([-1]*len(candidates))
+        else:
+            dy=positions[i]-positions[i-1]
+            updated=[float('inf')]*len(candidates)
+            parent=[-1]*len(candidates)
+            for j,im in enumerate(candidates):
+                for k,prior in enumerate(previous):
+                    if cost[k]==float('inf'):
+                        continue
+                    mean,p90=_overlap_error(prior,im,dy)
+                    if mean>18 or p90>62:
+                        continue
+                    score=cost[k]+mean+.15*p90+(.03 if j else 0)
+                    if score<updated[j]:
+                        updated[j],parent[j]=score,k
+            if all(x==float('inf') for x in updated):
+                raise ValueError(
+                    f'Frame {i+1}: both compositor samples disagree with all prior samples. '
+                    'Text may have reflowed; refusing unverified PDF.')
+            cost=updated
+            backrefs.append(parent)
+        previous=candidates
+    best=min(range(len(cost)),key=lambda i:cost[i])
+    chosen=[0]*len(frames)
+    for i in range(len(frames)-1,-1,-1):
+        chosen[i]=best
+        if i>0:
+            best=backrefs[i][best]
+            if best<0:raise RuntimeError('Compositor path reconstruction failed')
+    repaired_frames=sum(bool(choice) for choice in chosen)
+    w,h=next(iter(shapes))
     full_height=positions[-1]+h
     if full_height > 340000 or w*full_height>420000000:
         raise ValueError('Stitched image exceeds configured memory safety limit')
-    for index,(prev,curr) in enumerate(zip(images,images[1:]),1):
-        displacement=positions[index]-positions[index-1]
-        mean,p90=_overlap_error(prev,curr,displacement)
-        if mean>18 or p90>62:
-            raise ValueError(
-                f'Frame {index+1}: overlap disagrees (mean={mean:.1f},p90={p90:.1f}); '
-                'page may have reflowed or lazy content was not ready')
+    # Stream the chosen frames into the stitched image. Keep only one
+    # viewport in memory at a time (plus the final stitched result).
     stitched=Image.new('RGB',(w,full_height),'white')
-    stitched.paste(images[0],(0,0))
-    for i in range(1,len(images)):
-        dy=positions[i]-positions[i-1]
-        stitched.paste(images[i].crop((0,h-dy,w,h)),(0,positions[i]+h-dy))
-    del images
+    for i,choice in enumerate(chosen):
+        with Image.open(alternatives[i][choice]) as source:
+            frame=source.convert('RGB')
+            if i==0:
+                stitched.paste(frame,(0,0))
+            else:
+                dy=positions[i]-positions[i-1]
+                stitched.paste(frame.crop((0,h-dy,w,h)),
+                               (0,positions[i]+h-dy))
+    del previous
     lo,hi=_bounds(stitched)
     content=stitched.crop((lo,0,hi,full_height))
     now=dt.datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -94,31 +141,28 @@ def build_visual_pdf(job,base):
     scale=(pw-2*margin)/content.width
     rows=int((ph-2*margin)/scale)
     pages=paginate(ink,bubbles,gaps,turns,rows)
-    doc=canvas.Canvas(str(pending_pdf),pagesize=letter,pageCompression=1)
-    doc.setTitle(job['title'] or job['name'])
-    doc.setSubject('Visual ChatGPT conversation capture; DOM scroll bottom observed, completeness not audited')
     diagnostics=[
         f"Conversation URL: {job['url']}",
         f"Suggested filename: {job['name']}",
-        f"Viewports: {len(frames)}; rendered height: {content.height}; cropped columns: {lo}:{hi}",
-        "Capture reached the DOM's current bottom; entire historical conversation NOT verified.",
+        f"Viewports: {len(frames)}; repaired samples: {repaired_frames}; rendered height: {content.height}; cropped columns: {lo}:{hi}",
+        "Hybrid PDF: visible native PDF text from OCR; raster only for images, diagrams, code and math.",
+        "Capture reached current scrollbar bottom; entire historical conversation NOT verified.",
         ""
     ]
     for idx,(begin,end,why) in enumerate(pages,1):
-        if job.get('cancel'):
-            raise RuntimeError('Capture cancelled; no completed export published')
-        crop=content.crop((0,begin,content.width,end))
-        size=(end-begin)*scale
-        doc.drawImage(ImageReader(crop),margin,ph-margin-size,
-                      width=pw-2*margin,height=size)
-        doc.setFont('Helvetica',8)
-        doc.setFillGray(.45)
-        doc.drawRightString(pw-margin,max(10,margin-12),str(idx))
-        doc.showPage()
         diagnostics.append(f'Page {idx:03d}: {begin:7d}..{end:7d} | {why}')
-    doc.save()
-    if job.get('cancel'):
-        raise RuntimeError('Capture cancelled; no completed export published')
+    from hybrid_ocr_pdf import write_hybrid_pdf
+    clip=job.get('clip')
+    report=write_hybrid_pdf(content,pages,pending_pdf,frames=frames,
+                            positions=positions,clip=clip,crop_left=lo,
+                            title=job.get('title') or job['name'],
+                            tessdata=Path(__file__).parent/'tessdata',
+                            cancel=lambda:bool(job.get('cancel')))
+    ocr_words=report['ocr_words']
+    diagnostics.append(
+      f'Visible OCR words: {ocr_words}; preserved raster image regions: {report["image_regions"]}; '
+      f'full-page raster images in PDF: {report["raster_full_pages"]}')
+    diagnostics.append(f'Delayed compositor samples chosen: {repaired_frames}')
     pending_txt.write_text('\n'.join(diagnostics)+'\n',encoding='utf-8')
     if job.get('cancel'):
         raise RuntimeError('Capture cancelled; no completed export published')
@@ -127,7 +171,7 @@ def build_visual_pdf(job,base):
         temp.rename(dest)
     shutil.rmtree(folder,ignore_errors=True)
     return {'pdf':str(output_pdf),'png':str(output_png),'page_breaks':str(output_txt),
-            'pages':len(pages),'frames':len(frames),
+            'pages':len(pages),'frames':len(frames),'ocr_words':ocr_words,'repaired_frames':repaired_frames,'image_regions':report['image_regions'],
             'forced_breaks':sum('REVIEW' in item[-1] for item in pages),
             'suggested_name':job['name'],'status':'partial_unverified',
             'entire_conversation_verified':False,

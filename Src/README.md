@@ -1,3 +1,7 @@
+## Visual PDF (0.55.10r3)
+
+Visual PDF now scrolls toward the oldest history, samples moving loading icons, then repeatedly scrolls and captures overlapping screenshots downward. The final PDF is HYBRID: normal words become visible, selectable OCR text; photos, code, math, diagrams and tables remain pixel-preserved image cutouts. **No full-page screenshot with another text layer on top.** A standalone stitched PNG is saved for reference. A synthetic comparison showed a 61.9% smaller hybrid PDF; actual results vary. Unknown images are not guaranteed to be separable from OCR, and live ChatGPT history completeness has not been verified. The authenticated browser never needs a reload or hidden window for capture.
+
 ## Native one-click Norm workspace (0.55.10r2)
 
 Normal Run-Norm.bat now starts the native Win32/C++ workspace immediately.
