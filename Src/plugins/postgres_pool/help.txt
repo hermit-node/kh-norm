@@ -1,7 +1,0 @@
-PostgreSQL Pool — plugin help
-
-Expose controlled status, read-only query, and Norm-runtime write tools over the canonical shared PostgreSQL pools.
-
-No dedicated operator slash commands are registered for this plugin.
-The plugin provides its tools to Norm through the plugin manager.
-See plugins/postgres_pool/README.md for tool usage.

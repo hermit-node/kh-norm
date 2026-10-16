@@ -23,7 +23,7 @@ def main() -> int:
     lock = names(LOCK)
     direct = {
         "pytest", "redis", "psycopg", "psycopg-pool", "aiohttp", "pillow",
-        "cryptography", "pymupdf", "pytesseract", "numpy", "opencv-python", "kornia",
+        "cryptography", "pymupdf", "numpy", "opencv-python", "kornia",
         "prompt-toolkit", "rich", "tzdata", "tabulate",
     }
     missing_core = sorted(direct - core)

@@ -5,7 +5,6 @@ See [the maintained operator docs](../docs/README.md#plugin-operation-and-verifi
 - [backup](backup/README.md)
 - [nabler](nabler/README.md)
 - [file_read](file_read/README.md)
-- [lesson_model](lesson_model/README.md)
 - [postgres_pool](postgres_pool/README.md)
 - [rotor5_cipher](rotor5_cipher/README.md)
 - [soft_delete](soft_delete/README.md)

@@ -1,7 +1,0 @@
-Norm Verbatim Lines — plugin help
-
-Authoritative exact UTF-8 writer: guarded core write_file/replace_text use a private replacement primitive; public plugin tools remain append/insert only.
-
-No dedicated operator slash commands are registered for this plugin.
-The plugin provides its tools to Norm through the plugin manager.
-See plugins/verbatim_lines/README.md for tool usage.

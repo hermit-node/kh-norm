@@ -1,7 +1,0 @@
-opencode — plugin help
-
-Remote OpenCode session/task adapter using an operator-configured Tailscale endpoint and shared model provider.
-
-No dedicated operator slash commands are registered for this plugin.
-The plugin provides its tools to Norm through the plugin manager.
-See plugins/opencode/README.md for tool usage.

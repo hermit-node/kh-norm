@@ -890,11 +890,20 @@ def build_from_pdf_folder(
         page = 1
         while page <= page_count:
             end = min(page_count, page + 3)
-            # PDF inspection/coverage policy lives in the shared reader, not in
-            # the voice trainer. "auto" delegates to the reader's hybrid mode.
-            reader_mode = "hybrid" if extraction_mode == "auto" else extraction_mode
-            result = vision_parse(str(pdf), start_page=page, end_page=end, mode=reader_mode)
-            ingest_vision_result(profile_name, result)
+            if extraction_mode == "auto":
+                text_result = vision_parse(str(pdf), start_page=page, end_page=end, mode="text")
+                for item in text_result.get("pages") or []:
+                    number = int(item.get("page") or 0)
+                    weak = str(item.get("text_layer_quality") or "") != "good" or int(item.get("text_layer_chars") or 0) < 120
+                    result = (
+                        vision_parse(str(pdf), start_page=number, end_page=number, mode="hybrid")
+                        if weak
+                        else {**text_result, "pages": [item], "method": "vision_parse auto:text"}
+                    )
+                    ingest_vision_result(profile_name, result)
+            else:
+                result = vision_parse(str(pdf), start_page=page, end_page=end, mode=extraction_mode)
+                ingest_vision_result(profile_name, result)
             page = end + 1
 
     report = build_profile(profile_name, use_model=use_model, anchor_count=anchor_count, build_persona=build_persona)

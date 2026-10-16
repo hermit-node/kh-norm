@@ -1,7 +1,0 @@
-Norm Backup — plugin help
-
-Create installer-compatible source backups or sensitive full-state backups without archiving the reproducible .venv.
-
-No dedicated operator slash commands are registered for this plugin.
-The plugin provides its tools to Norm through the plugin manager.
-See plugins/backup/README.md for tool usage.

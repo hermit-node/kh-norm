@@ -1,28 +1,3 @@
-## 0.54.3 — 2026-10-08 — Lesson/code-memory plugin integration candidate
-
-- Added built-in schema-2 `lesson_model` v0.3.0a1 with explicit operator approval for reusable lessons; candidate creation alone never approves a lesson. Training and automatic `norm:latest` promotion remain disabled.
-- Added wholesale SHA-verified source-ZIP retention, bounded runtime-priority code walking, PostgreSQL raw project/version memory, separate human README generation, and canonical CodeGraph + standalone interactive topology output. Original input ZIPs remain untouched.
-- Added `/help lesson-model`, plugin settings, package-manifest registration, and runtime guidance for lesson/code-memory use.
-
-## 0.54.3 — 2026-10-08 — Direct PDF/image reader slash controls (source patch)
-
-- Added direct Norm Prompt `/vision-parse`, `/vision-read`, `/vision-text`, `/vision-force`, `/vision-recheck`, and `/vision-status` operator commands; PDF/image reads bypass the queued N2 tasks and use existing verified `vision_parse` plugin code.
-- Added the plugin-owned `plugins/vision_parse/help.txt` command reference, `/help vision-parse` and aliases; kept plain `/help` compact.
-- Explicit native/OCR/vision mode, page/window selection, model focus, suspicious-text recheck and bounded results; authorized file roots and single active read per console are enforced.
-
-## 0.54.3 OCR-first PDF/image reader overlay (2026-10-08, source patch)
-
-- Extended shared `vision_parse` to PNG, JPEG, WebP, BMP, TIFF and scanned-PDF OCR-first input. High-confidence OCR word rectangles are masked with transparent alpha before computing uncovered ink and targeting bounded vision crops; model inputs white-composite masked areas for predictable cross-backend behavior.
-- Added explicit `suspect_excerpt` OCR recheck, line geometry, OCR word/coverage/region diagnostics and forced text/vision overrides. Tesseract binary remains an optional, separately installed local dependency; pinned `pytesseract` in Python requirements.
-- Added raster/OCR integration tests and retained page-level grayscale coverage validation. Does not modify the generic image-analysis tool or the voice-profile implementation.
-
-## 0.54.3 — 2026-10-08 — Shared PDF grayscale coverage gate (source patch)
-
-- `vision_parse` hybrid mode now measures grayscale raster ink against native character footprints, including image-area detection, and calls Ollama vision only on insufficient or suspect coverage.
-- Per-page metrics and reasons are emitted; `text`/`vision` overrides and process-local caching remain supported.
-- Voice-profile `auto` extraction delegates to the shared PDF reader instead of owning a separate text-length heuristic.
-- New targeted PDF coverage regression tests.
-
 0.54.3 — 2026-10-07 — Nabler structured conclusion and verification reporting
 
 - Prompt ingress dispatch now waits a maximum of 30 seconds when the sole busy signal is host CPU/GPU `resource_activity`; measured Norm requests, active generations, queued work, and failed status probes remain hard admission gates. The grace period is configurable through `console_queue.resource_activity_grace_seconds`.

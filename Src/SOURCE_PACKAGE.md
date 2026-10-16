@@ -1,11 +1,5 @@
 # Norm 0.54.3 portable source package
 
-## 0.54.3 lesson/code-memory integration candidate
-
-- Adds built-in schema-2 `plugins/lesson_model` v0.3.0a1. It supports explicit-review lesson capture, versioned wholesale source-ZIP memory, bounded source walking, PostgreSQL raw project summaries, separate human README output, and canonical CodeGraph/interactive topology output.
-- The plugin does not yet fine-tune model weights and cannot auto-promote `norm:latest`; those remain future reviewed backend operations.
-- Original user source archives are never deleted or moved; Norm keeps its own SHA-verified content-addressed copy.
-
 ## Resource-only busy and suppression runway
 
 Resource-only busy signals yield for up to 30 seconds; actively tracked Norm work remains a hard gate. Suppressed in-flight ingress is rechecked at HTTP admission, with cancellation tombstones retained through `/flush-suppressed`.
