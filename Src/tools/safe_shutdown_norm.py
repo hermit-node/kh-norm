@@ -96,9 +96,46 @@ def graceful_shutdown(*, timeout:float=300, dry_run:bool=False) -> int:
     print("Verified Norm Celery workers:",json.dumps(result),flush=True)
     aux=stop_owned_auxiliaries(ROOT)
     print("Norm console/GUI/browser cleanup:",json.dumps(aux),flush=True)
+    for failed in ("task-stop-failed","task-inspection-failed"):
+        if aux.get("desktop_gui")==failed:
+            print(f"Desktop GUI cleanup unverified: {failed}",file=sys.stderr)
+            return 8
+    if "console_error" in aux:
+        print("Operator console shutdown signalling failed.",file=sys.stderr)
+        return 8
     if result["remaining"] or result["errors"]:
         print("Warning: some Norm-owned workers could not be confirmed stopped.",file=sys.stderr)
         return 4
+    # Ownership verification after graceful service shutdown: no Norm-local
+    # Celery or operator-console process may remain. Do NOT stop PostgreSQL
+    # or Redis servers, do NOT disconnect clients owned by other applications.
+    from norm_runtime.celery_shutdown import _owned_workers
+    sys.path.insert(0,str(ROOT/"tools"))
+    from start_operator_consoles import _owned_host_rows
+    from start_shared_browser import ready as browser_ready
+    remaining={}
+    deadline=time.monotonic()+20
+    while True:
+        try:
+            workers=_owned_workers(ROOT)
+            hosts=_owned_host_rows()
+            browser=browser_ready()
+            service_pids=running_norm_pids()
+        except Exception as exc:
+            print(f"Could not verify all Norm-owned processes: {exc}",file=sys.stderr)
+            return 6
+        remaining={"norm.exe":service_pids,
+                   "celery":[p["pid"] for p in workers],
+                   "consoles":{role:pids for role,pids in hosts.items() if pids},
+                   "shared_browser":browser}
+        if not (service_pids or workers or any(hosts.values()) or browser):
+            break
+        if time.monotonic()>=deadline:
+            print("Incomplete cleanup; owned processes remain:",json.dumps(remaining),file=sys.stderr)
+            return 7
+        time.sleep(.5)
+    print("Verified all Norm service/worker/console/browser processes exited.")
+    print("Norm client PostgreSQL pools were closed in their owning processes; PostgreSQL SERVER left running.")
     print("Norm stopped. PostgreSQL pool cleanup executed in Norm/Celery process exit paths.")
     print("PostgreSQL server backend processes owned by OTHER applications are not terminated.")
     return 0

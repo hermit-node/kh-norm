@@ -52,5 +52,9 @@ def main():
             r.delete(heartbeat)
         except Exception:
             pass
+        finally:
+            # Disconnect only this worker's own Redis client pool.
+            try:r.close()
+            except Exception:pass
 if __name__=="__main__":
     main()

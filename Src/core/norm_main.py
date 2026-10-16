@@ -1349,6 +1349,24 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         except Exception:
             logging.exception("Norm main process PostgreSQL pool shutdown failed")
 
+        # Explicitly close major in-process Redis connection pools. Other
+        # process-local Redis clients are released by their owning process
+        # exit; never stop the shared Redis server or another app's clients.
+        seen_redis=set()
+        redis_holders=[
+            getattr(live,"client",None),
+            getattr(prompt_queue,"r",None),
+            getattr(worker,"_weekly_cleanup_redis",None),
+        ]
+        for redis_client in redis_holders:
+            if redis_client is None or id(redis_client) in seen_redis:
+                continue
+            seen_redis.add(id(redis_client))
+            try:
+                redis_client.close()
+            except Exception:
+                logging.exception("Norm process Redis connection-pool close failed")
+
         # Close the three operator windows and optional desktop/browser bridges
         # after N2, HTTP transports and PostgreSQL cleanup are complete.
         try:

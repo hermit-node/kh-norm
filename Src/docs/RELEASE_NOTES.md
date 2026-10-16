@@ -1,3 +1,12 @@
+## Norm 0.55.10 - Native Qt workspace and safe owner-scoped cleanup (2026-10-12)
+
+- Three real native Windows terminal HWNDs inside the existing Qt workspace.
+- Per-terminal/UI fonts saved in Norm settings and layout persisted in Norm state.
+- Mutex and process-identity locks prevent repeated Celery/console/service startups.
+- Quit Norm verifies cleanup of its service, workers, consoles, GUI, browser and pools.
+- PostgreSQL and Redis servers are never stopped; other apps remain untouched.
+- Source-only release; desktop, installer and live shutdown tests pending.
+
 ## Norm 0.55.9r13 - Shared-browser visual PDF integration (2026-10-12)
 
 - Based on the verified 0.55.9r12 portable-source ZIP; no installer, runtime configuration, custom plugins, state, or environment files were replaced in an existing installation.

@@ -112,11 +112,11 @@ echo Norm is healthy at %CHAT_HEALTH%
 if /I "%~1"=="--service-only" exit /b 0
 
 pushd "%ROOT%"
-"%PY%" "%ROOT%tools\start_operator_consoles.py"
+"%PY%" -B "%ROOT%tools\start_workspace.py"
 set "CONSOLE_RC=%ERRORLEVEL%"
 popd
 if not "%CONSOLE_RC%"=="0" (
-  echo ERROR: One or more Norm operator consoles could not be launched. Exit code %CONSOLE_RC%.
+  echo ERROR: Norm workspace could not be launched. Exit code %CONSOLE_RC%.
   pause
   exit /b %CONSOLE_RC%
 )

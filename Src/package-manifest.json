@@ -1,7 +1,7 @@
 {
   "package_schema": 1,
   "name": "Norm",
-  "version": "0.55.9r13",
+  "version": "0.55.10",
   "package_type": "portable-source",
   "source_dir": "core",
   "entrypoint": "core/norm_main.py",
@@ -499,7 +499,7 @@
     "policy": "retain full generated original and submit shortest complete summary; no bypass of N1/N2 verification",
     "normal_output_child_tasks": "not included; deferred"
   },
-  "release_revision": "r13-visual-pdf",
+  "release_revision": "v0.55.10-integrated-native-workspace",
   "celery_tool_transport": {
     "transport": "Celery",
     "enabled_setting": "config/settings.ini:[celery].enabled",
@@ -624,5 +624,19 @@
     "activation": "Activate Visual PDF.cmd restarts only shared-browser helper; not required for native plugin discovery",
     "limitations": "current DOM scroll bottom only; virtualized chat history not proven complete",
     "validation": "synthetic frames and source integrity; live Qt UI not yet validated"
+  },
+  "workspace_v05510": {
+    "architecture": "Prior PySide6 Qt-Focus HWND terminal workspace integrated, not replaced with ConPTY",
+    "roles": [
+      "Norm Runtime",
+      "Norm Replies",
+      "Norm Prompt"
+    ],
+    "configuration": "config/settings.ini workspace font preferences; state/workspace-layout.json geometry and z-order",
+    "launch": "Run-Norm.bat starts one workspace; service, Celery and operator starts lock and verify identities",
+    "shutdown": "Qt Quit Norm waits for Norm graceful shutdown and verifies Norm-owned process exit",
+    "pools": "Norm-owned norm/stocks PostgreSQL and Redis clients released at process exit",
+    "server_safety": "No PostgreSQL service, Redis server or unrelated application connections stopped",
+    "validation": "Non-destructive unit tests, Qt offscreen; live desktop smoke test pending"
   }
 }

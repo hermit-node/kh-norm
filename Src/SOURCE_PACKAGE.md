@@ -1,3 +1,7 @@
+# Norm 0.55.10 - Integrated Workspace Source
+
+Continuing 0.55.9r13 browser-PDF with native three-terminal workspace, persistent fonts/layout and locked startup/shutdown. See docs/WORKSPACE_05510.md.
+
 # Norm 0.55.9r13 - Shared-browser visual-PDF source
 
 Based on Norm 0.55.9r12 source, preserving core and installer-facing settings. Adds Qt Chromium viewport stitching, speaker-aware PDF pagination, naming from recent user messages, and native shared-browser tool bindings. See docs/RELEASE_NOTES.md and docs/SHARED_BROWSER.md.
