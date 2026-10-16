@@ -3421,8 +3421,22 @@ class PromptWorker:
                         else:
                             archive_action = str(requested.get("archive_action") or "auto").strip().lower()
                             mode = str(requested.get("mode") or "text").strip().lower()
-                            explicit_range = any(key in requested for key in ("start_byte", "start_line", "end_line"))
+                            explicit_byte_cursor = "start_byte" in requested
+                            explicit_line_range = any(key in requested for key in ("start_line", "end_line"))
+                            explicit_range = explicit_byte_cursor or explicit_line_range
                             chunk_candidate = mode == "text" and archive_action in {"", "auto"} and not explicit_range
+                            # A direct byte-cursor read is already a bounded evidence chunk even
+                            # when N2 supplied start_byte itself. Mark it so N1 uses deterministic
+                            # file/fingerprint metadata instead of asking the verification model
+                            # to re-canonicalize the raw chunk.
+                            if (
+                                explicit_byte_cursor
+                                and not explicit_line_range
+                                and mode == "text"
+                                and archive_action in {"", "auto"}
+                            ):
+                                requested["_norm_chunked_evidence"] = True
+                                arguments = requested
                             if chunk_candidate and raw_chunk_delivered_this_turn:
                                 precomputed_result = {
                                     "ok": False,

@@ -170,3 +170,60 @@ assert outcome["answer"] == "done"
 assert client.calls == 3
 assert client.first_chunk_width <= Tools.read_chunk_max_bytes
 print("PASS chunked worker flow")
+
+
+class DirectByteTools(Tools):
+    def __init__(self):
+        self.saw_chunk_marker = False
+
+    def execute(self, name, arguments):
+        self.saw_chunk_marker = bool(arguments.get("_norm_chunked_evidence"))
+        return super().execute(name, arguments)
+
+
+class DirectByteClient(Client):
+    def __init__(self):
+        super().__init__()
+        self.calls = 0
+
+    def chat_with_tools(self, messages, tools, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            return {
+                "content": "",
+                "thinking": "",
+                "tool_calls": [{"function": {"name": "read_file", "arguments": {
+                    "path": r"C:\\tmp\\big.txt",
+                    "start_byte": 1024,
+                    "max_bytes": 4096,
+                }}}],
+                "done_reason": "stop",
+                "eval_count": 10,
+            }
+        if self.calls == 2:
+            return {
+                "content": "done-direct-byte",
+                "thinking": "",
+                "tool_calls": [],
+                "done_reason": "stop",
+                "eval_count": 20,
+            }
+        raise AssertionError("unexpected extra model call")
+
+
+queue2 = Queue()
+client2 = DirectByteClient()
+tools2 = DirectByteTools()
+worker2 = PromptWorker(queue2, client2, Live(), None, n1_gatekeeper=None)
+worker2._runtime_config = worker._runtime_config
+job2 = PromptJob(
+    message_id="2-0", task_id="t2", step_id="s2", prompt="inspect from byte 1024",
+    project_id="default", context="", attempt=0, created_at=time.time(), metadata={},
+    chain_id="c2", previous_prompt_id="", next_prompt_id="x2", chain_index=0,
+    recovery_attempted=False,
+)
+outcome2 = worker2._run_tool_slice(job2, "inspect from byte 1024", tools2)
+assert outcome2["yielded"] is False
+assert outcome2["answer"] == "done-direct-byte"
+assert tools2.saw_chunk_marker is True
+print("PASS direct byte-cursor read is marked streamed evidence")

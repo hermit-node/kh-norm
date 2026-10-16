@@ -88,7 +88,7 @@ def add_package_source(zf: zipfile.ZipFile, source: Path, manifest: dict) -> tup
     """
     exclusions = {
         ".venv", ".ssh", "plugins", "logs", "state", "staging", "build", "dist",
-        "__pycache__", "backup", "backups",
+        "__pycache__", "backup", "backups", "core/norm.exe",
         # Reproducible third-party payloads are fetched/verified by the installer or plugin.
         # Never duplicate them into every portable/source backup.
         "tools/weasyprint/runtime", "tools/playwright/runtime",

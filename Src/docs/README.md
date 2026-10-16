@@ -2,11 +2,15 @@
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.54.2c / Installer 1.6.12-unified** package only. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.54.2f / Installer 2.0.0** package only. Version history belongs only in RELEASE_NOTES.md.
 
-### Recovery scope + database-access redirect (0.54.2c)
+### Console fan-out + direct byte-cursor verification (0.54.2f)
 
-Unnumbered oversized work remains genuinely unscoped during recovery; Norm no longer invents `scope_items=[1]`, so atomic-item decomposition limits cannot be triggered by a synthetic scope. N1 also redirects attempts to recover literal sensitive credential values toward the existing PostgreSQL capability while leaving surrounding code/usage analysis and normal PostgreSQL pool/query/execute calls available.
+Norm Prompt remains singleton because duplicate input frontends can submit duplicate work. Norm Replies and Norm Runtime are read-only viewers and may coexist locally or remotely; they no longer acquire named Windows mutexes. Explicit byte-cursor text reads are treated as streamed evidence even when N2 supplies start_byte, so N1 checks in deterministic file/fingerprint/cursor metadata without invoking the verification_value model on the raw chunk. Portable-source archives also exclude core/norm.exe.
+
+### Recovery scope + action-boundary protected-literal guard (0.54.2)
+
+Unnumbered oversized work remains genuinely unscoped during recovery; Norm no longer invents `scope_items=[1]`, so atomic-item decomposition limits cannot be triggered by a synthetic scope. Sensitive literals continue to be transformed before N1/N2 see evidence. N1 does not police N2's general reasoning about passwords, credentials, or surrounding code. Only a concrete proposed action that plausibly attempts to recover or bypass a transformed literal is sent through the semantic guard. The first denied attempt receives only `The Bird says No. The Worm won't Go.`; repeated attempts may receive a short safe workaround, such as using Norm's direct PostgreSQL query capability instead of constructing a credential-bearing connection. The guard's counters/history are in-process only and reset on restart.
 
 ### Redis verification-pool evidence replay (0.54.2b)
 

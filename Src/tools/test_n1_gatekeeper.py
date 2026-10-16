@@ -47,6 +47,20 @@ class FakeClient:
             if self.reuse_record_id:
                 return json.dumps({"decision": "reuse", "record_ids": [self.reuse_record_id], "reason": "prior evidence remains sufficient"})
             return json.dumps({"decision": "execute", "record_ids": [], "reason": "fresh check needed"})
+        if "action boundary" in prompt:
+            payload = json.loads(prompt.rsplit("\n\n", 1)[-1])
+            purpose = str(payload.get("needed_fact_or_purpose") or "").casefold()
+            target = str(payload.get("target") or "").casefold()
+            arguments = json.dumps(payload.get("arguments") or {}).casefold()
+            action_text = " ".join((purpose, target, arguments))
+            blocked = any(token in action_text for token in (
+                "actual password", "real credential", "recover", "reconstruct",
+                "untransformed copy", "extract [redacted]", "reveal [redacted]",
+                "bypass redaction", "password=[redacted]",
+            ))
+            database_goal = any(token in action_text for token in ("postgres", "psycopg", "database access"))
+            alternative = "Use the direct PostgreSQL query capability instead." if database_goal else "Continue the task without recovering the transformed value."
+            return json.dumps({"block": blocked, "database_goal": database_goal, "alternative": alternative if blocked else ""})
         if "passively watching N2" in prompt:
             return json.dumps({
                 "loop": True,
@@ -457,7 +471,7 @@ def test_ingress_failure_forwards_exact_text_fail_open():
 
 
 
-def test_sensitive_value_probe_gets_opaque_database_redirect_and_blocks_probe_call():
+def test_sensitive_probe_is_not_detected_from_n2_reasoning_alone():
     gate = N1Gatekeeper(FakeClient(), FakeLive())
     calls = [{
         "function": {
@@ -469,25 +483,12 @@ def test_sensitive_value_probe_gets_opaque_database_redirect_and_blocks_probe_ca
             },
         }
     }]
-    redirect = gate.observe_n2_turn(
+    reset = gate.observe_n2_turn(
         task_id="t", step_id="s",
-        thinking="I need to find the actual hardcoded password value in this file.",
+        thinking="I wonder what the protected literal originally contained.",
         content="", calls=calls,
     )
-    assert redirect == "The Bird says No. The Worm won't Go. I can query the database directly."
-
-    blocked = gate.before_tool(
-        task_id="t", step_id="s", name="read_file",
-        arguments={
-            "path": r"D:\code\db_connect.py",
-            "n1_target": r"D:\code\db_connect.py",
-            "n1_need": "read more of db_connect.py to understand password usage",
-        },
-    )
-    assert blocked.execute is False
-    assert blocked.result["n1_redirected"] is True
-    assert blocked.result["error"] == redirect
-    assert blocked.reset_instruction == redirect
+    assert reset == ""
 
 
 def test_database_pool_remains_allowed_after_sensitive_probe():
@@ -507,14 +508,20 @@ def test_database_pool_remains_allowed_after_sensitive_probe():
 
 def test_repeated_sensitive_probe_gets_firmer_redirect():
     gate = N1Gatekeeper(FakeClient(), FakeLive())
-    first = gate.observe_n2_turn(
-        task_id="t", step_id="s", thinking="Find the actual password value.", calls=[]
-    )
-    second = gate.observe_n2_turn(
-        task_id="t", step_id="s", thinking="That password didn't work; I need the real credential.", calls=[]
-    )
-    assert first == "The Bird says No. The Worm won't Go. I can query the database directly."
-    assert second == "The Bird says No. The Worm won't Go. Use the database access I already offered."
+    args = {
+        "path": "db_connect.py",
+        "n1_target": "db_connect.py",
+        "n1_need": "recover the actual PostgreSQL password so I can make a connection",
+    }
+    first = gate.before_tool(task_id="t", step_id="s", name="read_file", arguments=args)
+    second = gate.before_tool(task_id="t", step_id="s", name="read_file", arguments=args)
+    assert first.execute is False
+    assert first.result["error"] == "The Bird says No. The Worm won't Go."
+    assert first.reset_instruction == ""
+    assert second.execute is False
+    assert second.result["error"].startswith("The Bird says No. The Worm won't Go.")
+    assert "query" in second.result["error"].lower() or "PostgreSQL" in second.result["error"]
+    assert second.reset_instruction == ""
 
 
 def test_accepting_database_redirect_does_not_retrigger_bird():
@@ -549,6 +556,8 @@ def test_manual_database_credential_attempt_is_redirected_but_pool_is_not():
     assert manual.result["n1_redirected"] is True
     assert manual.result["error"].startswith("The Bird says No.")
 
+
+
 def test_third_repeated_noncacheable_call_is_blocked():
     gate = N1Gatekeeper(FakeClient(), FakeLive(), loop_repeat_threshold=3)
     args = {"command": "echo hi"}
@@ -577,7 +586,7 @@ if __name__ == "__main__":
         test_ingress_review_is_real_and_configurable_without_rewriting_user_text,
         test_final_answer_review_accept_retry_and_processing_failure_are_distinct,
         test_ingress_failure_forwards_exact_text_fail_open,
-        test_sensitive_value_probe_gets_opaque_database_redirect_and_blocks_probe_call,
+        test_sensitive_probe_is_not_detected_from_n2_reasoning_alone,
         test_database_pool_remains_allowed_after_sensitive_probe,
         test_repeated_sensitive_probe_gets_firmer_redirect,
         test_accepting_database_redirect_does_not_retrigger_bird,

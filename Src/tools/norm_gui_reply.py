@@ -13,7 +13,7 @@ from rich.markdown import Markdown
 from rich.rule import Rule
 from rich.text import Text
 
-from norm_gui_common import ROOT, acquire_windows_mutex, load_runtime_config
+from norm_gui_common import ROOT, load_runtime_config
 
 _WINDOWS_CTRL_HANDLER = None
 
@@ -95,9 +95,8 @@ def _render_reply(console: Console, text: str, source: str) -> None:
 
 
 def main() -> int:
-    if not acquire_windows_mutex("NormGuiReply"):
-        print("Norm Replies is already running in another process. Close the old operator console/process, then run Run-Norm.bat again.")
-        return 0
+    # Replies is a read-only Redis fan-out client. Multiple viewers are safe:
+    # each XREAD cursor is independent and no consumer group is used.
     _install_console_signal_handlers()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")

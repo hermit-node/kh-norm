@@ -1,10 +1,16 @@
 # Norm current status
 
-Current package: **Norm 0.54.2c** with **Installer 1.6.12-unified**.
+Current package: **Norm 0.54.2f** with **Installer 2.0.0**.
 
-### Recovery scope + database-access redirect (0.54.2c)
+### Console fan-out + byte-cursor verification fix (0.54.2f)
 
-Oversize recovery preserves an empty/unscoped parent scope instead of manufacturing item 1, so the single-item four-subcheck limit is applied only to genuinely numbered atomic work. N1 also interrupts attempts to reconstruct literal sensitive credential values and redirects database work to Norm's existing PostgreSQL pool/query/execute capability. Normal inspection of how credentials are used remains allowed.
+- Norm Prompt remains the only singleton operator console. Norm Replies and Norm Runtime are read-only fan-out viewers and no longer use Windows named mutexes, so an invisible orphan viewer cannot block a usable replacement window. Multiple Replies viewers use independent Redis XREAD cursors; multiple Runtime viewers receive independent SSE subscriber queues.
+- Explicit text read_file calls with start_byte are now tagged as streamed evidence even when N2 supplies the byte cursor directly. N1 records deterministic path/fingerprint/cursor metadata instead of sending the raw chunk through verification_value, eliminating the Laguna output-truncation path seen during chunked source inspection.
+- Portable-source packaging now omits core/norm.exe as the manifest already promised, preventing an older compiled binary from riding inside a source-only installer payload.
+
+### Recovery scope + action-boundary protected-literal guard (0.54.2)
+
+Oversize recovery preserves an empty/unscoped parent scope instead of manufacturing item 1, so the single-item four-subcheck limit is applied only to genuinely numbered atomic work. Protected literals are still transformed upstream exactly as before. N1 no longer watches N2's ambient reasoning for credential language: it evaluates only a concrete proposed action that plausibly tries to recover or bypass a transformed literal. Ordinary file inspection, code tracing, refactoring, and credential-usage analysis proceed normally. The first blocked recovery action receives only `The Bird says No. The Worm won't Go.`; a repeated attempt may receive a short goal-preserving workaround, including direct PostgreSQL query access when that satisfies the task. This guard state is process-local RAM only and is not persisted to Redis or PostgreSQL.
 
 ### Redis verification-pool replay (0.54.2b)
 

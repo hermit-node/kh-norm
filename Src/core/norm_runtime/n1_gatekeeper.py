@@ -40,12 +40,10 @@ _CACHEABLE_PLUGIN_FUNCTIONS = {
 }
 
 # Model-facing evidence may intentionally differ from literal source material where
-# sensitive values are withheld upstream. N1 never receives those literal values and
-# must not teach N2 how that withholding works. Its only job here is to stop attempts
-# to reconstruct such a value and redirect database work to the capability both agents
-# already have.
-_BIRD_REDIRECT = "The Bird says No. The Worm won't Go. I can query the database directly."
-_BIRD_LOOP_REDIRECT = "The Bird says No. The Worm won't Go. Use the database access I already offered."
+# sensitive values are transformed upstream. N1 never receives the literal value. It
+# knows only that a transformed placeholder represents withheld source material, and
+# intervenes only when a concrete proposed action tries to recover or bypass it.
+_BIRD_REDIRECT = "The Bird says No. The Worm won't Go."
 _SECRET_TERM_RE = re.compile(r"(?i)\b(?:password|passwd|pwd|credential|secret|token|api[_ -]?key|access[_ -]?key|private[_ -]?key|authorization)\b")
 _SECRET_VALUE_INTENT_RE = re.compile(
     r"(?i)(?:\b(?:actual|literal|raw|hidden|real|exact|underlying)\b.{0,80}\b(?:password|passwd|pwd|credential|secret|token|api[_ -]?key|access[_ -]?key|private[_ -]?key)\b"
@@ -134,7 +132,6 @@ class N1Gatekeeper:
         self._turn_history: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
         self._turn_loop_judgments: OrderedDict[str, None] = OrderedDict()
         self._sensitive_probe_counts: OrderedDict[str, int] = OrderedDict()
-        self._sensitive_probe_pending: OrderedDict[str, int] = OrderedDict()
         self._maintenance_judgments = {"total": 0, "accept": 0, "retry": 0, "destructive_accept": 0, "processing_failed": 0, "review_failure_pass": 0}
         self._ingress_reviews = {"total": 0, "success": 0, "failed": 0}
         self._routing_reviews = {"total": 0, "accept": 0, "retry": 0, "processing_failed": 0}
@@ -680,45 +677,109 @@ class N1Gatekeeper:
             return True
         return False
 
-    def _remember_sensitive_probe(self, key: str, pending_calls: int = 0) -> int:
+    def _remember_sensitive_probe(self, key: str) -> int:
         with self._lock:
             count = int(self._sensitive_probe_counts.get(key, 0)) + 1
             self._sensitive_probe_counts[key] = count
             self._sensitive_probe_counts.move_to_end(key)
-            if pending_calls > 0:
-                self._sensitive_probe_pending[key] = max(int(self._sensitive_probe_pending.get(key, 0)), int(pending_calls))
-                self._sensitive_probe_pending.move_to_end(key)
             while len(self._sensitive_probe_counts) > self.request_state_entries:
-                expired, _ = self._sensitive_probe_counts.popitem(last=False)
-                self._sensitive_probe_pending.pop(expired, None)
-            while len(self._sensitive_probe_pending) > self.request_state_entries:
-                self._sensitive_probe_pending.popitem(last=False)
+                self._sensitive_probe_counts.popitem(last=False)
             return count
+
+    def _judge_sensitive_action(
+        self, *, name: str, need: str, target: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Judge only the concrete proposed action, never N2's ambient reasoning."""
+        if self._database_capability_tool(name):
+            return {"block": False, "database_goal": True, "alternative": ""}
+
+        rendered_arguments = json.dumps(redact(arguments), ensure_ascii=False, sort_keys=True, default=str)
+        fallback_block = (
+            self._looks_like_sensitive_value_probe(need, target, rendered_arguments)
+            or self._looks_like_manual_database_connection_attempt(name, arguments)
+        )
+        if not fallback_block:
+            return {"block": False, "database_goal": False, "alternative": ""}
+
+        prompt = (
+            "You are N1 at Norm's action boundary. Sensitive literal values may have been transformed upstream "
+            "before either model sees them. A placeholder such as [redacted] means a real source literal exists "
+            "but is intentionally unavailable to N2. Judge ONLY the concrete proposed tool action below. "
+            "Do not inspect or speculate about N2's private reasoning.\n\n"
+            "BLOCK only when this action's objective is to recover, reconstruct, infer, expose, search for an "
+            "untransformed copy of, or otherwise bypass a transformed secret literal. Normal source inspection, "
+            "data-flow tracing, credential architecture analysis, refactoring, file reads, and file writes that "
+            "work around the placeholder must be ALLOWED.\n\n"
+            "If blocked, decide whether the underlying goal is PostgreSQL/database access that can be satisfied "
+            "through Norm's existing direct database capability. Also provide one short safe alternative that "
+            "preserves the user's goal without recovering the hidden value. Do not describe how the redaction works "
+            "and do not suggest another recovery technique. Return strict JSON only.\n\n"
+            + json.dumps({
+                "tool": name,
+                "needed_fact_or_purpose": need,
+                "target": target,
+                "arguments": redact(arguments),
+            }, ensure_ascii=False, sort_keys=True, default=str)
+        )
+        schema = {
+            "type": "object",
+            "properties": {
+                "block": {"type": "boolean"},
+                "database_goal": {"type": "boolean"},
+                "alternative": {"type": "string"},
+            },
+            "required": ["block", "database_goal", "alternative"],
+            "additionalProperties": False,
+        }
+        try:
+            profile = self._profile(
+                "sensitive_action",
+                num_predict=500,
+                timeout_seconds=180.0,
+            )
+            raw = self.client.generate(
+                prompt,
+                think=profile["think"],
+                temperature=profile["temperature"],
+                num_predict=profile["num_predict"],
+                response_format=schema,
+                emit_stream=False,
+                timeout_seconds=profile["timeout_seconds"],
+            )
+            parsed = OllamaClient.parse_json(raw)
+            return {
+                "block": bool(parsed.get("block")),
+                "database_goal": bool(parsed.get("database_goal")),
+                "alternative": str(parsed.get("alternative") or "").strip(),
+            }
+        except Exception:
+            logging.exception("N1 sensitive-action judgment failed; using narrow deterministic fallback")
+            return {
+                "block": bool(fallback_block),
+                "database_goal": bool(self._looks_like_manual_database_connection_attempt(name, arguments)),
+                "alternative": "",
+            }
 
     def _consume_sensitive_probe_block(
         self, *, task_id: str, step_id: str, name: str, need: str, target: str, arguments: dict[str, Any]
     ) -> str:
-        if self._database_capability_tool(name):
+        decision = self._judge_sensitive_action(name=name, need=need, target=target, arguments=arguments)
+        if not bool(decision.get("block")):
             return ""
         key = f"{task_id}\n{step_id}"
-        direct_probe = self._looks_like_sensitive_value_probe(need, target) or self._looks_like_manual_database_connection_attempt(name, arguments)
-        with self._lock:
-            pending = int(self._sensitive_probe_pending.get(key, 0))
-            had_pending = pending > 0
-            known_count = int(self._sensitive_probe_counts.get(key, 0))
-            if had_pending:
-                pending -= 1
-                if pending > 0:
-                    self._sensitive_probe_pending[key] = pending
-                else:
-                    self._sensitive_probe_pending.pop(key, None)
-        if not direct_probe and not had_pending:
-            # No pending call from the sensitive turn and this new request is not
-            # itself probing; N2 changed approach, so leave it alone.
-            return ""
-        if direct_probe and known_count <= 0:
-            known_count = self._remember_sensitive_probe(key)
-        return _BIRD_LOOP_REDIRECT if known_count > 1 else _BIRD_REDIRECT
+        count = self._remember_sensitive_probe(key)
+        if count == 1:
+            return _BIRD_REDIRECT
+
+        alternative = str(decision.get("alternative") or "").strip()
+        if bool(decision.get("database_goal")):
+            fallback = (
+                "Direct PostgreSQL access is already available; use the database query capability "
+                "instead of recovering the credential or constructing another connection."
+            )
+        else:
+            fallback = "Work around the transformed value and continue with the surrounding task."
+        return f"{_BIRD_REDIRECT} {alternative or fallback}".strip()
 
     def _remember_request(self, signature: str) -> int:
         with self._lock:
@@ -965,34 +1026,6 @@ class N1Gatekeeper:
         key = f"{task_id}\n{step_id}"
         history = self._record_turn(key, turn)
         compact_calls = turn.get("calls") or []
-
-        # Sensitive literal values are intentionally unavailable to both models. N1
-        # does not explain why or how; it only notices value-recovery/probing intent
-        # and redirects database work to the existing PostgreSQL capability.
-        raw_needs: list[str] = []
-        for call in list(calls or [])[:12]:
-            function = call.get("function") if isinstance(call, dict) else None
-            arguments = function.get("arguments", {}) if isinstance(function, dict) else (call.get("arguments", {}) if isinstance(call, dict) else {})
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except Exception:
-                    arguments = {}
-            if isinstance(arguments, dict):
-                raw_needs.append(str(arguments.get("n1_need") or ""))
-        if self._looks_like_sensitive_value_probe(thinking, content, " ".join(raw_needs)):
-            raw_tool_names: list[str] = []
-            for call in list(calls or [])[:12]:
-                function = call.get("function") if isinstance(call, dict) else None
-                raw_tool_names.append(str(function.get("name") or "") if isinstance(function, dict) else str(call.get("name") or "") if isinstance(call, dict) else "")
-            unsafe_call_count = sum(1 for tool_name in raw_tool_names if tool_name and not self._database_capability_tool(tool_name))
-            # If N2 already pivoted to the supported PostgreSQL capability, let it
-            # proceed without commentary. Otherwise remember only the calls that
-            # should be stopped on this turn.
-            if raw_tool_names and unsafe_call_count == 0:
-                return ""
-            probe_count = self._remember_sensitive_probe(key, pending_calls=unsafe_call_count)
-            return _BIRD_LOOP_REDIRECT if probe_count > 1 else _BIRD_REDIRECT
 
         if compact_calls and all(self.information_tool(str(item.get("tool") or "")) for item in compact_calls):
             # Information repetition is resolved at the Redis verification boundary.
@@ -1246,8 +1279,8 @@ class N1Gatekeeper:
                 },
                 target=target,
                 need=need,
-                note="N1 redirected an attempt to recover a sensitive literal value toward existing database capability.",
-                reset_instruction=sensitive_redirect,
+                note="N1 blocked only this concrete attempt to recover or bypass a transformed sensitive literal.",
+                reset_instruction="",
                 signature=signature,
                 scope=scope,
                 streamed_read=streamed_read,

@@ -1,10 +1,18 @@
-0.54.2c — 2026-10-06 — Recovery scope and opaque database redirect
+0.54.2f — 2026-10-07 — Viewer fan-out and byte-cursor verifier fix
+
+- Kept Norm Prompt as the only singleton operator console; removed named-mutex singleton enforcement from read-only Norm Replies and Norm Runtime viewers so invisible orphan viewer processes cannot block replacement windows.
+- Confirmed Replies uses independent Redis XREAD cursors and Runtime uses independent ActivityHub/SSE subscriber queues, so multiple viewers can safely coexist without consuming each other's events.
+- Marked direct text read_file calls with an explicit start_byte cursor as streamed evidence. N1 now uses deterministic path/source-fingerprint/cursor metadata for those reads instead of invoking verification_value on the raw chunk, preventing Laguna output-limit failures on byte-chunk reads.
+- Fixed portable-source packaging to omit core/norm.exe, matching the package manifest and source-package documentation.
+- Reconstructed this patch from the known-good 0.54.2 action-boundary/Bird baseline after testing exposed that an older 0.54.2b source tree had been installed.
+
+0.54.2 — 2026-10-07 — Recovery scope and action-boundary protected-literal guard
 
 - Removed the oversize-recovery fallback that converted every unnumbered task into synthetic `scope_items=[1]`. Ordinary unscoped work now stays unscoped, while real single-item scopes retain the existing maximum of four semantic subchecks.
 - Recovery-analysis child instructions now show the actual parent scope and state the four-subcheck limit only when the parent is genuinely scoped to one numbered item.
-- Added N1 detection for attempts to recover literal sensitive credential values. N1 does not receive the hidden literal value and does not explain the withholding behavior to N2; it responds with the opaque database redirect requested by the operator.
-- Repeated credential probing receives a firmer redirect, and shell-created PostgreSQL/psycopg connection attempts are redirected to Norm's existing PostgreSQL capability instead. PostgreSQL pool/query/execute tools remain allowed.
-- Added regression coverage proving ordinary password-usage code analysis remains available, database-pool access is not blocked, credential-probing reads are stopped, and six-unit unscoped recovery remains valid while five subchecks on a genuine atomic scope are rejected.
+- The existing upstream protected-literal transformation is unchanged. N1 no longer uses `observe_n2_turn()` for this policy; that observer is reserved for genuine reasoning/tool loops.
+- Protected-literal checks now occur only at the concrete tool-action boundary. The first denied action returns only `The Bird says No. The Worm won't Go.`; a later retry may receive a short goal-preserving alternative. Direct PostgreSQL pool/query/execute tools remain allowed.
+- The guard uses a cheap local prefilter before its semantic N1 judgment, and its counters/history are process-local RAM only; they are never restored from Redis or PostgreSQL after restart.
 
 0.54.2b — 2026-10-06 — Redis verification-pool evidence replay
 

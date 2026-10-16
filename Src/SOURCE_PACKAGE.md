@@ -1,8 +1,15 @@
-# Norm 0.54.2c portable source package
+# Norm 0.54.2f portable source package
 
-This directory is the portable source payload for **Norm 0.54.2c**.
+This directory is the portable source payload for **Norm 0.54.2f**.
 
 The portable source package excludes generated or machine-private material such as .venv, compiled core\norm.exe, build output, Python caches, secrets, and private runtime state.
+
+## 0.54.2f viewer fan-out and direct byte-cursor verification
+
+- Norm Prompt remains singleton; Norm Replies and Norm Runtime are read-only fan-out viewers and do not use named mutexes.
+- Explicit text byte-cursor reads are marked as streamed evidence so N1 records deterministic metadata instead of running the raw chunk through verification_value.
+- Portable-source generation excludes core/norm.exe; the installer builds and validates the executable from source.
+- The 0.54.2 action-boundary protected-literal/Bird behavior and oversize-recovery fixes remain intact.
 
 ## 0.53.20 optional remote-agent/plugin installation
 
@@ -62,11 +69,11 @@ Installer 1.6.9 binds the portable-source ZIP by exact filename and SHA-256, mig
 
 This package includes schema-2 `plugins\web_browser` v1.0.0 and exact direct pins for Playwright 1.63.0, Beautiful Soup 4.15.0, Soup Sieve 2.10, and Trafilatura 2.3.0. The plugin delegates its third-party web runtime to the installed `.venv`, so the portable plugin remains independently removable and does not require those libraries to be frozen into `norm.exe`.
 
-## 0.54.2c recovery scope and opaque database redirect
+## 0.54.2 recovery scope and action-boundary protected-literal guard
 
 - Oversize recovery no longer invents `scope_items=[1]` for ordinary unnumbered work. Atomic-item limits apply only when a real numbered scope exists.
-- Recovery-analysis examples now use the actual parent scope and advertise the four-subcheck limit only for a genuine single-item scope.
-- N1 now interrupts attempts to recover literal sensitive credential values with the opaque redirect `The Bird says No. The Worm won't Go. I can query the database directly.` Repeated probing gets a firmer database-access redirect.
+- The existing upstream protected-literal transformation remains unchanged. N1 checks only concrete proposed actions, not N2's ambient reasoning.
+- The first denied action returns only `The Bird says No. The Worm won't Go.`; a later retry may receive a short safe workaround. Existing PostgreSQL pool/query/execute capabilities remain fully allowed, and guard state resets on restart.
 - Existing PostgreSQL pool/query/execute capabilities remain fully allowed; ordinary code analysis of credential usage is not blocked.
 
 ## 0.54.2b Redis verification-pool replay

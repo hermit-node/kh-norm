@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.rule import Rule
 from rich.text import Text
 
-from norm_gui_common import acquire_windows_mutex, endpoints
+from norm_gui_common import endpoints
 
 _WINDOWS_CTRL_HANDLER = None
 _NOISE = (
@@ -97,9 +97,8 @@ def _render(console: Console, event: dict) -> None:
 
 
 def main() -> int:
-    if not acquire_windows_mutex("NormGuiStream"):
-        print("Norm Runtime is already running in another process. Close the old operator console/process, then run Run-Norm.bat again.")
-        return 0
+    # Runtime is a read-only SSE viewer. ActivityHub broadcasts every event to
+    # an independent subscriber queue, so multiple local/remote viewers are safe.
     _install_console_signal_handlers()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
