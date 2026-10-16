@@ -29,6 +29,7 @@ from norm_runtime.http_api import start_chat_api
 from norm_runtime.ollama_client import ModelOutputTruncated, OllamaClient
 from norm_runtime.ollama_lifecycle import shutdown_ollama
 from norm_runtime.model_switch import ordered_models, resolve_model_selector, same_model
+from norm_runtime.model_runtime_policy import agent_model_client_kwargs, agent_persistent_instructions, effective_context_length
 from norm_runtime.n1_gatekeeper import N1Gatekeeper
 from norm_runtime.prompt_worker import PromptWorker
 from norm_runtime.shutdown_snapshot import write_sos
@@ -173,8 +174,17 @@ def start_ollama_if_needed(root: Path, base_url: str, model_name: str, model_sto
     raise RuntimeError("Ollama API did not become ready")
 
 
-def preload_norm(base_url: str, model_name: str) -> None:
-    payload = json.dumps({"model": model_name, "keep_alive": -1}).encode("utf-8")
+def preload_norm(base_url: str, model_name: str, *, context_length: int | None = None, system_instructions: str | list[str] | tuple[str, ...] | None = None) -> None:
+    body: dict[str, object] = {"model": model_name, "keep_alive": -1}
+    if context_length:
+        body["options"] = {"num_ctx": max(1, int(context_length))}
+    if isinstance(system_instructions, (list, tuple)):
+        system_text = "\n".join(f"- {str(v).strip()}" for v in system_instructions if str(v).strip())
+    else:
+        system_text = str(system_instructions or "").strip()
+    if system_text:
+        body["system"] = system_text
+    payload = json.dumps(body).encode("utf-8")
     req = request.Request(
         f"{base_url}/api/generate",
         data=payload,
@@ -929,12 +939,15 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
     activity_hub = ActivityHub()
     context_ollama_cfg = config.get("ollama", {})
     context_ollama_host = str(context_ollama_cfg.get("host", "127.0.0.1"))
+    n2_model_client_kwargs = agent_model_client_kwargs(config, "n2")
+    n1_model_client_kwargs = agent_model_client_kwargs(config, "n1")
     resources["context_client"] = OllamaClient(
         base_url=f"http://{context_ollama_host}:{ports['ollama']}",
         model=str(model_name or MODEL_NAME),
         timeout_seconds=600,
         activity_sink=activity_hub.publish,
         activity_source="context-snapshot",
+        **n2_model_client_kwargs,
     )
 
     # Every startup-owned resource lives under one cleanup boundary.  A failed
@@ -1016,6 +1029,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             timeout_seconds=float(n1_cfg.get("timeout_seconds", 86400)),
             activity_sink=activity_hub.publish,
             activity_source="n1-gatekeeper",
+            **n1_model_client_kwargs,
         )
         n1_gatekeeper = N1Gatekeeper(
             n1_client,
@@ -1027,12 +1041,13 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             loop_repeat_threshold=int(n1_cfg.get("loop_repeat_threshold", 3)),
             reasoning_loop_threshold=int(n1_cfg.get("reasoning_loop_threshold", 3)),
             reasoning_similarity_floor=float(n1_cfg.get("reasoning_similarity_floor", 0.78)),
-            maintenance_num_predict=int(n1_cfg.get("maintenance_num_predict", 5000)),
-            maintenance_review_timeout_seconds=float(n1_cfg.get("maintenance_review_timeout_seconds", 720)),
-            ingress_num_predict=int(n1_cfg.get("ingress_num_predict", 3000)),
-            ingress_review_timeout_seconds=float(n1_cfg.get("ingress_review_timeout_seconds", 720)),
-            final_num_predict=int(n1_cfg.get("final_num_predict", 5000)),
-            final_review_timeout_seconds=float(n1_cfg.get("final_review_timeout_seconds", 720)),
+            maintenance_num_predict=int(n1_cfg.get("maintenance_num_predict", (n1_cfg.get("maintenance_review", {}) or {}).get("num_predict", 5000))),
+            maintenance_review_timeout_seconds=float(n1_cfg.get("maintenance_review_timeout_seconds", (n1_cfg.get("maintenance_review", {}) or {}).get("timeout_seconds", 720))),
+            ingress_num_predict=int(n1_cfg.get("ingress_num_predict", (n1_cfg.get("ingress", {}) or {}).get("num_predict", 3000))),
+            ingress_review_timeout_seconds=float(n1_cfg.get("ingress_review_timeout_seconds", (n1_cfg.get("ingress", {}) or {}).get("timeout_seconds", 720))),
+            final_num_predict=int(n1_cfg.get("final_num_predict", (n1_cfg.get("final_review", {}) or {}).get("num_predict", 5000))),
+            final_review_timeout_seconds=float(n1_cfg.get("final_review_timeout_seconds", (n1_cfg.get("final_review", {}) or {}).get("timeout_seconds", 720))),
+            profiles=n1_cfg,
         )
         resources["n1_client"] = n1_client
         resources["n1_gatekeeper"] = n1_gatekeeper
@@ -1088,6 +1103,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
                 activity_sink=activity_hub.publish,
                 activity_source="n2-worker",
                 crash_sink=live.record_model_buffer,
+                **n2_model_client_kwargs,
             )
             worker = PromptWorker(
                 prompt_queue,
@@ -1271,7 +1287,13 @@ def main() -> int:
     model_store = str(ollama_cfg.get('model_store') or os.environ.get("OLLAMA_MODELS") or MODEL_STORE)
     logging.info("Resolved service ports: ollama=%s norm_http=%s activity=%s", ports['ollama'], ports['norm_http'], ports['activity'])
     ollama_process = start_ollama_if_needed(root, ollama_url, model_name, model_store)
-    preload_norm(ollama_url, model_name)
+    preload_policy = agent_model_client_kwargs(config, "n2")
+    preload_norm(
+        ollama_url,
+        model_name,
+        context_length=effective_context_length(config, "n2", model_name),
+        system_instructions=preload_policy.get("system_instructions"),
+    )
     if args.check:
         statuses = healthcheck(root)
         logging.info("Health check: %s", statuses)

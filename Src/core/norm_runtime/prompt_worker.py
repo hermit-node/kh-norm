@@ -17,9 +17,10 @@ import redis
 
 from .history_maintenance import DeepHistoryMaintainer
 from .maintenance_model_client import MaintenanceModelClient
+from .model_runtime_policy import agent_persistent_instructions
 from .temp_cleanup import cleanup_task_temp, cleanup_temp_root
 from .models import StepResult, StepStatus, TaskPlan, TaskStep
-from .ollama_client import ModelGenerationCancelled, ModelOutputTruncated, OllamaClient
+from .ollama_client import ModelContextExceeded, ModelGenerationCancelled, ModelOutputTruncated, OllamaClient
 from .prompt_queue import PromptJob, RedisPromptQueue, normalize_request_type
 from .protocol import PROTOCOL_VERSION, final_verification_schema, normalize_command, step_verification_schema, validate_final_candidate, validate_final_verification, validate_step_verification
 from .resource_status import full_context_status, impaired_context_status, merge_resource_status
@@ -982,7 +983,7 @@ class PromptWorker:
             "prompt_origin": prompt_origin,
             "instruction_source": "user_prompt_interface" if is_user_prompt else "norm_internal",
             "processing_contract": directives[request_type],
-            "persistent_instructions": list(self._runtime_config().get("persistent_instructions", [])),
+            "persistent_instructions": agent_persistent_instructions(self._runtime_config(), "n2"),
             "task_id": job.task_id,
             "step_id": job.step_id,
             "project_id": job.project_id,
@@ -1152,7 +1153,7 @@ class PromptWorker:
             "the requirements are complete, and artifact claims are supported. schema_complete refers to the candidate control envelope. artifact_verified must be true when no artifact is required; "
             "when an artifact is required, it may be true only if the deterministic artifact state below is true. If revision is needed, list concrete issues and select the narrowest repair_scope. "
             "Do not demand stylistic rewrites when the result is materially correct. Reject results that took an avoidable shortcut, substituted an assumption for a material fact that available tools/evidence could reasonably verify, or skipped necessary verification.\n\n"
-            f"PERSISTENT OPERATING PRINCIPLES:\n{chr(10).join('- '+str(v) for v in self._runtime_config().get('persistent_instructions', []))}\n\n"
+            f"PERSISTENT OPERATING PRINCIPLES:\n{chr(10).join('- '+str(v) for v in agent_persistent_instructions(self._runtime_config(), 'n2'))}\n\n"
             f"AUTHORITATIVE USER REQUEST:\n{request}\n\n"
             f"FINAL CANDIDATE JSON:\n{json.dumps(candidate, ensure_ascii=False)}\n\n"
             f"DETERMINISTIC ARTIFACT STATE: {str(artifact_state).lower()}\n\n"
@@ -1164,7 +1165,7 @@ class PromptWorker:
         if self.durable and hasattr(self.durable, "completed_step_context"):
             prior = self.durable.completed_step_context(job.task_id, job.step_id, max_chars=36000)
         prompt = (
-            f"PERSISTENT OPERATING PRINCIPLES:\n{chr(10).join('- '+str(v) for v in self._runtime_config().get('persistent_instructions', []))}\n\n"
+            f"PERSISTENT OPERATING PRINCIPLES:\n{chr(10).join('- '+str(v) for v in agent_persistent_instructions(self._runtime_config(), 'n2'))}\n\n"
             "Repair only the user-facing reply in this final candidate. Preserve completed work and observed evidence; do not rerun tools or invent actions. "
             "Resolve every verifier issue using the authoritative request and prior completed task state. Return only the replacement user-facing reply, not JSON and not a review report.\n\n"
             f"AUTHORITATIVE PRIMARY TASK REQUEST:\n{(job.metadata or {}).get('task_user_prompt') or (job.metadata or {}).get('original_user_prompt','')}\n\n"
@@ -2639,6 +2640,35 @@ class PromptWorker:
                 )
         raise RuntimeError("unreachable text completion loop")
 
+    def _yield_context_overflow(self, redis_id: str, job: PromptJob, name: str, started, exc: ModelContextExceeded) -> None:
+        model_cfg = self._runtime_config().get("model_runtime", {}) or {}
+        action = str(model_cfg.get("context_overflow_action", "split") or "split").strip().lower()
+        if action != "split":
+            raise exc
+        outcome = {
+            "yielded": True,
+            "checkpoint": (
+                "INPUT CONTEXT LIMIT CHECKPOINT\n"
+                f"Original goal: {job.prompt}\n"
+                f"Rejected request tokens: {exc.request_tokens or 'unknown'}\n"
+                f"Available model context: {exc.context_size or 'unknown'}\n"
+                "Do not retry the same monolithic request. Use Norm's oversize recovery to decompose the unresolved scope into smaller bounded child work, preserve completed work, and merge compact durable notes back into the parent."
+            ),
+            "reason": "input_context_limit",
+            "step_rounds": 0,
+            "task_rounds": self.queue.task_rounds(job.task_id),
+            "evidence": [],
+            "resume_metadata": {
+                "context_overflow_request_tokens": int(exc.request_tokens or 0),
+                "context_overflow_n_ctx": int(exc.context_size or 0),
+            },
+        }
+        logging.warning(
+            "Model input exceeded context; yielding to oversize recovery task=%s step=%s request_tokens=%s n_ctx=%s",
+            job.task_id, job.step_id, exc.request_tokens, exc.context_size,
+        )
+        self._checkpoint_yield(redis_id, job, name, started, outcome)
+
     def _generate_with_budget(
         self,
         redis_id: str,
@@ -2655,12 +2685,16 @@ class PromptWorker:
             tools.set_task_context(job.task_id, job.step_id)
         metadata = job.metadata or {}
         if tools is None or not hasattr(self.client, "chat_with_tools"):
-            answer = self._generate_complete_text(
-                prompt,
-                think=bool(metadata.get("think", False)),
-                num_predict=int(metadata.get("num_predict") or 16000),
-                temperature=float(metadata.get("temperature", 0.2)),
-            )
+            try:
+                answer = self._generate_complete_text(
+                    prompt,
+                    think=bool(metadata.get("think", False)),
+                    num_predict=int(metadata.get("num_predict") or 16000),
+                    temperature=float(metadata.get("temperature", 0.2)),
+                )
+            except ModelContextExceeded as exc:
+                self._yield_context_overflow(redis_id, job, name, started, exc)
+                return None
             if not job.next_prompt_id and monotonic() - started_clock < 300:
                 improved = self._generate_complete_text(
                     self._review_prompt(prompt, answer),
@@ -2672,7 +2706,11 @@ class PromptWorker:
             return self._verify_and_correct_without_tools(job, prompt, answer)
 
         historical_evidence = self.live.task_evidence(job.task_id) if hasattr(self.live, "task_evidence") else []
-        outcome = self._run_tool_slice(job, prompt, tools)
+        try:
+            outcome = self._run_tool_slice(job, prompt, tools)
+        except ModelContextExceeded as exc:
+            self._yield_context_overflow(redis_id, job, name, started, exc)
+            return None
         prompt = self._prompt_with_context_injections(job, base_prompt, consume=False)
         local_evidence = list(outcome.get("evidence") or [])
         if outcome["yielded"]:
@@ -2681,11 +2719,15 @@ class PromptWorker:
         answer = str(outcome["answer"])
         evidence = list(historical_evidence) + local_evidence
         if not job.next_prompt_id and monotonic() - started_clock < 300:
-            review = self._run_tool_slice(
-                job,
-                self._review_prompt(prompt, answer, evidence),
-                tools,
-            )
+            try:
+                review = self._run_tool_slice(
+                    job,
+                    self._review_prompt(prompt, answer, evidence),
+                    tools,
+                )
+            except ModelContextExceeded as exc:
+                self._yield_context_overflow(redis_id, job, name, started, exc)
+                return None
             review_evidence = list(review.get("evidence") or [])
             if review["yielded"]:
                 self._checkpoint_yield(redis_id, job, name, started, review)
@@ -3502,7 +3544,7 @@ class PromptWorker:
         metadata = dict(job.metadata or {})
         if resume_metadata:
             metadata.update(resume_metadata)
-        if reason in {"output_length_checkpoint", "reasoning_output_limit"} and metadata.get("allow_oversize_recovery", True) is not False:
+        if reason in {"output_length_checkpoint", "reasoning_output_limit", "input_context_limit"} and metadata.get("allow_oversize_recovery", True) is not False:
             cycle = int(metadata.get("oversize_recovery_cycle", 0)) + 1
             worker_cfg = self._runtime_config().get("worker", {})
             max_cycles = max(1, int(worker_cfg.get("max_oversize_recovery_cycles", 3)))

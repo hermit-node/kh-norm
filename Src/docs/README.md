@@ -2,7 +2,11 @@
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.54.0d / Installer 1.6.11-unified** package only. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.54.0e / Installer 1.6.11-unified** package only. Version history belongs only in RELEASE_NOTES.md.
+
+### Runtime-owned model policy (0.54.0e)
+
+Model context size and agent-persistent instructions are owned by `config/runtime.json`, not by `settings.ini`, `config/norm.json`, or the Ollama Modelfile. N1 and N2 have separate persistent-instruction sets that follow their runtime clients across model switches. Context overflow is routed into bounded oversize decomposition instead of identical retry.
 
 ### N1-gated memory maintenance (0.54.0 Beta baseline)
 
@@ -254,6 +258,8 @@ Installer 1.6.9 performs managed in-place updates, preserves persistent machine 
 - MAINTENANCE_VERIFICATION.md — current package validation evidence.
 - RELEASE_NOTES.md — the only maintained historical/version ledger.
 ### Plugin settings registry (0.53.22)
+
+Exact duplicate `plugins.ini` backup states are SHA-256-deduplicated and do not consume the 12-slot retention limit; plugin-setting backups live under `backups/plugins-ini` and legacy `config/backups/plugins-ini` is migrated automatically.
 
 Schema-2 plugins declare non-secret defaults in `plugin.json` under `settings`. `PluginManager.refresh()` materializes/reconciles `config/plugins.ini` on startup and hot-rescan: declared operator values are preserved, missing/invalid values get defaults, and dangling keys/sections are removed after a rotating backup. Secrets stay in the configured external `.env`. Plugin/config/file/SQL/archive backup classes retain at most 12 newest backup sets.
 

@@ -23,6 +23,14 @@ class ModelDegenerateOutput(RuntimeError):
     pass
 
 
+class ModelContextExceeded(RuntimeError):
+    def __init__(self, message: str, *, request_tokens: int = 0, context_size: int = 0, response_body: str = "") -> None:
+        super().__init__(str(message or "model input exceeded available context"))
+        self.request_tokens = int(request_tokens or 0)
+        self.context_size = int(context_size or 0)
+        self.response_body = str(response_body or "")
+
+
 class ModelOutputTruncated(RuntimeError):
     def __init__(self, partial: str, eval_count: int = 0) -> None:
         super().__init__("model output stopped because output length limit was reached")
@@ -42,6 +50,9 @@ class OllamaClient:
         activity_sink: Callable[[dict], None] | None = None,
         activity_source: str = "unknown",
         crash_sink: Callable[[str, str, list[dict[str, str]]], None] | None = None,
+        context_length: int | None = None,
+        model_context_overrides: dict[str, int] | None = None,
+        system_instructions: str | list[str] | tuple[str, ...] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -49,6 +60,18 @@ class OllamaClient:
         self.activity_sink = activity_sink
         self.activity_source = activity_source
         self.crash_sink = crash_sink
+        self.context_length = max(1, int(context_length)) if context_length else None
+        self.model_context_overrides = {
+            str(k).casefold(): max(1, int(v))
+            for k, v in dict(model_context_overrides or {}).items()
+            if int(v) > 0
+        }
+        if isinstance(system_instructions, (list, tuple)):
+            self.system_instructions = "\n".join(
+                f"- {str(v).strip()}" for v in system_instructions if str(v).strip()
+            )
+        else:
+            self.system_instructions = str(system_instructions or "").strip()
         self._display_pending = {}
         self._crash_task_id = ""
         self._crash_step_id = ""
@@ -195,6 +218,41 @@ class OllamaClient:
                     pass
         return len(active)
 
+    def _context_for_model(self, model: str | None = None) -> int | None:
+        name = str(model or self.model or "").strip()
+        folded = name.casefold()
+        base = folded.split(":", 1)[0]
+        for key in (folded, base):
+            if key in self.model_context_overrides:
+                return int(self.model_context_overrides[key])
+        return self.context_length
+
+    @staticmethod
+    def _context_error_details(body: str) -> tuple[int, int, str] | None:
+        try:
+            payload = json.loads(str(body or ""))
+        except Exception:
+            payload = None
+        candidate = payload
+        if isinstance(payload, dict) and isinstance(payload.get("error"), str):
+            try:
+                candidate = json.loads(payload["error"])
+            except Exception:
+                candidate = payload
+        if isinstance(candidate, dict) and isinstance(candidate.get("error"), dict):
+            candidate = candidate["error"]
+        if not isinstance(candidate, dict):
+            return None
+        kind = str(candidate.get("type") or "")
+        message = str(candidate.get("message") or "")
+        if kind != "exceed_context_size_error" and "exceeds the available context size" not in message:
+            return None
+        return (
+            int(candidate.get("n_prompt_tokens") or 0),
+            int(candidate.get("n_ctx") or 0),
+            message or "request exceeds available context size",
+        )
+
     @staticmethod
     def _http_request_summary(req: request.Request) -> dict[str, object]:
         """Return safe structural metadata for an Ollama HTTP request.
@@ -241,7 +299,7 @@ class OllamaClient:
             summary["tool_names"] = names
         options = payload.get("options")
         if isinstance(options, dict):
-            for key in ("num_predict", "temperature"):
+            for key in ("num_predict", "temperature", "num_ctx"):
                 if key in options:
                     summary[key] = options.get(key)
         return summary
@@ -285,6 +343,15 @@ class OllamaClient:
                 safe_body,
                 truncated,
             )
+            context_error = self._context_error_details(body)
+            if context_error is not None:
+                request_tokens, context_size, message = context_error
+                raise ModelContextExceeded(
+                    f"Ollama context limit exceeded endpoint={endpoint} model={self.model}: {message}",
+                    request_tokens=request_tokens,
+                    context_size=context_size,
+                    response_body=safe_body,
+                ) from exc
             raise RuntimeError(
                 f"Ollama HTTP {exc.code} {exc.reason} endpoint={endpoint} model={self.model}; "
                 f"response_body={safe_body}"
@@ -311,6 +378,9 @@ class OllamaClient:
             timeout_seconds=min(120.0, float(self.timeout_seconds or 120.0)),
             activity_sink=None,
             activity_source="model-switch-probe",
+            context_length=self.context_length,
+            model_context_overrides=self.model_context_overrides,
+            system_instructions=self.system_instructions,
         )
         return candidate.generate(
             "Reply with exactly OK.",
@@ -334,6 +404,9 @@ class OllamaClient:
         options: dict[str, object] = {"temperature": temperature}
         if num_predict is not None:
             options["num_predict"] = num_predict
+        context_length = self._context_for_model()
+        if context_length is not None:
+            options["num_ctx"] = int(context_length)
         body = {
             "model": self.model,
             "prompt": str(prompt),
@@ -342,6 +415,8 @@ class OllamaClient:
             "keep_alive": -1,
             "options": options,
         }
+        if self.system_instructions:
+            body["system"] = self.system_instructions
         if response_format is not None:
             body["format"] = response_format
         req = request.Request(
@@ -460,9 +535,20 @@ class OllamaClient:
         options: dict[str, object] = {"temperature": temperature}
         if num_predict is not None:
             options["num_predict"] = int(num_predict)
+        context_length = self._context_for_model()
+        if context_length is not None:
+            options["num_ctx"] = int(context_length)
+        outbound_messages = list(messages)
+        if self.system_instructions:
+            if (
+                not outbound_messages
+                or str(outbound_messages[0].get("role") or "") != "system"
+                or str(outbound_messages[0].get("content") or "") != self.system_instructions
+            ):
+                outbound_messages = [{"role": "system", "content": self.system_instructions}, *outbound_messages]
         body = {
             "model": self.model,
-            "messages": messages,
+            "messages": outbound_messages,
             "tools": tools,
             "stream": True,
             "think": think,

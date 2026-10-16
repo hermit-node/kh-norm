@@ -217,6 +217,9 @@ class MaintenanceModelClient:
             activity_sink=source.activity_sink,
             activity_source=f"maintenance-condense:{model}",
             crash_sink=source.crash_sink,
+            context_length=source.context_length,
+            model_context_overrides=source.model_context_overrides,
+            system_instructions=source.system_instructions,
         )
         self._clients[model] = client
         return client

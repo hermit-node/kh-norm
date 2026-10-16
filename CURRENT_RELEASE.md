@@ -1,6 +1,6 @@
-# Norm 0.54.0d
+# Norm 0.54.0e
 
-Original archive SHA-256: a8c09fb42b77ee316b9c97a2aa82f3ece4437904b956e1880502bab8d757cc20
+Original archive SHA-256: e45dc876e1036024badab5a7e787b9c24a652b2f24b913478adb6c36499a0896
 
 Historical assessment: static/CLI PASS, historical
 
@@ -8,6 +8,6 @@ Omitted private paths: config/network-map.json, config/settings.ini, plugins/rot
 
 Sanitized paths: core/norm_main.py, core/norm_runtime/aiohttp_host.py
 
-Historical caveats: Workspace prototype ZIP shares the core-code fingerprint with the normal portable ZIP; resources may differ.
+Historical caveats: 
 
 Public source snapshot is not identical to the original ZIP or guaranteed installable.

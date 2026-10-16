@@ -1,14 +1,12 @@
 {
-  "version": "0.54.0d",
+  "version": "0.54.0e",
   "variant": "",
-  "tag": "v0.54.0d",
-  "source_archive_sha256": "a8c09fb42b77ee316b9c97a2aa82f3ece4437904b956e1880502bab8d757cc20",
-  "source_archive": "0.54.0d--release--a8c09fb42b77.zip",
+  "tag": "v0.54.0e",
+  "source_archive_sha256": "e45dc876e1036024badab5a7e787b9c24a652b2f24b913478adb6c36499a0896",
+  "source_archive": "0.54.0e--release--e45dc876e103.zip",
   "quality": "static/CLI PASS, historical",
-  "known_issues": [
-    "Workspace prototype ZIP shares the core-code fingerprint with the normal portable ZIP; resources may differ."
-  ],
-  "published_source_files": 160,
+  "known_issues": [],
+  "published_source_files": 163,
   "omitted_paths": [
     "config/network-map.json",
     "config/settings.ini",

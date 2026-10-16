@@ -84,6 +84,7 @@ class N1Gatekeeper:
         raw_result_cache_entries: int = 128,
         turn_history_entries: int = 256,
         request_state_entries: int = 4096,
+        profiles: dict[str, Any] | None = None,
     ) -> None:
         self.client = client
         self.live = live
@@ -103,6 +104,7 @@ class N1Gatekeeper:
         self.raw_result_cache_entries = max(8, int(raw_result_cache_entries))
         self.turn_history_entries = max(32, int(turn_history_entries))
         self.request_state_entries = max(256, int(request_state_entries))
+        self.profiles = dict(profiles or {})
         self._lock = Lock()
         self._request_counts: OrderedDict[str, int] = OrderedDict()
         self._raw_results: OrderedDict[str, dict[str, Any]] = OrderedDict()
@@ -113,6 +115,16 @@ class N1Gatekeeper:
         self._ingress_reviews = {"total": 0, "success": 0, "failed": 0}
         self._routing_reviews = {"total": 0, "accept": 0, "retry": 0, "processing_failed": 0}
         self._final_reviews = {"total": 0, "accept": 0, "retry": 0, "processing_failed": 0, "review_failure_pass": 0}
+
+    def _profile(self, name: str, *, num_predict: int, timeout_seconds: float) -> dict[str, Any]:
+        raw = self.profiles.get(name)
+        cfg = dict(raw) if isinstance(raw, dict) else {}
+        return {
+            "num_predict": max(1, int(cfg.get("num_predict", num_predict))),
+            "think": bool(cfg.get("think", True)),
+            "temperature": float(cfg.get("temperature", 0.0)),
+            "timeout_seconds": max(1.0, float(cfg.get("timeout_seconds", timeout_seconds))),
+        }
 
     @staticmethod
     def information_tool(name: str) -> bool:
@@ -162,10 +174,10 @@ class N1Gatekeeper:
             "Return strict JSON only with guidance and reason.\n\nEXACT USER TURN:\n" + message
         )
         try:
+            profile = self._profile("ingress", num_predict=self.ingress_num_predict, timeout_seconds=self.ingress_review_timeout_seconds)
             raw = self.client.generate(
-                prompt, think=True, temperature=0.0, num_predict=self.ingress_num_predict,
-                response_format=schema, emit_stream=False,
-                timeout_seconds=self.ingress_review_timeout_seconds,
+                prompt, think=profile["think"], temperature=profile["temperature"], num_predict=profile["num_predict"],
+                response_format=schema, emit_stream=False, timeout_seconds=profile["timeout_seconds"],
             )
             parsed = OllamaClient.parse_json(raw)
             guidance = str(parsed.get("guidance") or "").strip()[:2400]
@@ -224,14 +236,10 @@ class N1Gatekeeper:
             f"N2 ROUTING PROPOSAL:\n{json.dumps(proposal, ensure_ascii=False, default=str)[:48000]}"
         )
         try:
+            profile = self._profile("routing", num_predict=self.ingress_num_predict, timeout_seconds=self.ingress_review_timeout_seconds)
             raw = self.client.generate(
-                prompt,
-                think=True,
-                temperature=0.0,
-                num_predict=self.ingress_num_predict,
-                response_format=schema,
-                emit_stream=False,
-                timeout_seconds=self.ingress_review_timeout_seconds,
+                prompt, think=profile["think"], temperature=profile["temperature"], num_predict=profile["num_predict"],
+                response_format=schema, emit_stream=False, timeout_seconds=profile["timeout_seconds"],
             )
             parsed = OllamaClient.parse_json(raw)
             decision = str(parsed.get("decision") or "retry").strip().lower()
@@ -297,10 +305,10 @@ class N1Gatekeeper:
             + (f"\n\nCOMPLETED TASK CONTEXT/EVIDENCE:\n{str(context)[:36000]}" if context else "")
         )
         try:
+            profile = self._profile("final_review", num_predict=self.final_num_predict, timeout_seconds=self.final_review_timeout_seconds)
             raw = self.client.generate(
-                prompt, think=True, temperature=0.0, num_predict=self.final_num_predict,
-                response_format=schema, emit_stream=False,
-                timeout_seconds=self.final_review_timeout_seconds,
+                prompt, think=profile["think"], temperature=profile["temperature"], num_predict=profile["num_predict"],
+                response_format=schema, emit_stream=False, timeout_seconds=profile["timeout_seconds"],
             )
             parsed = OllamaClient.parse_json(raw)
             decision = str(parsed.get("decision") or "retry").strip().lower()
@@ -540,13 +548,10 @@ class N1Gatekeeper:
             "additionalProperties": False,
         }
         try:
+            profile = self._profile("tool_loop_reset", num_predict=220, timeout_seconds=float(getattr(self.client, "timeout_seconds", None) or 86400))
             raw = self.client.generate(
-                prompt,
-                think=True,
-                temperature=0.0,
-                num_predict=220,
-                response_format=schema,
-                emit_stream=False,
+                prompt, think=profile["think"], temperature=profile["temperature"], num_predict=profile["num_predict"],
+                response_format=schema, emit_stream=False, timeout_seconds=profile["timeout_seconds"],
             )
             instruction = str(OllamaClient.parse_json(raw).get("instruction") or "").strip()
             return instruction or fallback
@@ -670,13 +675,10 @@ class N1Gatekeeper:
             "additionalProperties": False,
         }
         try:
+            profile = self._profile("reasoning_loop_judgment", num_predict=420, timeout_seconds=float(getattr(self.client, "timeout_seconds", None) or 86400))
             raw = self.client.generate(
-                prompt,
-                think=True,
-                temperature=0.0,
-                num_predict=420,
-                response_format=schema,
-                emit_stream=False,
+                prompt, think=profile["think"], temperature=profile["temperature"], num_predict=profile["num_predict"],
+                response_format=schema, emit_stream=False, timeout_seconds=profile["timeout_seconds"],
             )
             parsed = OllamaClient.parse_json(raw)
             if bool(parsed.get("loop")):
@@ -753,13 +755,10 @@ class N1Gatekeeper:
             "additionalProperties": False,
         }
         try:
+            profile = self._profile("redis_reuse_decision", num_predict=420, timeout_seconds=float(getattr(self.client, "timeout_seconds", None) or 86400))
             raw = self.client.generate(
-                prompt,
-                think=True,
-                temperature=0.0,
-                num_predict=420,
-                response_format=schema,
-                emit_stream=False,
+                prompt, think=profile["think"], temperature=profile["temperature"], num_predict=profile["num_predict"],
+                response_format=schema, emit_stream=False, timeout_seconds=profile["timeout_seconds"],
             )
             parsed = OllamaClient.parse_json(raw)
             decision = str(parsed.get("decision") or "execute").strip().lower()
@@ -855,10 +854,10 @@ class N1Gatekeeper:
         }
         try:
             judge_client = client or self.client
+            profile = self._profile("maintenance_review", num_predict=self.maintenance_num_predict, timeout_seconds=self.maintenance_review_timeout_seconds)
             raw = judge_client.generate(
-                prompt, think=True, temperature=0.0, num_predict=self.maintenance_num_predict,
-                response_format=schema, emit_stream=False,
-                timeout_seconds=self.maintenance_review_timeout_seconds,
+                prompt, think=profile["think"], temperature=profile["temperature"], num_predict=profile["num_predict"],
+                response_format=schema, emit_stream=False, timeout_seconds=profile["timeout_seconds"],
             )
             parsed = OllamaClient.parse_json(raw)
             decision = str(parsed.get("decision") or "retry").strip().lower()
@@ -1028,13 +1027,10 @@ class N1Gatekeeper:
             "required": ["value"],
             "additionalProperties": False,
         }
+        profile = self._profile("verification_value", num_predict=700, timeout_seconds=float(getattr(self.client, "timeout_seconds", None) or 86400))
         raw = self.client.generate(
-            prompt,
-            think=True,
-            temperature=0.0,
-            num_predict=700,
-            response_format=schema,
-            emit_stream=False,
+            prompt, think=profile["think"], temperature=profile["temperature"], num_predict=profile["num_predict"],
+            response_format=schema, emit_stream=False, timeout_seconds=profile["timeout_seconds"],
         )
         return str(OllamaClient.parse_json(raw).get("value") or "").strip()
 

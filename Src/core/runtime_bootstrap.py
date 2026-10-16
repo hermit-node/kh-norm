@@ -18,6 +18,7 @@ from norm_runtime.conversation_store import ConversationStore
 from norm_runtime.file_tool_executor import FileToolExecutor
 from norm_runtime.file_access_policy import load_file_access_policy
 from norm_runtime.ollama_client import OllamaClient
+from norm_runtime.model_runtime_policy import agent_model_client_kwargs, agent_persistent_instructions
 from norm_runtime.settings import load_ports, load_path_settings, load_plugin_settings, load_network_settings, load_postgres_settings, resolve_network_host, load_secrets
 from norm_runtime.conversation_service import ConversationService
 
@@ -234,11 +235,13 @@ def build_conversation_service(
     n2_cfg = dict((config.get("agents", {}) or {}).get("n2", {}) or {})
     ollama_host = str(n2_cfg.get("host", ollama_cfg.get("host", "127.0.0.1")))
     ollama_port = int(n2_cfg.get("port", ports["ollama"]))
+    n2_model_client_kwargs = agent_model_client_kwargs(config, "n2")
     client = OllamaClient(
         base_url=f"http://{ollama_host}:{ollama_port}",
         model=str(model_override or n2_cfg.get("model", ollama_cfg.get("model", "norm"))),
         activity_sink=activity_sink,
         activity_source="n2-chat",
+        **n2_model_client_kwargs,
     )
     memory_cfg = config.get("memory", {})
     ingrained_cfg = config.get("ingrained_details", {})
@@ -308,7 +311,7 @@ def build_conversation_service(
         durable=durable,
         n1_gatekeeper=n1_gatekeeper,
         wait_timeout_seconds=float(config.get("http", {}).get("wait_timeout_seconds", 86400)),
-        persistent_instructions=list(config.get("persistent_instructions", [])),
+        persistent_instructions=agent_persistent_instructions(config, "n2"),
         ingrained_details_enabled=bool(ingrained_cfg.get("enabled", True)),
         unresolved_test_limit=int(ingrained_cfg.get("test_limit", 3)),
         unresolved_explore_every_tasks=int(ingrained_cfg.get("explore_every_tasks", 4)),

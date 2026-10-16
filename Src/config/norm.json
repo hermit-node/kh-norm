@@ -1,7 +1,6 @@
 {
   "name": "norm",
   "base_model": "qwen3.8:27b-q4_K_M",
-  "context_length": 84000,
   "phase": "general-assistant",
   "safety": {
     "network_scope": "tailscale-only",

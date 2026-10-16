@@ -1,6 +1,6 @@
-# Norm 0.53.20 portable source package
+# Norm 0.54.0e portable source package
 
-This directory is the exact source payload intended for **Norm 0.53.20 / Installer 1.6.9-unified**.
+This directory is the portable source payload for **Norm 0.54.0e**.
 
 The portable source package excludes generated or machine-private material such as .venv, compiled core\norm.exe, build output, Python caches, secrets, and private runtime state.
 

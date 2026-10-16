@@ -139,14 +139,70 @@ def _render(desired: dict[str, dict[str, Any]], current: configparser.ConfigPars
     return buf.getvalue(), resolved, repairs
 
 
-def _backup(path: Path, *, limit: int = _BACKUP_LIMIT) -> Path:
-    backup_dir = path.parent / "backups" / "plugins-ini"
+def _file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _dedupe_backup_dir(backup_dir: Path) -> dict[str, Path]:
+    """Keep only the newest backup for each exact plugins.ini content hash."""
+    by_hash: dict[str, list[Path]] = {}
+    for candidate in backup_dir.glob("plugins-*.ini"):
+        if candidate.is_file():
+            by_hash.setdefault(_file_sha256(candidate), []).append(candidate)
+    kept: dict[str, Path] = {}
+    for digest, paths in by_hash.items():
+        ordered = sorted(paths, key=lambda item: (item.stat().st_mtime_ns, item.name), reverse=True)
+        kept[digest] = ordered[0]
+        for duplicate in ordered[1:]:
+            duplicate.unlink(missing_ok=True)
+    return kept
+
+
+def _migrate_legacy_backup_dir(settings_path: Path, backup_dir: Path) -> None:
+    legacy = settings_path.parent / "backups" / "plugins-ini"
+    if legacy.resolve() == backup_dir.resolve() or not legacy.is_dir():
+        return
     backup_dir.mkdir(parents=True, exist_ok=True)
+    for source in sorted(legacy.glob("plugins-*.ini")):
+        if not source.is_file():
+            continue
+        target = backup_dir / source.name
+        if target.exists():
+            if _file_sha256(target) == _file_sha256(source):
+                source.unlink(missing_ok=True)
+                continue
+            target = backup_dir / f"plugins-legacy-{source.name.removeprefix('plugins-')}"
+        shutil.move(str(source), str(target))
+    try:
+        legacy.rmdir()
+        legacy.parent.rmdir()
+    except OSError:
+        pass
+
+
+def _backup(path: Path, *, backup_dir: Path, limit: int = _BACKUP_LIMIT) -> Path:
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    _migrate_legacy_backup_dir(path, backup_dir)
     raw = path.read_bytes()
-    digest = hashlib.sha256(raw).hexdigest()[:12]
+    full_digest = hashlib.sha256(raw).hexdigest()
+
+    # Backups are retention slots for distinct states, not timestamps. If this exact
+    # content is already represented, do not create another counted copy. Also collapse
+    # any historical duplicate copies that predate this behavior.
+    existing = _dedupe_backup_dir(backup_dir)
+    if full_digest in existing:
+        prune_backup_files(backup_dir, pattern="plugins-*.ini", limit=limit)
+        return existing[full_digest]
+
+    digest = full_digest[:12]
     stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S-%f%z")
     target = backup_dir / f"plugins-{stamp}-{digest}.ini"
     shutil.copy2(path, target)
+    _dedupe_backup_dir(backup_dir)
     prune_backup_files(backup_dir, pattern="plugins-*.ini", limit=limit)
     return target
 
@@ -165,8 +221,15 @@ def reconcile_plugin_settings(
     existing = path.read_text(encoding="utf-8-sig") if path.is_file() else None
     changed = existing != rendered
     backup = None
+    backup_dir = root.parent / "backups" / "plugins-ini"
+    _migrate_legacy_backup_dir(path, backup_dir)
     if changed and path.is_file():
-        backup = _backup(path, limit=backup_limit)
+        backup = _backup(path, backup_dir=backup_dir, limit=backup_limit)
+    elif backup_dir.is_dir():
+        # Startup/hot-refresh with no settings change should still collapse any old
+        # duplicate backup content without consuming retention slots.
+        _dedupe_backup_dir(backup_dir)
+        prune_backup_files(backup_dir, pattern="plugins-*.ini", limit=backup_limit)
     if desired:
         if changed:
             path.parent.mkdir(parents=True, exist_ok=True)

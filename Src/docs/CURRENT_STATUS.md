@@ -1,6 +1,6 @@
 # Norm current status
 
-Current package: **Norm 0.54.0d** with **Installer 1.6.10-unified**.
+Current package: **Norm 0.54.0e** with **Installer 1.6.10-unified**.
 
 This file is a current-state snapshot only.
 
@@ -138,7 +138,13 @@ Package validation proves the shipped source/package contract. It does not by it
 ## Optional web-browser plugin
 
 This 0.53.20 package includes `plugins\web_browser` v1.0.0. It exposes real-browser page opening/text extraction, CSS-selected link discovery, bounded crawling, Bing/Bing News result discovery, and file-link download into the Norm workspace. Browser state persists under `Documents\Norm\workspace\web\sessions`. The plugin runs its Playwright/Beautiful Soup/Soup Sieve/Trafilatura worker through the installed Norm virtual environment rather than embedding those libraries into `norm.exe`.
+### Runtime-owned model policy (0.54.0e)
+
+Model context size and agent-persistent instructions are owned by `config/runtime.json`, not by `settings.ini`, `config/norm.json`, or the Ollama Modelfile. N1 and N2 have separate persistent-instruction sets that follow their runtime clients across model switches. Context overflow is routed into bounded oversize decomposition instead of identical retry.
+
 ### Plugin settings registry (0.53.22)
+
+Exact duplicate `plugins.ini` backup states are SHA-256-deduplicated and do not consume the 12-slot retention limit; plugin-setting backups live under `backups/plugins-ini` and legacy `config/backups/plugins-ini` is migrated automatically.
 
 Schema-2 plugins declare non-secret defaults in `plugin.json` under `settings`. `PluginManager.refresh()` materializes/reconciles `config/plugins.ini` on startup and hot-rescan: declared operator values are preserved, missing/invalid values get defaults, and dangling keys/sections are removed after a rotating backup. Secrets stay in the configured external `.env`. Plugin/config/file/SQL/archive backup classes retain at most 12 newest backup sets.
 

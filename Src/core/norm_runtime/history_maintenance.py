@@ -73,7 +73,7 @@ class DeepHistoryMaintainer:
             client=self.client,
         )
 
-    def _condense_plain_with_n1(self, *, prompt: str, source_text: str, mode: str, ideal_chars: int, acceptable_chars: int, num_predict: int, max_attempts: int, response_so_far: str = "", on_partial=None) -> tuple[str, list[dict]]:
+    def _condense_plain_with_n1(self, *, prompt: str, source_text: str, mode: str, ideal_chars: int, acceptable_chars: int, num_predict: int, max_attempts: int, response_so_far: str = "", on_partial=None, max_output_segments: int = 4) -> tuple[str, list[dict]]:
         candidates: list[str] = []
         judgments: list[dict] = []
         current_prompt = prompt
@@ -85,7 +85,7 @@ class DeepHistoryMaintainer:
         )
         for attempt in range(1, max_attempts + 1):
             candidate = self.client.generate_complete_text(
-                current_prompt, think=False, temperature=0.0, num_predict=num_predict, max_segments=2,
+                current_prompt, think=False, temperature=0.0, num_predict=num_predict, max_segments=max_output_segments,
                 response_so_far=resume if attempt == 1 else "", on_partial=on_partial if attempt == 1 else None,
             ).strip()
             if not candidate:
@@ -104,7 +104,7 @@ class DeepHistoryMaintainer:
                     + "\n\nSUBMISSION N1 COULD NOT PROCESS:\n" + candidate
                 )
                 repaired = self.client.generate_complete_text(
-                    cleanup_prompt, think=False, temperature=0.0, num_predict=num_predict, max_segments=2
+                    cleanup_prompt, think=False, temperature=0.0, num_predict=num_predict, max_segments=max_output_segments
                 ).strip()
                 if repaired:
                     candidate = repaired
@@ -1026,6 +1026,7 @@ class DeepHistoryMaintainer:
         batch_target_chars = max(800, int(self.config.get("consolidation_batch_target_chars", 1800)))
         batch_accept_chars = max(batch_target_chars, int(self.config.get("consolidation_batch_accept_chars", 3400)))
         max_attempts = max(1, min(8, int(self.config.get("consolidation_max_attempts", 4))))
+        max_output_segments = max(2, min(8, int(self.config.get("consolidation_max_output_segments", 4))))
         snapshot_target_chars = max(2500, int(self.config.get("consolidation_snapshot_target_chars", 6000)))
         snapshot_accept_chars = max(snapshot_target_chars, int(self.config.get("consolidation_snapshot_accept_chars", max(9000, snapshot_target_chars))))
         lines = [f"[{record['at'].isoformat()}][{record['source']}] {record['text']}" for record in records]
@@ -1063,6 +1064,7 @@ class DeepHistoryMaintainer:
                 prompt=prompt, source_text=chunk, mode="reductive",
                 ideal_chars=batch_target_chars, acceptable_chars=batch_accept_chars,
                 num_predict=900, max_attempts=max_attempts, response_so_far=resume, on_partial=save_batch_partial,
+                max_output_segments=max_output_segments,
             )
             state.setdefault("n1_batch_judgments", {})[str(index)] = judgments
             if len(part) > batch_accept_chars:
@@ -1095,6 +1097,7 @@ class DeepHistoryMaintainer:
             ideal_chars=snapshot_target_chars, acceptable_chars=snapshot_accept_chars,
             num_predict=1800, max_attempts=max_attempts,
             response_so_far=str(state.get("merge_partial") or ""), on_partial=save_merge_partial,
+            max_output_segments=max_output_segments,
         )
         state["n1_merge_judgments"] = merge_judgments
         if len(summary) > snapshot_accept_chars:
