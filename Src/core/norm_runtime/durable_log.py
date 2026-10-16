@@ -1830,7 +1830,7 @@ class PostgresTaskLog:
 
     def finalize_task(self, task_id: str, summary: str, status: str) -> None:
         status = str(status).strip().lower()
-        if status not in {"completed", "failed", "cancelled", "passed_to"}:
+        if status not in {"completed", "failed", "cancelled"}:
             raise ValueError(f"invalid terminal task status: {status}")
         summary = str(summary or "").strip()
         if not summary:
@@ -1902,16 +1902,16 @@ class PostgresTaskLog:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(sql.SQL("SELECT tr.status, EXISTS(SELECT 1 FROM {}.task_summaries ts WHERE ts.task_id=tr.task_id) FROM {}.task_runs tr WHERE tr.task_id=%s").format(sql.Identifier(self.schema), sql.Identifier(self.schema)), (task_id,))
             row = cur.fetchone()
-            return bool(row and str(row[0]) in {"completed", "failed", "cancelled", "passed_to"} and row[1])
+            return bool(row and str(row[0]) in {"completed", "failed", "cancelled"} and row[1])
 
     def terminal_task_ids(self) -> set[str]:
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(sql.SQL("SELECT task_id FROM {}.task_runs WHERE status IN ('completed','failed','cancelled','passed_to')").format(sql.Identifier(self.schema)))
+            cur.execute(sql.SQL("SELECT task_id FROM {}.task_runs WHERE status IN ('completed','failed','cancelled')").format(sql.Identifier(self.schema)))
             return {str(row[0]) for row in cur.fetchall()}
 
     def ensure_terminal_summary(self, task_id: str) -> bool:
         status = self.task_status(task_id)
-        if status not in {"completed", "failed", "cancelled", "passed_to"}:
+        if status not in {"completed", "failed", "cancelled"}:
             return False
         if self.latest_summary(task_id):
             return True
@@ -2085,61 +2085,6 @@ class PostgresTaskLog:
             else: state="satisfied"
             return {"state":state,"task_status":task_status,"step_status":step_status,"task_id":resolved_task_id,"task_uuid":resolved_task_uuid,"node_id":resolved_node_id}
 
-    def terminal_step_records(self, task_id: str, excluded_step_id: str) -> list[dict]:
-        """Read bounded per-step evidence for independent final-phase verification.
-
-        Never read mutable filesystem state or construct one giant task-history prompt.
-        Truncation is explicit so a verifier cannot interpret omissions as support.
-        """
-        with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(sql.SQL("SELECT plan FROM {}.task_runs WHERE task_id=%s").format(
-                sql.Identifier(self.schema)), (task_id,))
-            row = cur.fetchone()
-            if not row or not isinstance(row[0], dict):
-                raise RuntimeError("terminal verification requires durable original task plan")
-            steps = [v for v in row[0].get("steps", []) if isinstance(v, dict)]
-            cur.execute(sql.SQL("SELECT step_id,status,summary,verification FROM {}.task_steps WHERE task_id=%s").format(
-                sql.Identifier(self.schema)), (task_id,))
-            results = {str(sid): (str(status), str(summary or ""), str(verify or ""))
-                for sid,status,summary,verify in cur.fetchall()}
-            selected = [str(v.get("id")) for v in steps
-                if str(v.get("id") or "") not in {
-                    "plan-breakdown","verify-plan","final-verify",str(excluded_step_id)
-                }]
-            if not selected:
-                return []
-            cur.execute(sql.SQL("SELECT step_id,tool,result,deterministic_verification FROM {}.task_evidence WHERE task_id=%s AND step_id=ANY(%s) ORDER BY id").format(
-                sql.Identifier(self.schema)), (task_id, selected))
-            evidence = {sid: [] for sid in selected}
-            clipped = {sid: False for sid in selected}
-            for sid, tool, result, deterministic in cur.fetchall():
-                sid = str(sid)
-                if len(evidence[sid]) >= 12:
-                    clipped[sid] = True
-                    continue
-                blob = json.dumps(result or {}, ensure_ascii=False, default=str)
-                if len(blob) > 1050:
-                    clipped[sid] = True
-                evidence[sid].append({
-                    "tool":str(tool), "result":blob[:1050],
-                    "deterministic_verification":bool(deterministic),
-                })
-        records = []
-        for step in steps:
-            sid = str(step.get("id") or "")
-            if sid not in selected: continue
-            status, summary, _ = results.get(sid, ("pending", "", ""))
-            records.append({
-                "id":sid,"name":str(step.get("name") or sid)[:150],
-                "description":str(step.get("description") or "")[:2500],
-                "verify":str(step.get("verify") or "")[:1000],
-                "status":status,"summary":summary[:4500],
-                "evidence":evidence[sid],
-                "evidence_truncated":clipped[sid] or len(summary)>4500
-                    or len(str(step.get("description") or ""))>2500,
-            })
-        return records
-
     def completed_step_context(self, task_id: str, step_id: str, max_chars: int | None = 24000) -> str:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(sql.SQL("SELECT plan FROM {}.task_runs WHERE task_id=%s").format(sql.Identifier(self.schema)), (task_id,))
@@ -2251,7 +2196,7 @@ class PostgresTaskLog:
     def needs_deep_history_consolidation(self, retention_days: int = 30, interval_days: int = 7) -> bool:
         cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, int(retention_days)))
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(sql.SQL("SELECT EXISTS(SELECT 1 FROM {}.task_runs WHERE status IN ('completed','failed','cancelled','passed_to') AND started_at < %s)").format(
+            cur.execute(sql.SQL("SELECT EXISTS(SELECT 1 FROM {}.task_runs WHERE status IN ('completed','failed','cancelled') AND started_at < %s)").format(
                 sql.Identifier(self.schema)
             ), (cutoff,))
             if not bool(cur.fetchone()[0]):
@@ -2286,7 +2231,7 @@ class PostgresTaskLog:
                            tr.task_kind,tr.parent_task_id,tr.parent_step_id,tr.task_depth,
                            (SELECT ts.summary FROM {}.task_summaries ts WHERE ts.task_id=tr.task_id ORDER BY ts.created_at DESC LIMIT 1)
                     FROM {}.task_runs tr
-                    WHERE tr.status IN ('completed','failed','cancelled','passed_to') AND tr.started_at >= %s
+                    WHERE tr.status IN ('completed','failed','cancelled') AND tr.started_at >= %s
                     ORDER BY tr.started_at ASC LIMIT %s
                 """).format(s, s), (recent_cutoff, max(1, int(limit))))
             elif all_history and unbounded:
@@ -2295,7 +2240,7 @@ class PostgresTaskLog:
                            tr.task_kind,tr.parent_task_id,tr.parent_step_id,tr.task_depth,
                            (SELECT ts.summary FROM {}.task_summaries ts WHERE ts.task_id=tr.task_id ORDER BY ts.created_at DESC LIMIT 1)
                     FROM {}.task_runs tr
-                    WHERE tr.status IN ('completed','failed','cancelled','passed_to')
+                    WHERE tr.status IN ('completed','failed','cancelled')
                     ORDER BY tr.started_at ASC
                 """).format(s, s))
             elif all_history:
@@ -2304,7 +2249,7 @@ class PostgresTaskLog:
                            tr.task_kind,tr.parent_task_id,tr.parent_step_id,tr.task_depth,
                            (SELECT ts.summary FROM {}.task_summaries ts WHERE ts.task_id=tr.task_id ORDER BY ts.created_at DESC LIMIT 1)
                     FROM {}.task_runs tr
-                    WHERE tr.status IN ('completed','failed','cancelled','passed_to')
+                    WHERE tr.status IN ('completed','failed','cancelled')
                     ORDER BY tr.started_at ASC LIMIT %s
                 """).format(s, s), (max(1, int(limit)),))
             else:
@@ -2313,7 +2258,7 @@ class PostgresTaskLog:
                            tr.task_kind,tr.parent_task_id,tr.parent_step_id,tr.task_depth,
                            (SELECT ts.summary FROM {}.task_summaries ts WHERE ts.task_id=tr.task_id ORDER BY ts.created_at DESC LIMIT 1)
                     FROM {}.task_runs tr
-                    WHERE tr.status IN ('completed','failed','cancelled','passed_to') AND tr.started_at < %s
+                    WHERE tr.status IN ('completed','failed','cancelled') AND tr.started_at < %s
                     ORDER BY tr.started_at ASC LIMIT %s
                 """).format(s, s), (cutoff, max(1, int(limit))))
             task_rows = cur.fetchall()
@@ -2393,7 +2338,7 @@ class PostgresTaskLog:
         task_ids = [str(v) for v in dict.fromkeys(task_ids) if str(v or "").strip() and str(v) != root_task_id]
         if not root_task_id or not task_ids:
             return 0
-        if self.task_status(root_task_id) not in {"completed", "failed", "cancelled", "passed_to"}:
+        if self.task_status(root_task_id) not in {"completed", "failed", "cancelled"}:
             raise RuntimeError("refusing to prune descendants of a nonterminal root")
         if not self.terminal_summary_verified(root_task_id):
             raise RuntimeError("refusing to prune descendants before root terminal summary verification")
@@ -2444,7 +2389,7 @@ class PostgresTaskLog:
                 (task_ids,),
             )
             rows = [(str(task_id), str(status or "")) for task_id, status in cur.fetchall()]
-            nonterminal = [task_id for task_id, status in rows if status not in {"completed", "failed", "cancelled", "passed_to"}]
+            nonterminal = [task_id for task_id, status in rows if status not in {"completed", "failed", "cancelled"}]
             if nonterminal:
                 raise RuntimeError(f"refusing destructive prune of nonterminal tasks: {nonterminal[:5]}")
             prepare_task_prune_cur(cur, self.schema, task_ids)

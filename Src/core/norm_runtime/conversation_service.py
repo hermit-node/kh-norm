@@ -233,7 +233,7 @@ class ConversationService:
             status = self.durable.task_status(task_id)
             if status == "completed":
                 return task_id, self.durable.latest_summary(task_id) or "Resumed task completed.", full_context_status()
-            if status in {"failed", "cancelled", "passed_to"}:
+            if status in {"failed", "cancelled"}:
                 return task_id, self.durable.latest_summary(task_id) or f"Resumed task ended {status}.", full_context_status()
             if status == "suppressed":
                 return task_id, "The task was suppressed again before completion.", full_context_status()
@@ -370,7 +370,7 @@ class ConversationService:
         deadline = time.monotonic() + self.wait_timeout_seconds
         while time.monotonic() < deadline:
             status = self.durable.task_status(task_id)
-            if status in {"completed", "failed", "cancelled", "passed_to"}:
+            if status in {"completed", "failed", "cancelled"}:
                 reply = self.durable.latest_summary(task_id)
                 if not reply and hasattr(self.durable, "ensure_terminal_summary"):
                     self.durable.ensure_terminal_summary(task_id)
@@ -1403,13 +1403,8 @@ class ConversationService:
                     "Original user requirements, factuality, and safety always outrank style.\n\n"
                     + voice
                 )
-        # Provenance alone does not route a model call. Formal review belongs to
-        # the actual N1 client (same Ollama model, independent agent policy).
-        target = self.ollama
-        if invoke_target == "n1" and self.n1_gatekeeper is not None:
-            target = self.n1_gatekeeper.client
         try:
-            raw = target.generate(
+            raw = self.ollama.generate(
                 prompt, think=think, num_predict=num_predict, temperature=0.0,
                 response_format=schema, emit_stream=emit_stream,
                 system_context=voice_system,
@@ -1427,11 +1422,11 @@ class ConversationService:
                 kwargs["system_context"] = voice_system
             if "emit_stream" not in message:
                 kwargs["emit_stream"] = emit_stream
-            raw = target.generate(prompt, **kwargs)
+            raw = self.ollama.generate(prompt, **kwargs)
         limit = max(1, int(max_chars))
         if len(raw) > limit:
             raise ValueError(f"structured output exceeded {limit} characters")
-        return target.parse_json(raw)
+        return self.ollama.parse_json(raw)
 
     @staticmethod
     def _normalize_plan(parsed: dict) -> dict:
@@ -1454,12 +1449,6 @@ class ConversationService:
     def _generate_plan(self, original_user_prompt: str, execution_context: str, command_envelope: dict) -> dict:
         prompt = (
             f"PERSISTENT OPERATING PRINCIPLES:\n{self._persistent_instruction_text()}\n\n"
-            "[NORM PLANNING PHASE — PLAN ONLY, DO NOT EXECUTE] "
-            "This is the ONE planning pass for the current user request. Design "
-            "bounded steps for later execution; do not run tools, modify files, "
-            "claim execution results, or turn the plan into a user-facing answer. "
-            "A separate worker execution phase will prosecute each accepted step "
-            "using its own concrete verification criteria and progress record. "
             "Create a concrete execution plan for Norm before any task work begins. "
             "Break substantial work into small observable actions that can each finish within a bounded "
             "model/tool slice. Aim for about 6 actionable steps for substantial work, but use exactly ONE step when the request can be completed as one bounded action. Never manufacture a separate preparation step plus synthesis step for a trivial request. Use more steps only when the work genuinely benefits from decomposition, up to a hard maximum of 25. Preserve every user constraint, especially "
@@ -1483,10 +1472,7 @@ class ConversationService:
             "Independently verify this proposed task plan before execution. Reject only for BLOCKING defects: a dropped or changed "
             "user constraint; unauthorized or unsafe action; a materially contradictory or impossible design; missing concrete verification "
             "for a material output; an action too large for a bounded worker slice; or, for a MULTI-STEP plan, no final synthesis step capable "
-            "of answering the user from prior results. If a plan depends on specific historical labels, dedicated commits, "
-            "or a named data source that has NOT been confirmed to exist, insist on an evidence-based fallback "
-            "(general history, tags, source artifacts, or structural comparison) rather than repeatedly querying the absent label. "
-            "Do NOT reject for advisory style, naming, organization, or merely because a step contains "
+            "of answering the user from prior results. Do NOT reject for advisory style, naming, organization, or merely because a step contains "
             "multiple tightly coupled subcomponents. A multi-part step is an opaque catch-all only when it is vague/generic or hides materially "
             "distinct phases that cannot reasonably complete in one bounded slice. Explicitly named related modules/functions may share one step "
             "when their roles are clear and the verification independently covers them. Redundant mechanisms are not a blocking defect unless they "
@@ -1502,7 +1488,7 @@ class ConversationService:
         for _ in range(2):
             try:
                 parsed = self._structured_generate(
-                    prompt, self._plan_verifier_schema(), num_predict=1600, think=True,
+                    prompt, self._plan_verifier_schema(), num_predict=384, think=False,
                     invoke_source="n2", invoke_target="n1", invocation_kind="plan_submission_for_review"
                 )
                 accepted = parsed.get("accepted")
@@ -1630,12 +1616,7 @@ class ConversationService:
                 + item["description"]
                 + "\n\nVERIFICATION REQUIREMENT:\n"
                 + item["verify"]
-                + "\n\nEXECUTION (NOT PLANNING): This plan and its N1 verification are already complete. "
-                "Actively carry out this exact step and verify its result. The original user's "
-                "request remains authoritative for the overall goal, but is not a fresh "
-                "instruction to plan or restart the project. Preserve completed prior steps; "
-                "do not repeat their work without specific contrary evidence. "
-                "Do only this step. Do not silently absorb later steps. Return a concise durable result for subsequent steps. "
+                + "\n\nDo only this step. Do not silently absorb later steps. Return a concise durable result for subsequent steps. "
                 + ("Because this is the final step, return the direct user-facing answer using prior completed step results." if index == total else "Do not present this intermediate result as the final answer.")
             )
             generated.append(TaskStep(
@@ -2009,7 +1990,7 @@ class ConversationService:
                     else full_context_status()
                 )
                 return task_id, self._limit_human_reply(task_id, reply), merge_resource_status(resource_status, task_resource_status)
-            if status in {"failed", "cancelled", "passed_to"}:
+            if status in {"failed", "cancelled"}:
                 # The task is already durably terminal. Return its durable result to
                 # the synchronous /api/chat owner so DB3 ingress can ACK the original
                 # prompt exactly once. Raising here makes prompt_ingress classify an

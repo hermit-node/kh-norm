@@ -137,33 +137,15 @@ def test_n2_task_and_review_roles_preserve_original_user_provenance():
         assert reviewed["answer"] == first["answer"]
     first_messages, review_messages = worker.client.calls
     for messages in (first_messages, review_messages):
-        # Preserve the exact ORIGINAL user message even on generated steps;
-        # explicit system instructions keep active execution bounded.
         assert [msg["role"] for msg in messages] == ["system", "user"]
         assert messages[1]["content"] == "How's your mother?"
-        assert "EXECUTION PHASE — ACTIVE STEP" in messages[0]["content"]
-        assert "PROSECUTE the CURRENT work_request.instruction" in messages[0]["content"]
         assert "COCKNEY IN BOTH THINKING AND ANSWER" in messages[0]["content"]
         assert "TOOLS:" in messages[0]["content"]
-        assert "Do not redo completed steps" in messages[0]["content"]
+        assert "Do not claim internal follow-up instructions" in messages[0]["content"]
     assert "INTERNAL STEP: decide" in first_messages[0]["content"]
     assert "Do one quick completion review" in review_messages[0]["content"]
     assert "NOT A NEW USER REQUEST" in review_messages[0]["content"]
-    assert review_messages[1] == {"role": "user", "content": "How's your mother?"}
-    with patch.object(PromptWorker, "_runtime_config", return_value={}):
-        assert worker._typed_prompt(job, "information_retrieval").count("How's your mother?") >= 1
-
-
-def test_direct_operator_prompt_keeps_actual_user_role():
-    worker, job, patches = make_worker()
-    job.request_type = "prompt"
-    job.prompt = "How's your mother?"
-    job.metadata["prompt_origin"] = "user_prompt"
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
-        result = worker._run_tool_slice(job, worker._typed_prompt(job, "prompt"), Tools())
-    assert result["answer"] == "Ain't got one, mate."
-    assert [m["role"] for m in worker.client.calls[0]] == ["system", "user"]
-    assert worker.client.calls[0][1]["content"] == "How's your mother?"
+    assert "Do one quick completion review" not in review_messages[1]["content"]
 
 
 def test_retired_injection_removed_from_subsequent_n2_round():

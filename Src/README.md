@@ -1,22 +1,3 @@
-> **0.55.8 continuity r6 source-only:** Preserves the original user request as an Ollama `user` message on generated N2 steps, while explicitly separating planning from **active-step execution** (no re-planning or redoing completed work). Includes all r5 token-budget and Redis/Markdown output-overflow changes. N2 without tools remains at 16k. See `docs/RELEASE_NOTES.md`. This ZIP is not a rebuilt Windows executable.
-
-### 0.55.8 continuity r4 — protect task handoffs (2026-10-09; source-only)
-
-- **Verified earlier steps:** Load PostgreSQL `completed_step_context()` independently of the Redis `working_memory()` JSON envelope. Limit injected PostgreSQL prior-step text to 36,000 characters; preserve the full durable records.
-- **Non-sticky compaction:** A context-headroom distilled checkpoint is used for its immediate resumed slice; the next ordinary yield clears stale compact-only metadata. Legacy headroom markers and explicit manual-failure compact resumes are still supported.
-- **Step scope:** Only direct operator prompt jobs send the original prompt in Ollama's user role. Generated steps, reviewer work, and recovery children retain the original user request inside the typed system work payload for semantic fidelity, without presenting a four-hour-old request as a new user command on every requeue. The current step/verification/continuation is explicitly authoritative for immediate execution.
-- No changes to tool schemas, batching limits, plugin or slash-command wiring, model selection, installer, private code, or database schema. This branch is **not** installed or live-validated. It is built upon the separate 0.55.8 continuity r3 source patch.
-- Regression tests: `tools/test_continuity_handoff_0558_r4.py` and extended provenance-role tests.
-
-### 0.55.8 continuity/supervision update (2026-10-09; source-only, not live-validated)
-
-- Ordinary 16-round step yields now use the existing PostgreSQL context-slice archive and N1 compact continuation handoff, preserving the previous cumulative checkpoint and negative findings across successive slices. The original task stays authoritative and raw execution remains recoverable.
-- Formal plan verification routes through the existing N1 Ollama client (same loaded model, N1 agent policy). N2 still drafts and performs its bounded pre-submission plan check.
-- Repeated identical file/directory reads and equivalent simple `git log` investigations are bounded by N1 per task/step; distinct file offsets and other Git queries remain usable. Repeated tool observations are reported separately from distinct evidence during task-budget reviews.
-- Repeated ordinary step-round yields prompt a bounded N1 stalled-step check. Only a positive substantive decomposition decision invokes the existing oversize-recovery child-task machinery; the default remains simple continuation.
-- **Important diagnostic caveat:** the observed ineffective run used Laguna, whereas restarting Norm returns the canonical `norm` model. Model quality and reset working state were uncontrolled variables. The observed loop does NOT independently prove these orchestrator changes are needed or effective. Run the same task on both models under controlled conditions before attributing causality.
-- Does not change installed configuration, model selection, installer, plug-in files, or compiled StegoSplit. Tests are offline/mock tests, not a live Windows end-to-end validation.
-
 ### 0.55.8 review-retry checkpoint-handoff revision (2026-10-09)
 
 - The N1 step-alignment retry now archives original request, primary task, step acceptance criteria, **unchanged N2-verified candidate**, full observed evidence, job metadata/working context, and previously completed-step progress in the existing PostgreSQL `task_context_slices` store.
