@@ -109,10 +109,12 @@ class VisualCapture:
                   'y':None,'max':0,'stable':0,'start':monotonic(),
                   'url':self.browser.page.url().toString()}
         self.state={'state':'capturing','id':ident,'frames':0,'message':'Locating conversation'}
-        self.browser.showNormal()
-        self.browser.raise_()
-        # Do not force focus onto a different window; Qt must be visible for grab().
-        QTimer.singleShot(300,self._prepare)
+        # Do not change geometry, hide, minimize, reload, or recreate the
+        # logged-in page. Show only if it is currently hidden.
+        if not self.browser.isVisible():
+            self.browser.show()
+            self.browser.raise_()
+        QTimer.singleShot(350,self._prepare)
         return dict(self.state)
 
     def status(self):
@@ -136,18 +138,27 @@ class VisualCapture:
         self.job=None
 
     def _prepare(self):
+        """Rewind to top first, without a risky bottom-jump or page reload.
+
+        QWebEngine may return None when DOM JavaScript is not yet ready; retry
+        boundedly with a visible diagnostic instead of declaring conversation end
+        impossible. No navigation or profile changes on failure.
+        """
         if self.job is None:return
-        def after_bottom(meta):
-            if self.job is None:return
-            if not isinstance(meta,dict) or meta.get('error'):
-                return self._fail((meta or {}).get('error','Unable to find conversation end'))
-            QTimer.singleShot(1050,lambda:self.browser.page.runJavaScript(PREPARE_JS,self._prepared))
-        self.browser.page.runJavaScript(BOTTOM_JS,after_bottom)
+        self.job["prepare_attempts"]=self.job.get("prepare_attempts",0)+1
+        self.browser.page.runJavaScript(PREPARE_JS,self._prepared)
 
     def _prepared(self,data):
         if self.job is None:return
         if not isinstance(data,dict) or data.get('error'):
-            return self._fail((data or {}).get('error','No scroll metadata'))
+            issue=(data or {}).get('error','JavaScript returned no scroll metadata') if isinstance(data,dict) else 'JavaScript returned no scroll metadata'
+            self.job['prepare_last_error']=issue
+            if self.job['prepare_attempts']<9 and not self.cancelled:
+                self.state={'state':'capturing','id':self.job['id'],
+                            'frames':0,'message':f'Waiting for conversation DOM ({self.job["prepare_attempts"]}/9): {issue}'}
+                QTimer.singleShot(1400,self._prepare)
+                return
+            return self._fail(f'Could not locate scroll area after {self.job["prepare_attempts"]} attempts: {issue}; browser remains open')
         if not _chat_url(data.get('url','')) or data.get('url')!=self.job['url']:
             return self._fail('Conversation changed during preparation')
         x,y,w,h=(int(data.get(v,0)) for v in ('x','y','w','h'))
@@ -184,8 +195,8 @@ class VisualCapture:
             j['y']=0
             j['max']=float(meta['max'])
             QTimer.singleShot(350,self._snap)
-        elif j['top_checks']>=16:
-            self._fail('Top of conversation never stabilized; no partial PDF published')
+        elif j['top_checks']>=90:
+            self._fail('Top of conversation did not stabilize after repeated attempts; window and login preserved; no PDF replaced')
         else:
             QTimer.singleShot(700,self._check_top)
 

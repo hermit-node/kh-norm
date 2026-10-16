@@ -1,4 +1,4 @@
-"""Start one persistent Qt workspace in the interactive Windows desktop."""
+"""Launch the existing native C++ Norm workspace (one-instance Win32 mutex)."""
 from __future__ import annotations
 import ctypes,os,subprocess,sys,time,configparser
 from ctypes import wintypes
@@ -23,21 +23,18 @@ def main():
         result=subprocess.run([str(python),"-B",str(console_launcher)],
                               cwd=str(ROOT),timeout=90,check=False)
         return result.returncode
-    if not APP.is_file():raise FileNotFoundError(APP)
+    native=ROOT/"tools/workspace/native/NormWorkspace.exe"
+    if not native.is_file():
+        raise FileNotFoundError("Native workspace build is missing: "+str(native))
     if not interactive():
         print("No interactive desktop: workspace startup skipped.")
         return 0
-    pythonw=ROOT/".venv/Scripts/pythonw.exe"
-    python=pythonw if pythonw.is_file() else ROOT/".venv/Scripts/python.exe"
-    if not python.exists():raise FileNotFoundError(python)
-    logs=ROOT/"logs";logs.mkdir(parents=True,exist_ok=True)
-    with (logs/"workspace.log").open("ab") as output:
-        proc=subprocess.Popen([str(python),"-B",str(APP)],
-             cwd=str(ROOT),stdin=subprocess.DEVNULL,stdout=output,stderr=output,
-             creationflags=(0 if python==pythonw else getattr(subprocess,"CREATE_NO_WINDOW",0)))
+    proc=subprocess.Popen([str(native),"--root",str(ROOT)],
+        cwd=str(ROOT),stdin=subprocess.DEVNULL,
+        creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
     time.sleep(1.0)
     if proc.poll() not in (None,0):
-        raise RuntimeError(f"Workspace failed, exit {proc.returncode}; see logs/workspace.log")
+        raise RuntimeError(f"Native workspace failed, exit {proc.returncode}; check native/NormWorkspace.log")
     print("Workspace open or attached; existing instance prevents duplicate UI.")
     return 0
 if __name__=="__main__":

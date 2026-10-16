@@ -1,6 +1,17 @@
 @echo off
 setlocal EnableExtensions
 set "ROOT=%~dp0"
+REM Normal launch opens native C++ workspace FIRST; it boots the
+REM service/roles itself. --service-only remains the nonrecursive backend path.
+if /I "%~1"=="--service-only" goto :backend_boot
+if exist "%ROOT%tools\workspace\native\NormWorkspace.exe" (
+    start "" "%ROOT%tools\workspace\native\NormWorkspace.exe" --root "%ROOT:~0,-1%"
+    exit /b %ERRORLEVEL%
+)
+echo ERROR: Native workspace missing; refusing silent fallback to Qt.
+exit /b 2
+
+:backend_boot
 set "NORM_EXE=%ROOT%core\norm.exe"
 set "PY=%ROOT%.venv\Scripts\python.exe"
 set "SETTINGS=%ROOT%config\settings.ini"

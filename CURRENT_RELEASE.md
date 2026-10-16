@@ -1,6 +1,6 @@
-# Norm 0.55.10r1 - release
+# Norm 0.55.10r2 - release
 
-Original archive SHA-256: a04552cab2a54f9c94bfaa2fa24f02dde8d3b1521b192c461cfec366bd45acb6
+Original archive SHA-256: c8d8cff10012e17b827dfe61d052aee7715e6336a009b875522e52d1532c7f52
 
 Historical assessment: source-inventory-verified
 

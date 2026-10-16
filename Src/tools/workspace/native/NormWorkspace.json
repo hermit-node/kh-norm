@@ -1,0 +1,18 @@
+{
+  "schema": 3,
+  "width": 1480,
+  "height": 900,
+  "runtime_font_face": "Cascadia Mono",
+  "runtime_font_size": 13,
+  "runtime_font_weight": "normal",
+  "replies_font_face": "Consolas",
+  "replies_font_size": 14,
+  "replies_font_weight": "medium",
+  "prompt_font_face": "Cascadia Code",
+  "prompt_font_size": 16,
+  "prompt_font_weight": "normal",
+  "ui_font_face": "Segoe UI",
+  "ui_font_size": 11,
+  "ui_font_weight": "normal",
+  "profiled_launch": 1
+}

@@ -18,7 +18,7 @@ def signal_operator_consoles(root: Path) -> Path:
         "created_at":datetime.now(timezone.utc).isoformat(),
         "other_delay_seconds":1,"prompt_delay_seconds":2,
     }
-    path.write_text(json.dumps(payload,indent=2)+"\\n",encoding="utf8")
+    path.write_text(json.dumps(payload,indent=2)+"\n",encoding="utf8")
     return path
 
 

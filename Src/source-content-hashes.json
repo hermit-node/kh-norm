@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "release": "0.55.10r1",
-  "baseline": "Norm-0.55.10-WORKSPACE-STAGING",
-  "file_count": 364,
+  "release": "0.55.10r2",
+  "baseline": "Norm-0.55.10r1-SHUTDOWN-STAGING",
+  "file_count": 371,
   "hash_algorithm": "sha256",
   "files": {
     ".gitattributes": {
@@ -22,12 +22,12 @@
       "sha256": "e774f5ea91a76af90b32d07d967a17a1e2741a3e99c67ee944536cb548e6a432"
     },
     "README.md": {
-      "bytes": 27822,
-      "sha256": "2e619c8f9dc9631b42eacabf8a08aee74271ca7abc42034004bbd3c5227c96b2"
+      "bytes": 28707,
+      "sha256": "0d84f576697d7968706ed5a40c4e686219d2f7137da6d7a3b49384cc3f1bfc94"
     },
     "Run-Norm.bat": {
-      "bytes": 4087,
-      "sha256": "e316b9c341f2881d3be1114a571764442c0158ce8bf372d4c7dabba7e6f39c5a"
+      "bytes": 4558,
+      "sha256": "3c94b4f2901a94be583c5fc40628b87451ed5c22299a3617fa0e7864de766440"
     },
     "SOURCE_PACKAGE.md": {
       "bytes": 22501,
@@ -258,8 +258,8 @@
       "sha256": "208e88aa6458c477fa44d23cae4006e01f79b58c8ba738c83a268b47f7edb580"
     },
     "core/norm_runtime/shutdown_auxiliary.py": {
-      "bytes": 3472,
-      "sha256": "116ae76fdbdcdff4ec3719cbabbaa1afbf259ebe4bd3e0ef3c999afc3ccdc55f"
+      "bytes": 3471,
+      "sha256": "aa3bfcba3ca2e80733035f4242be6d747b97cd7356af26d878d9cd5bd959876c"
     },
     "core/norm_runtime/shutdown_snapshot.py": {
       "bytes": 6323,
@@ -322,8 +322,8 @@
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
     },
     "docs/RELEASE_NOTES.md": {
-      "bytes": 147175,
-      "sha256": "764f4fdb69d50ee77f66f99a8fb5a8fb47f32eeee40404fdbe45f1d1af05336a"
+      "bytes": 149971,
+      "sha256": "218257ab4c28d8897da04e4d79c141cc3b7c247b22a646129bcbdb4e729d47ff"
     },
     "docs/SHARED_BROWSER.md": {
       "bytes": 6642,
@@ -386,8 +386,8 @@
       "sha256": "814cf6e096ac167f56bbb47c98287818949ec13c65843574b3a733698c91f982"
     },
     "package-manifest.json": {
-      "bytes": 35295,
-      "sha256": "9050622cf52dada87a61f80aa9af0bef2da821bb436dbc2899c280d7e658ee67"
+      "bytes": 35876,
+      "sha256": "b6b66b1d0e62de2b6d98af2fb89fdf0700a75877552c15df4e292810781236c5"
     },
     "plugins/README.md": {
       "bytes": 721,
@@ -1078,16 +1078,16 @@
       "sha256": "4fdb5ecb1625eecff505b8580db3a6b6302dd625f77aea5be5a5a686c5a1a2fc"
     },
     "tools/shared_browser/app.py": {
-      "bytes": 18457,
-      "sha256": "bedfa800b1cb060c2c598de5e4f28b22878b145e5efe515f87493b3dd6b0b133"
+      "bytes": 19051,
+      "sha256": "a6c50b603f57b05095408cc981a3a65659567ec3673dd7eab698926a6e755a2f"
     },
     "tools/shared_browser/speaker_pdf.py": {
       "bytes": 6202,
       "sha256": "02bf72a1e135711c9a40f198d0c5fd77e3caba462c84779bb315024cc7d28e60"
     },
     "tools/shared_browser/visual_capture.py": {
-      "bytes": 12653,
-      "sha256": "b4d505b6049e07b0fe77eedfdde0e2250fbe1f864aba2a9758fa99f3bf84f56e"
+      "bytes": 13462,
+      "sha256": "c770cbfac99d274b95e65e0ba44a7220fb2275188224c9c8c6f14e3709584391"
     },
     "tools/shared_browser/visual_pdf_worker.py": {
       "bytes": 6085,
@@ -1118,8 +1118,8 @@
       "sha256": "0664995174a3a01d1bab7911e52d0a207c92cba806fc13443768c5ab4b07bdb3"
     },
     "tools/start_workspace.py": {
-      "bytes": 2370,
-      "sha256": "bb8399ad80a88de5e8aaeb8c946c6e1c57749e49d3a97c1be442a6ab13d1b3c4"
+      "bytes": 2146,
+      "sha256": "a270cc692ae3c3eb54910efb20c05cfed0f16e0ced204d5be557e52dac4ae66e"
     },
     "tools/test_archive_adapter.py": {
       "bytes": 2071,
@@ -1264,6 +1264,10 @@
     "tools/test_nabler.py": {
       "bytes": 5014,
       "sha256": "a6d69cc6c224af486539f8dd3e07838e4002a9e5f50acbc4590cc9ab51ecb8d2"
+    },
+    "tools/test_native_boot_visual_r2.py": {
+      "bytes": 3962,
+      "sha256": "6a2bf2ea585feead40630a078f8938f1fb871055586138fa093f4ab6b777ce0d"
     },
     "tools/test_norm_shutdown_r9.py": {
       "bytes": 1925,
@@ -1452,6 +1456,30 @@
     "tools/workspace/font_profiles.py": {
       "bytes": 8333,
       "sha256": "c0ff9718a55afb3afffd579a9431ff5fc5eaae7ad4118651a185aca4e15396f7"
+    },
+    "tools/workspace/native/Build.ps1": {
+      "bytes": 1750,
+      "sha256": "eca82bdabd4047e23fb6b8cc962a908886ab721644f50afdc4965830bd9ba1a9"
+    },
+    "tools/workspace/native/NormWorkspace.cpp": {
+      "bytes": 39763,
+      "sha256": "eea7564aca8096d97ecde502f2df41c7253c0792221224c2e51b01dfd675aae5"
+    },
+    "tools/workspace/native/NormWorkspace.exe": {
+      "bytes": 382976,
+      "sha256": "09acc48e02d68cb57372c54952bc6dab8a9483c07208ca61de7c66e64ad38d3f"
+    },
+    "tools/workspace/native/NormWorkspace.json": {
+      "bytes": 456,
+      "sha256": "7d13cad727d320a26777503057673413f0fd9f1f00f75068be06a4498e0d3a4c"
+    },
+    "tools/workspace/native/README.md": {
+      "bytes": 932,
+      "sha256": "020da55b4020988c3645ceff9267d5f2e1c27562525263b9e1ef00b35f88577e"
+    },
+    "tools/workspace/native/start_native_roles.py": {
+      "bytes": 2904,
+      "sha256": "63eea3dd268422adb72d8d9f956830055d4a176c262bd776cc5d43eb5b6ff882"
     },
     "tools/workspace/start_roles.py": {
       "bytes": 1236,

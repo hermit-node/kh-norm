@@ -1,3 +1,17 @@
+## Norm 0.55.10r2 — original native C++ workspace as one-click Norm frontend (2026-10-12)
+
+- Baseline: the fully verified 0.55.10r1 shutdown/source release. No active installation or browser account/profile was modified.
+- Reused, extended and compiled the ORIGINAL N_Workspace/NormWorkspace-fonts-v3/src/NormWorkspace.cpp using Microsoft C++ Build Tools. Its GDI/Win32 rendering, drag, resize, pane ownership, window clipping and focus code remain native; not a PySide6 recreation.
+- Run-Norm.bat NORMAL start opens the native C++ workspace immediately. That window invokes start_native_roles.py, synchronizes its explicitly chosen fonts into the existing [workspace] settings and calls the CURRENT start_roles.py, which runs Run-Norm.bat --service-only (nonrecursive) and attaches/creates only missing operator roles.
+- Run-Norm.bat --service-only retains the backend path, with existing startup locks/health checks and exact owner detection. The native C++ app can also be started directly with --root C:\Norm. Duplicate native workspace instances are mutex guarded.
+- On the FIRST native launch, role and UI fonts are seeded from existing Norm settings.ini before the new user preferences file is written; existing customized fonts are not silently reset.
+- Native Fonts menu uses the Windows common ChooseFont dialog, with separate Runtime, Replies, Prompt, and UI selectors. UI changes apply immediately; Windows Terminal font profiles apply to new sessions only. Native layout/fonts live under user-scope %LOCALAPPDATA%/Norm/workspace, surviving upgrades; never overwrite WT global settings.json.
+- Native Quit Norm starts the existing safe_shutdown_norm.py, waits for its verified exit code, and only closes the container on success. BAT/service normal exit signals close the workspace without initiating another shutdown. Reversible deletion trash never purged by startup/quit.
+- Corrected normal-service-exit signal file JSON (real final newline, not literal backslash-n) for Qt fallback/external shutdown consumers.
+- Visual PDF: removed the pre-capture jump-to-bottom responsible for an ambiguous “Unable to find conversation end” failure; starts at top, retries temporarily unavailable DOM readings and waits longer for lazy-loaded content. During capture, browser size/focus is not forcibly reset, failed capture leaves logged-in page open, and remote hide is refused during human control or active capture.
+- Visual PDF user-site integration is NOT certified: only offline code/retry and synthetic multi-page PDF stitching were verified. No live ChatGPT login, browser profile, Chromium cache, or running process was touched for testing.
+- Preserved eleven user-increased conversation_service.py num_predict budgets without reducing them. max_chars checks remain unchanged.
+
 ## Norm 0.55.10r1 — targeted shutdown & Windows Terminal corrections (2026-10-12)
 
 - Baseline: installed 0.55.10 workspace source; no changes to live C:\Norm.

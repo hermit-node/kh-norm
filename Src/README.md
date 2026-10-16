@@ -1,3 +1,11 @@
+## Native one-click Norm workspace (0.55.10r2)
+
+Normal Run-Norm.bat now starts the native Win32/C++ workspace immediately.
+The workspace launches the existing Norm backend/roles in the background and attaches three native terminal windows. Run-Norm.bat --service-only remains the nonrecursive backend startup.
+The native Fonts button uses Windows font selection; changes to terminal fonts take effect on new operator windows. Quit Norm uses verified shutdown and preserves the soft-delete bin. Native preferences persist in %LOCALAPPDATA%/Norm/workspace/NormWorkspace-Native.json.
+Use tools/workspace/native/NormWorkspace.exe --root C:\Norm to start directly. The previous PySide6 UI remains in source for rollback only.
+Visual PDF was hardened to preserve the browser session and avoid the fragile bottom-first scan; the live ChatGPT conversation export still needs user validation.
+
 # Norm 0.55.9r12 - Shared browser visibility and control
 
 This revised r11 also fixes the Windows Desktop GUI helper PowerShell

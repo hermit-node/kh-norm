@@ -150,7 +150,15 @@ class Browser(QMainWindow):
         elif result['state']=='failed':
             self.label.setText("Visual PDF failed: "+result['error'])
     def closeEvent(self,event):
-        event.ignore();self.hide()
+        # Closing the browser during visual PDF capture must not silently hide
+        # the logged-in session or strand its Qt screenshot work.
+        if self.visual.job is not None:
+            event.ignore()
+            self.label.setText("Visual PDF is still running. Cancel PDF before hiding this window.")
+            return
+        event.ignore()
+        self.hide()  # Explicit user close means hide, never delete browser profile.
+
     @staticmethod
     def done(job,result=None,error=""):
         job["result"]=result if result is not None else {}
@@ -187,6 +195,8 @@ class Browser(QMainWindow):
                 self.show();self.raise_();self.activateWindow()
                 self.done(job,{"visible":self.isVisible(),"manual_control":self.manual})
             elif act=="hide":
+                if self.manual or self.visual.job is not None:
+                    raise ValueError("Window stays visible during manual control or Visual PDF; only the user may hide it.")
                 self.hide()
                 self.done(job,{"visible":self.isVisible(),"manual_control":self.manual})
             elif act=="take_control":
