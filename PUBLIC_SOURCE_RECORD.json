@@ -1,14 +1,12 @@
 {
-  "version": "0.55.9r8",
+  "version": "0.55.9r9",
   "variant": "release",
-  "tag": "v0.55.9r8",
-  "source_archive_sha256": "4d59f2b519dff60c2aa25ade9b00d4c4680e2c8b949e1036de76328cc1a3d78a",
-  "source_archive": "0.55.9r8--release--4d59f2b519df.zip",
-  "quality": "external-sha-verified-internal-inventory-inconsistent",
-  "known_issues": [
-    "Embedded source-content-hashes.json is stale/inconsistent. External CRC and SHA-256 verified but internal inventory has not been validated."
-  ],
-  "published_source_files": 278,
+  "tag": "v0.55.9r9",
+  "source_archive_sha256": "11d87b145fc77ef6b5161e7a3d4a7c7d81b1b3c5dc4ee8a9f5801399c23f6c8d",
+  "source_archive": "0.55.9r9--release--11d87b145fc7.zip",
+  "quality": "source-inventory-verified",
+  "known_issues": [],
+  "published_source_files": 292,
   "omitted_paths": [
     "config/plugins.ini",
     "config/settings.ini",

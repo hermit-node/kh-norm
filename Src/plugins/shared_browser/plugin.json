@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "name": "Norm Shared Browser",
+  "version": "0.1.0",
+  "date": "2026-10-11",
+  "entrypoint": "src/main.py",
+  "description": "Persistent hidden/showable Qt Chromium, DOM, BeautifulSoup/SoupSieve, chunked ChatGPT JSONL and searchable PDF.",
+  "capabilities": [
+    "human/Norm shared Chromium session",
+    "DOM selectors",
+    "conversation archive",
+    "PDF"
+  ],
+  "settings": {
+    "shared_browser": {
+      "enabled": true
+    }
+  },
+  "sha256": "e581c8b4b247fd8c40c70a0f973b71725b79efc5ae2583a21cb2c3ba8b663216"
+}

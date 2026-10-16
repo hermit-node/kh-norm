@@ -1,3 +1,15 @@
+## Norm 0.55.9r9 - Shared Chromium browser and Celery worker lifecycle
+
+- Adds Norm Shared Browser as an optional, human-revealable PySide6 QtWebEngine window running in the interactive Windows session. Normal mode hidden; showing browser gives human input exclusive control until Return Control to Norm. Cookies, profile, and cache persist across show/hide.
+- PySide6 WebEngine and ReportLab added to pinned installer requirements for Norm-local .venv (the large temporary source-staging vendor directory is excluded from portable source and install kits).
+- Tested actual Qt DOM extraction without UI clicking. Browser RPC binds only 127.0.0.1:18767 and requires a random per-install token from state/shared_browser_token; never ship this token or the browser profile in source ZIP.
+- Qt Chromium HTTP cache capped at 2,147,483,647 bytes, its supported 32-bit maximum in this build; persistent 32 GiB *archive budget* and requested 12 GiB JS heap ceiling. No guarantee against unbounded DOM crashes; capture remains incremental.
+- Thirteen N1-gated plugin commands provide page open/status, show/hide/release, CSS DOM and SoupSieve reads, DOM click/type/scroll, message batches, incremental SQLite-indexed JSONL capture and text-searchable PDF generation. Captures only currently loaded messages and explicitly DOES NOT claim entire conversation completeness.
+- Existing Playwright web_browser and pywinauto/MSS desktop_gui plugins remain intact. Tested Playwright 1.63.0 against QtWebEngine's CDP: incompatible (Browser.setDownloadBehavior unsupported). Playwright cannot reliably control the same QtWebEngine tab; use Qt DOM APIs for that tab instead.
+- start_async_workers.py launches ONLY Norm-local .venv/Scripts; celery_tool_worker.py refuses another interpreter and closes its own PostgreSQL connection pools on shutdown. Service shutdown inventories its own Celery processes rather than trusting stale Redis heartbeat keys, gracefully requests exit, and stops only verified survivors.
+- Safe-Shutdown-Norm.bat now waits for service exit (five-minute default) and verifies owned worker cleanup; it refuses to force-kill a still-running Norm task. Main finally closes BOTH psycopg_pool logical connections, even following startup errors. All three operator consoles receive the normal exit signal; the optional GUI and shared browser also stop. A Norm-owned Ollama server exits, but an externally managed Ollama is left alone.
+- Inherits r8 N1-directed adaptive async waits and r7 parent-side Redis reconstruction. No live install by source construction.
+
 ## Norm 0.55.9r8 - N1-adaptive Celery result checks
 
 - N1 still decides whether to return fresh cached evidence or dispatch a tool. Celery remains only an executor. A completed result (including ok=false) runs through N1.after_tool before N2 sees it.

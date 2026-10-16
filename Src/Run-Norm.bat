@@ -105,6 +105,9 @@ if exist "%ROOT%tools\start_async_workers.py" (
 if exist "%ROOT%tools\start_desktop_gui.py" (
   "%PY%" -B "%ROOT%tools\start_desktop_gui.py"
 )
+if exist "%ROOT%tools\\start_shared_browser.py" (
+  "%PY%" -B "%ROOT%tools\\start_shared_browser.py"
+)
 echo Norm is healthy at %CHAT_HEALTH%
 if /I "%~1"=="--service-only" exit /b 0
 

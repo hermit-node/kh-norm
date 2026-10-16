@@ -224,5 +224,14 @@ class PostgresPool:
             cls._conninfo = {}
             cls._config_key = None
             cls._settings = {}
+        errors = []
         for pool in pools:
-            pool.close(timeout=5.0)
+            try:
+                pool.close(timeout=5.0)
+            except Exception as exc:
+                # A failure in the 'norm' pool must not strand the separate
+                errors.append(exc)
+        if errors:
+            raise RuntimeError(
+                f"{len(errors)} of {len(pools)} PostgreSQL pools failed to close"
+            ) from errors[0]

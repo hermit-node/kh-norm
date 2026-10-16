@@ -1281,6 +1281,14 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             except KeyboardInterrupt:
                 logging.warning("Interrupted while stopping prompt worker; continuing resource cleanup")
 
+        # Only after the N2 checkpoint and stop is completed: release the
+        # Celery helpers belonging to THIS runtime, not arbitrary Python apps.
+        try:
+            from norm_runtime.celery_shutdown import stop_owned_celery_workers
+            stop_owned_celery_workers(root)
+        except Exception:
+            logging.exception("Could not stop Norm-owned Celery workers during shutdown")
+
         if stop_all_requested.is_set():
             mode = "stop-all-now" if stop_all_now.is_set() else "stop-all-after-step"
             if live is not None and durable is not None and prompt_queue is not None:
@@ -1296,6 +1304,15 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         elif graceful_exit and startup_completed and not shutdown_now.is_set():
             cleared = clear_runtime_redis(root)
             logging.info("Graceful shutdown purged deletion queue and cleared Redis: %s", cleared)
+
+        # Ordinary /shutdown also closes an Ollama instance that THIS Norm
+        # process launched. Never shut down another independently managed
+        # Ollama service merely because Norm's control API was stopped.
+        if ollama_process is not None and not stop_all_requested.is_set():
+            try:
+                request_ollama_shutdown()
+            except Exception:
+                logging.exception("Norm-owned Ollama shutdown failed")
 
         if chat_server is not None:
             try:
@@ -1322,11 +1339,23 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             except Exception:
                 pass
 
-        if durable is not None:
-            try:
-                durable.pool.close()
-            except Exception:
-                logging.exception("PostgreSQL pool shutdown failed")
+        # Close the *process-global* psycopg_pool entries even if durable
+        # construction failed midway. Both approved connections (norm/stocks)
+        # share this pool and close() is safe to call more than once.
+        try:
+            from runtime_bootstrap import close_postgres_pool
+            close_postgres_pool(root)
+            logging.info("Norm main process PostgreSQL pools closed (norm/stocks)")
+        except Exception:
+            logging.exception("Norm main process PostgreSQL pool shutdown failed")
+
+        # Close the three operator windows and optional desktop/browser bridges
+        # after N2, HTTP transports and PostgreSQL cleanup are complete.
+        try:
+            from norm_runtime.shutdown_auxiliary import stop_owned_auxiliaries
+            stop_owned_auxiliaries(root)
+        except Exception:
+            logging.exception("Norm auxiliary UI shutdown failed")
 
         if startup_completed or graceful_exit:
             logging.info("Norm coordinator stopped normally")

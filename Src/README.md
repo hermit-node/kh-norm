@@ -1,3 +1,34 @@
+# Norm 0.55.9r9 - Shared Browser + Norm-local Celery workers
+
+r9 includes the r8 asynchronous N1/Celery check improvements and adds a
+**working Qt WebEngine shared browser prototype**. Start it in your logged-in
+Windows session from tools/shared_browser/Start Hidden Browser.cmd, or open it
+visibly using Launch Browser.cmd. Norm exposes N1-approved browser tools to
+show it for your login/input, read DOM/HTML with CSS and BeautifulSoup/
+SoupSieve, and export loaded conversation turns to JSONL and searchable PDF.
+The page and login remain the same session when hidden/shown.
+
+The browser requests a 12 GiB JS heap ceiling, supports the largest Qt
+Chromium disk HTTP cache accepted by this build (about 2 GiB), and budgets
+32 GiB for persistent conversation archives. Render only needed content;
+extra memory cannot guarantee very long chats won't crash.
+
+Playwright remains in the separate existing web_browser plugin; direct
+Playwright-to-QtWebEngine CDP is INCOMPATIBLE with this Chromium build.
+Qt's own JavaScript/DOM bridge works and was tested. Whole-conversation
+completeness isn't yet guaranteed, and the PDF result clearly says so.
+
+r9 complete shutdown: Safe-Shutdown-Norm.bat now waits until norm.exe
+exits, ensures Norm-owned Celery processes are closed, releases the main
+and worker psycopg_pool connections, signals the three operator consoles,
+and stops the optional browser/GUI bridges. Ordinary shutdown closes a
+Norm-owned Ollama server but does not terminate an unrelated Ollama instance.
+The BAT refuses to force-kill a service still performing work.
+
+Celery now validates it uses the Norm installation's own .venv and stops
+Norm-owned workers when the service exits after N2 checkpointing. See
+docs/SHARED_BROWSER.md and docs/RELEASE_NOTES.md.
+
 # Norm 0.55.9r8 - separate asynchronous tool queue and adaptive N1 completion checks
 
 N1-approved Celery informational tools now use Redis-delayed checks at 30s,

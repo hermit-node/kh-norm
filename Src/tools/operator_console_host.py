@@ -109,9 +109,15 @@ def main() -> int:
     while proc.poll() is None:
         if signal.is_file():
             shutdown_seen = True
-            # Norm Prompt owns the emergency-stop helper, so allow it to finish
-            # printing/verifying the SOS result. Runtime/Replies can stop now.
-            if not is_prompt:
+            # Norm Prompt owns the emergency-stop helper. Keep its existing
+            # emergency SOS behavior. During an ordinary completed service
+            # shutdown, ALL three consoles should exit, including Prompt.
+            reason = ""
+            try:
+                reason = str(json.loads(signal.read_text("utf8")).get("reason") or "")
+            except Exception:
+                pass
+            if reason == "normal-service-exit" or not is_prompt:
                 _terminate_helper(proc)
                 break
         time.sleep(0.1)

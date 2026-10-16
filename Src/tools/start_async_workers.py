@@ -20,6 +20,8 @@ def main():
     pythonw = root / ".venv" / "Scripts" / "pythonw.exe"
     python = root / ".venv" / "Scripts" / "python.exe"
     py = pythonw if pythonw.is_file() else python
+    if not py.is_file():
+        raise FileNotFoundError(f"Norm-local Celery interpreter missing: {python}")
     worker=root/"tools"/"celery_tool_worker.py"
     logs=root/"logs"
     logs.mkdir(parents=True,exist_ok=True)
@@ -32,7 +34,9 @@ def main():
                 # combine DETACHED_PROCESS and CREATE_NO_WINDOW flags.
                 creationflags=(0 if py == pythonw else
                                getattr(subprocess,"CREATE_NO_WINDOW",0)),
-                env={**os.environ,"NORM_ROOT":str(root)})
+                env={**os.environ,"NORM_ROOT":str(root),
+                     "VIRTUAL_ENV":str(root/".venv"),
+                     "PATH":str(root/".venv"/"Scripts")+os.pathsep+os.environ.get("PATH","")})
     deadline=time.monotonic()+15
     while time.monotonic()<deadline:
         count=sum(1 for _ in r.scan_iter(match=prefix,count=50))

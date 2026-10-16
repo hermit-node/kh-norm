@@ -66,4 +66,4 @@ pywinauto==0.6.9
 mss==10.1.0
 pywin32==312
 comtypes==1.4.17
-six==1.17.0
+six==1.17.0\nPySide6==6.12.0\nreportlab==4.4.4\n
