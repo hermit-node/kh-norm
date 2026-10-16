@@ -1,11 +1,3 @@
-## 0.55.3 clean compiled release - October 8, 2026
-
-- StegoSplit Message 0.4.3, Auth 0.1.0 and Key 0.2.0a1 algorithms compiled as CPython 3.14 Windows x64 native .pyd modules; entrypoint adapters remain readable.
-- Shared V3 backend stored only in stegosplit_message; stegosplit_auth explicitly imports that plugin. No duplicated V3 engine.
-- Recomputed exact plugin content SHA-256 values; restored installer 1.6.12-compatible manifest/build script and updated per-plugin Norm README and user-facing /help text.
-- No private implementation Python, build object files, generated code, runtime secrets, master/issued credential PNGs, database, logs or state in distribution.
-- Custom image authorization is NOT an OpenSSH integration; no network upload handler is bundled.
-
 ## 0.55.3 compiled portable-source packaging — 2026-10-08
 
 - Installer 1.6.12-compatible portable-source manifest and build script retained.

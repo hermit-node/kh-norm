@@ -1,10 +1,6 @@
-## Norm 0.55.3 clean compiled portable source
-
-Compatible with Norm Installer 1.6.12, Windows Python 3.14 x64. Norm core is portable Python source that the installer compiles into norm.exe. Proprietary StegoSplit internals are precompiled native .pyd modules, accessed through readable plugin src/main.py adapters. StegoSplit Auth reuses Message's native V3 modules instead of duplicating them. Each plugin includes a developer README.md and a user-facing help.txt available with /help stegosplit-message, /help stegosplit-auth or /help stegosplit-key. Master and credential images are NEVER distributed in this package. Filename-derived passwords and hidden PNG file selection are convenience/obscurity only. Native SSH or a network-facing authentication endpoint are NOT provided.
-
 ## Norm 0.55.3 — validated compiled StegoSplit edition
 
-Norm retains portable core Python source and an installer-owned executable build. StegoSplit Message 0.4.3, Auth 0.1.0, and Key 0.2.0a1 ship compiled algorithms and thin public tool adapters. The plugin READMEs describe their endpoints; the plugin help.txt files describe user actions. No private StegoSplit algorithm Python code is included. Full installer validation and compiled smoke tests passed; no full live install or SSH integration was performed.
+Norm retains portable core Python source and a standard build script. StegoSplit Message 0.4.3, Auth 0.1.0, and Key 0.2.0a1 ship compiled algorithms and thin public tool adapters. The plugin READMEs describe their endpoints; the plugin help.txt files describe user actions. No private StegoSplit algorithm Python code is included. Full installer validation and compiled smoke tests passed; no full live install or SSH integration was performed.
 
 # Norm 0.55.3 — Windows compiled distribution
 
