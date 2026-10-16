@@ -1175,3 +1175,8 @@ Norm was already under active development before formal `0.51.x` release naming.
 
 ## 0.55.10r10 terminal-only launcher restoration
 Restore Run-Norm-Terminals.bat for the three independent operator terminals. The norm-ssh.ps1 startup menu launches that BAT instead of the Qt Focus default. The r9 prompt queue, Celery, N1/N2, Redis, memory, and GUI code remain unchanged.
+
+
+## 0.55.10r10a: heal missing terminals with healthy Norm service
+
+The norm-ssh.ps1 checks operator terminal process inventory after confirming the Norm backend is healthy, starts only missing Runtime/Replies/Prompt windows, and exposes a T menu action to recheck later. No backend restart or Qt Focus startup is required. Terminal identity/locking/reuse remain implemented by the unchanged tools/start_operator_consoles.py. No changes to N1/N2, Redis/Celery, memory, Stego, or visual capture.

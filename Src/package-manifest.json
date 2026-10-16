@@ -1,7 +1,7 @@
 {
   "package_schema": 1,
   "name": "Norm",
-  "version": "0.55.10r10-terminal-launcher",
+  "version": "0.55.10r10a-terminal-recovery",
   "package_type": "portable-source",
   "source_dir": "core",
   "entrypoint": "core/norm_main.py",
@@ -473,7 +473,7 @@
     "policy": "retain full generated original and submit shortest complete summary; no bypass of N1/N2 verification",
     "normal_output_child_tasks": "not included; deferred"
   },
-  "release_revision": "r10-standalone-terminal-20261014",
+  "release_revision": "r10a-healthy-terminal-recovery-20261014",
   "celery_tool_transport": {
     "transport": "Celery",
     "enabled_setting": "config/settings.ini:[celery].enabled",
@@ -711,5 +711,11 @@
     "ps1": "norm-ssh.ps1 startup menu",
     "combined_workspace": "excluded from terminal-only route",
     "prompt_redis_celery_n1_n2_memory": "identical to r9"
+  },
+  "terminal_launcher_r10a": {
+    "healthy_backend": "norm-ssh.ps1 checks missing independent consoles automatically",
+    "manual": "T menu reconciles missing independent consoles",
+    "duplicate_safety": "exact role inventory plus serialized launch lock from unchanged start_operator_consoles.py",
+    "unchanged": "r10 BAT, N2, Redis, Celery, maintenance, Stego, visual capture, Qt workspace"
   }
 }

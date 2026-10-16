@@ -1,3 +1,9 @@
+# Norm 0.55.10r10a
+
+Independent terminal recovery even when backend is healthy. Original r10 notes follow.
+
+---
+
 # Norm 0.55.10r10 - terminal-only launcher restored
 
 Only the launch route and package metadata changed from r9. See r9 details below.

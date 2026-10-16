@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "release": "0.55.10r10-terminal-launcher",
+  "release": "0.55.10r10a-terminal-recovery",
   "baseline": "Norm-0.55.10r8-StegOSplit-StegoServe-2Plugin-Portable-Source.zip",
-  "file_count": 420,
+  "file_count": 421,
   "hash_algorithm": "sha256",
   "files": {
     ".gitattributes": {
@@ -34,8 +34,8 @@
       "sha256": "b1caace3a4f4db1b3a5b455732dd1f49f89931a8e4da62804f3728968fc539b9"
     },
     "SOURCE_PACKAGE.md": {
-      "bytes": 26099,
-      "sha256": "cb20c0c0eba17d5d4b5312af1414fa130f8f4de1ef742febe11390bbdc9079e2"
+      "bytes": 26212,
+      "sha256": "9319b75e5f28e282d09d5eb9433ec3b991c0b7348104a0ca1bdb6b528c9c6a93"
     },
     "Safe-Shutdown-Norm.bat": {
       "bytes": 519,
@@ -342,8 +342,8 @@
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
     },
     "docs/RELEASE_NOTES.md": {
-      "bytes": 162194,
-      "sha256": "cfb93f3cacd3f6cd4f5bd7f7e13e0e542e1eb5fbf56f9ed500c3402a4a4dd78b"
+      "bytes": 162689,
+      "sha256": "babcb6ddcad084cae4cb00b5e0485be267357d875c93ae44a52e3296baafed14"
     },
     "docs/SHARED_BROWSER.md": {
       "bytes": 6642,
@@ -514,8 +514,8 @@
       "sha256": "e3210b0077888d2f28437da01107b1d055fcb5d5f3fb9d76a9a1804528b72667"
     },
     "norm-ssh.ps1": {
-      "bytes": 8195,
-      "sha256": "8c1215750298c25c88d5db35ed26e5d23ecf1b727ec7ad01ced442dbf96e6bb2"
+      "bytes": 9120,
+      "sha256": "735f27132e22ceeb1737bfe74a7dd7933a7e14924705a20a9e7352a002a6d09a"
     },
     "objects/README.md": {
       "bytes": 6512,
@@ -550,8 +550,8 @@
       "sha256": "814cf6e096ac167f56bbb47c98287818949ec13c65843574b3a733698c91f982"
     },
     "package-manifest.json": {
-      "bytes": 39742,
-      "sha256": "53a11fa4da04aa71504cfd768d3aa21c8cee09e5dce3b2cceb7fe92ab058e211"
+      "bytes": 40152,
+      "sha256": "df0b136847bc55c79c46331f3ea3c8ae47c3f45720917e64627b851d11ce560b"
     },
     "plugins/README.md": {
       "bytes": 781,
@@ -1568,6 +1568,10 @@
     "tools/test_terminal_launcher_r10.py": {
       "bytes": 823,
       "sha256": "55475be9d8e748bbe54880beadeb97af5a1575f08020042f863f2c511bf67760"
+    },
+    "tools/test_terminal_recovery_r10a.py": {
+      "bytes": 3357,
+      "sha256": "2a7a4aa51be710da8b0d3577d071d1b902f2763700f4f0a7a99f2819d0865052"
     },
     "tools/test_validation_pool_replay.py": {
       "bytes": 5285,

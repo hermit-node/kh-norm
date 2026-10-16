@@ -1,6 +1,6 @@
-# Norm 0.55.10r10 - Terminal-Launcher
+# Norm 0.55.10r10a - Idempotent-Terminal-Recovery
 
-Original archive SHA-256: f6931c3867e6f2f4d646a9c957069e6b82b73de8ace9c6881a28d818f12f70fa
+Original archive SHA-256: 28c0e409b1bf27e9f84f9e08ce734f0e1450235e504d56be03d4cd9fa8010750
 
 Historical assessment: source-inventory-verified
 
