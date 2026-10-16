@@ -1,3 +1,19 @@
+# Norm 0.55.10r8-stego2 source-only release — 2026-10-14
+
+Based on the user-provided **Norm 0.55.10r8 visual-capture callback-fix portable source**.
+
+This release changes only the bundled Stego plugin layout, its declared plugin settings, source package metadata, and documentation. All other Norm runtime source files are copied byte-for-byte from r8. **No Norm executable or installer has been rebuilt. No files on KHzz or live Norm are overwritten by this archive.**
+
+* **`stegosplit`** absorbs `stegosplit_message`: general V3 encrypted pair text/file/credential APIs and a new deterministic geometric (not SVG) 12-color raster everyday-object base-image generator.
+* **`stegoserve`** replaces the old specialized key/auth plugins as Norm's assignment/issuance management interface to the **separately built** standalone v0.6 engine; includes password-free company/user planning, local interactive batch issuance/rotor-round rotation and signed destination provisioning, plus signed-route preflight.
+* Old `stegosplit_message`, `stegosplit_key`, and `stegosplit_auth` plugin folders and original plugins.ini are preserved outside the live plugins folder under `legacy_stegosplit_plugins_r8/` for recovery, NOT loaded by default.
+* The 128 independent formulas are provided by the **external compiled v0.6 credential engine**, **not** the original generic V3 0.4.3 message API. Avoid conflating the two image envelopes. This archive by itself is **not** a full v0.6 AuthGate binary distribution.
+* The standalone `authgate_server.py` must be deployed separately for live endpoint gating. A blocking port alone never intercepts an existing SSH port; bind/firewall restrict direct access after independent verification.
+
+## Validate
+
+Check both `plugins/{stegosplit,stegoserve}/plugin.json` checksums against the actual `src/` trees, test deterministic polygon PNGs and password-free plan validation, and run Norm PluginManager refresh on Windows x64 CPython 3.14. Native compiled Windows plugins cannot be dynamically executed on Linux. See `docs/STEGO_TWO_PLUGIN_INTEGRATION.md`.
+
 Norm 0.55.10r8: Visual PDF callback transport fix; source-only package. Requires the PyMuPDF dependency listed in core/requirements.txt. See docs/RELEASE_NOTES.md.
 
 Norm 0.55.10r7: independent N1 parent-step review; source-only, not installed. See docs/RELEASE_NOTES.md.

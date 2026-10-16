@@ -1,7 +1,7 @@
 {
   "package_schema": 1,
   "name": "Norm",
-  "version": "0.55.10r8",
+  "version": "0.55.10r8-stego2",
   "package_type": "portable-source",
   "source_dir": "core",
   "entrypoint": "core/norm_main.py",
@@ -96,8 +96,6 @@
   "built_in_plugins": {
     "backup": "plugins/backup",
     "verbatim_lines": "plugins/verbatim_lines",
-    "stegosplit_key": "plugins/stegosplit_key",
-    "stegosplit_message": "plugins/stegosplit_message",
     "rotor5_cipher": "plugins/rotor5_cipher",
     "file_read": "plugins/file_read",
     "soft_delete": "plugins/soft_delete",
@@ -106,8 +104,9 @@
     "codex_reasoner": "plugins/codex_reasoner",
     "nabler": "plugins/nabler",
     "lesson_model": "plugins/lesson_model",
-    "stegosplit_auth": "plugins/stegosplit_auth",
-    "desktop_gui": "plugins/desktop_gui"
+    "desktop_gui": "plugins/desktop_gui",
+    "stegosplit": "plugins/stegosplit",
+    "stegoserve": "plugins/stegoserve"
   },
   "canonical_prompt_ingress": {
     "redis_db": 3,
@@ -466,31 +465,6 @@
       "standalone interactive topology HTML"
     ]
   },
-  "stegosplit_message": {
-    "plugin": "plugins/stegosplit_message",
-    "version": "0.4.3",
-    "engine_version": "3.0.0a1 / distributed native plugin 0.4.0",
-    "format_version": "V3",
-    "pair_carrier": "RGB +/-1 color-delta nibble (4 bits per pixel; zlib on payload when useful)",
-    "public_carrier": "independent single-PNG RGB LSB (3 bits per pixel) or overt tEXt metadata",
-    "security_boundary": "public identifiers are NOT authentication credentials; no private keys embedded",
-    "compiled_implementation": "Windows CPython 3.14 x64 .pyd modules"
-  },
-  "stegosplit_auth": {
-    "plugin": "plugins/stegosplit_auth",
-    "version": "0.1.0",
-    "format": "anchored SSMC/v1",
-    "master": "private master.png with unencrypted issuer-seed metadata",
-    "native_windows_module": "plugins/stegosplit_auth/src/master_client_auth.cp314-win_amd64.pyd",
-    "github_source": "private implementation source excluded",
-    "security": "bearer credentials; revocation/expiration/failed-password lockouts",
-    "integration": "standalone only, no OpenSSH/TLS listener",
-    "shared_v3_engine": "plugins/stegosplit_message/src/_stegosplit_v3"
-  },
-  "stegosplit_key": {
-    "version": "0.2.0a1",
-    "compiled_implementation": "Windows CPython 3.14 x64 .pyd modules"
-  },
   "output_overflow": {
     "implementation": "core/norm_runtime/output_overflow.py",
     "user_report": "configured state_root/reports/final-overflow/*.md",
@@ -499,7 +473,7 @@
     "policy": "retain full generated original and submit shortest complete summary; no bypass of N1/N2 verification",
     "normal_output_child_tasks": "not included; deferred"
   },
-  "release_revision": "r8-windows-webengine-json-callbacks",
+  "release_revision": "r8-source-stegosplit-stegoserve-20261014",
   "celery_tool_transport": {
     "transport": "Celery",
     "enabled_setting": "config/settings.ini:[celery].enabled",
@@ -661,7 +635,7 @@
     "status": "r3 offline regression preserved; no live authenticated conversation export performed in r4"
   },
   "workspace": {
-    "default": "Qt Focus — October 11 2026 18:32 compiled/18:29 source",
+    "default": "Qt Focus \u2014 October 11 2026 18:32 compiled/18:29 source",
     "implementation": "PySide6/Qt widgets embedding actual Windows Terminal HWNDs through Win32",
     "source": "tools/workspace/app.py",
     "original_unchanged_source": "tools/workspace/qt_focus_original_source.py",
@@ -699,5 +673,26 @@
     "scope": "visual capture only; N1/N2 and other browser operations unchanged",
     "runtime_dependency": "PyMuPDF==1.28.2 from existing core requirements; installed browser runtime must provide it",
     "validation": "KHzz interactive-session QtWebEngine smoke: 0-1862 DOM scroll px, 6 genuine screenshots, stitched PNG, 4-page OCR PDF, 154 OCR words and readback"
+  },
+  "stegosplit": {
+    "plugin": "plugins/stegosplit",
+    "adapter_version": "0.5.0",
+    "compiled_v3_generic_backend": "r8 0.4.3, unchanged; 16 original formulas",
+    "polygon_carrier": "seeded direct polygons, RGB PNG, <=16 colors"
+  },
+  "stegoserve": {
+    "plugin": "plugins/stegoserve",
+    "adapter_version": "0.6.0",
+    "backend": "standalone v0.6 Win x64 CPython 3.14 release (separate installation)",
+    "independent_formula_catalog": 128,
+    "formulas_per_company": 16,
+    "complexity_tiers": 4,
+    "network_gate_in_norm": false,
+    "admin": "interactive CLI"
+  },
+  "legacy_stego_plugins": {
+    "path": "legacy_stegosplit_plugins_r8/",
+    "installed_by_default": false,
+    "preserved": true
   }
 }

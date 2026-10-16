@@ -30,8 +30,8 @@
       "sha256": "b1caace3a4f4db1b3a5b455732dd1f49f89931a8e4da62804f3728968fc539b9"
     },
     "SOURCE_PACKAGE.md": {
-      "bytes": 23088,
-      "sha256": "5740087f582404e4d26c0ab844801377201486c5b439df26f3cd2b95aee5adcf"
+      "bytes": 25174,
+      "sha256": "da357303210bdcdb042bd24cd78fab69907074533626445fec9c08e216b1dc07"
     },
     "Safe-Shutdown-Norm.bat": {
       "bytes": 519,
@@ -390,12 +390,12 @@
       "sha256": "814cf6e096ac167f56bbb47c98287818949ec13c65843574b3a733698c91f982"
     },
     "package-manifest.json": {
-      "bytes": 39053,
-      "sha256": "dfc81b04b12aaeb8294fcbfeb688b82370e185d2db1301462f5156278a4c8246"
+      "bytes": 38435,
+      "sha256": "a256ca6f6faf51e0aed2260729afe1cc0e22e24d9ee7017220b6ca669f6acffd"
     },
     "plugins/README.md": {
-      "bytes": 721,
-      "sha256": "52082ce5d36b67c64f00133a66b5f0288fdff1975d0f2086c956bd10117b961e"
+      "bytes": 781,
+      "sha256": "c344ad11c491ca4d8138789fc65c083df71c0d1aa0124a7e49c659ae37438b3c"
     },
     "plugins/backup/README.md": {
       "bytes": 967,
