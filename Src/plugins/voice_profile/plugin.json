@@ -1,8 +1,8 @@
 {
   "schema_version": 2,
   "name": "voice_profile",
-  "version": "0.4.0",
-  "date": "2026-10-06",
+  "version": "0.4.1",
+  "date": "2026-10-08",
   "entrypoint": "src/main.py",
   "description": "Build, inspect, activate, and retrieve AI voice and persona profiles derived from PDF/text corpora.",
   "capabilities": [
@@ -14,7 +14,7 @@
     "corpus persona profiling",
     "runtime persona conditioning"
   ],
-  "sha256": "3bbf525f2110092b36a8f649c7e48a570d27582a6a94b40f68e48aa137fbc00e",
+  "sha256": "f4507ab5a8a55de0aa81d417e08e6e79bbb7888bc1df48bb4b9c0663022b0d57",
   "settings": {
     "voice_profile": {
       "enabled": true

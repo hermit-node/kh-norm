@@ -1,5 +1,26 @@
+## 0.54.3 — 2026-10-08 — Direct PDF/image reader slash controls (source patch)
+
+- Added direct Norm Prompt `/vision-parse`, `/vision-read`, `/vision-text`, `/vision-force`, `/vision-recheck`, and `/vision-status` operator commands; PDF/image reads bypass the queued N2 tasks and use existing verified `vision_parse` plugin code.
+- Added the plugin-owned `plugins/vision_parse/help.txt` command reference, `/help vision-parse` and aliases; kept plain `/help` compact.
+- Explicit native/OCR/vision mode, page/window selection, model focus, suspicious-text recheck and bounded results; authorized file roots and single active read per console are enforced.
+
+## 0.54.3 OCR-first PDF/image reader overlay (2026-10-08, source patch)
+
+- Extended shared `vision_parse` to PNG, JPEG, WebP, BMP, TIFF and scanned-PDF OCR-first input. High-confidence OCR word rectangles are masked with transparent alpha before computing uncovered ink and targeting bounded vision crops; model inputs white-composite masked areas for predictable cross-backend behavior.
+- Added explicit `suspect_excerpt` OCR recheck, line geometry, OCR word/coverage/region diagnostics and forced text/vision overrides. Tesseract binary remains an optional, separately installed local dependency; pinned `pytesseract` in Python requirements.
+- Added raster/OCR integration tests and retained page-level grayscale coverage validation. Does not modify the generic image-analysis tool or the voice-profile implementation.
+
+## 0.54.3 — 2026-10-08 — Shared PDF grayscale coverage gate (source patch)
+
+- `vision_parse` hybrid mode now measures grayscale raster ink against native character footprints, including image-area detection, and calls Ollama vision only on insufficient or suspect coverage.
+- Per-page metrics and reasons are emitted; `text`/`vision` overrides and process-local caching remain supported.
+- Voice-profile `auto` extraction delegates to the shared PDF reader instead of owning a separate text-length heuristic.
+- New targeted PDF coverage regression tests.
+
 0.54.3 — 2026-10-07 — Nabler structured conclusion and verification reporting
 
+- Prompt ingress dispatch now waits a maximum of 30 seconds when the sole busy signal is host CPU/GPU `resource_activity`; measured Norm requests, active generations, queued work, and failed status probes remain hard admission gates. The grace period is configurable through `console_queue.resource_activity_grace_seconds`.
+- Pre-task suppression now stays effective through the resource-idle runway, thread setup, and the final pre-HTTP admission check. `/flush-suppressed` removes operator-visible delivery records without clearing cancellation tombstones that a dispatcher may still hold in memory. Added an isolated regression for resource timeout, tracked work, cancellation, and suppression flush.
 - Added built-in schema-2 `plugins/nabler` v0.2.0 with verified source SHA-256 and native data-only `render_report` tool for single-call tables/checklists. The native tool never executes arbitrary source supplied in its arguments.
 - Merged the two experimental Python authoring paths into one plugin: deferred lambda/callable checks and trusted local multiline `Table.add_row(script=..., context=...)` blocks. Inline script code executes once per row on rendering, requires assigning `result`, and is not a sandbox. The duplicate `nabler_inline` plugin is not packaged.
 - Added `tabulate==0.9.0` to direct and locked dependencies, plugin auto-discovery/manifest registration, default N2 conclusion preference, and source-level conclusion directive.

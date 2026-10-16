@@ -1,0 +1,62 @@
+Voice Profiler (voice_profile 0.4.0) — direct operator commands
+
+These commands execute in Norm Prompt on the local installation. They DO NOT
+enter the Redis/N2 task queue. They are not model decisions. The profile state
+is persisted under state/voice_profiles (as configured by settings.ini).
+
+/voice-list
+    List all built profiles and mark the active profile.
+/voice-active
+    Show the active profile, prompt validation, and whether its source JSON
+    changed since activation. Does not modify anything.
+/voice-activate NAME [--anchors 0..8] [--force]
+    Activate NAME by compiling the latest voice_profile.json and its anchors.
+    If NAME is already active AND the live prompt matches it byte-for-byte,
+    this is a no-op. If you edited JSON, it refreshes automatically.
+    Without --anchors, a reactivation retains the current anchor count.
+    --force rewrites the prompt even if the contents are identical.
+/voice-deactivate
+    Disable voice conditioning without deleting the profile.
+
+/voice-build NAME "PDF FOLDER" [--mode text|auto|hybrid|vision]
+             [--anchors N] [--no-model] [--no-persona] [--flat]
+    Extract PDFs in a source folder and build the profile. Defaults to TEXT
+    extraction rather than automatic vision fallback. The folder must satisfy
+    voice_profile.read_roots. Runs locally in an async console thread.
+/voice-build-chat NAME [--project PROJECT] [--messages N]
+                  [--anchors N] [--no-model]
+    Build from user-role stored chat history; also runs in an async thread.
+/voice-add-text NAME "TEXT FILE" [--source LABEL]
+    Ingest UTF-8 plaintext through the normal file-access policy. Use
+    /voice-rebuild afterward to synthesize the profile.
+/voice-rebuild NAME [--anchors N] [--no-model] [--no-persona]
+    Re-synthesize from the ALREADY-INGESTED corpus; NO PDF extraction.
+    CAUTION: this overwrites manual edits to voice_profile.json.
+    Runs in an async console thread.
+
+/voice-summary NAME
+    Display corpus metrics, synthesis, source inventory and anchors.
+/voice-persona NAME
+    Display the separately inferred persona.
+/voice-preview NAME [--anchors N]
+    Show how the voice prompt would be composed from the current JSON.
+/voice-persona-preview NAME
+    Show the persona prompt.
+/voice-search NAME QUERY
+    Search corpus excerpts using the plugin's lexical/phrase retriever.
+/voice-compose NAME QUERY
+    Preview combined voice prompt and retrieved evidence.
+/voice-delete NAME --confirm
+    Permanently remove a built profile. Active profiles must be deactivated.
+
+Aliases for /help: /help voice-profiler, /help voice-profile,
+/help voice_profile. For a short index, enter /voice or plain /help.
+
+Notes:
+- Building a profile does not activate it. Rebuilding an active profile does
+  not automatically refresh the live prompt: use /voice-activate afterward.
+- Runtime activation checks active.json and SHA-256 of active_prompt.txt.
+- Existing N2 queued steps may not consume the active voice prompt; this set of
+  slash controls changes live conversation conditioning, not model weights.
+- Long builds continue only while Norm Prompt is open; don't close that window
+  until completion is reported.

@@ -1,0 +1,7 @@
+Norm Soft Delete — plugin help
+
+Batch-oriented reversible trash management backed by Redis and one consolidated JSON checkpoint.
+
+No dedicated operator slash commands are registered for this plugin.
+The plugin provides its tools to Norm through the plugin manager.
+See plugins/soft_delete/README.md for tool usage.

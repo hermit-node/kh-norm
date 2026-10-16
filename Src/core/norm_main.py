@@ -303,7 +303,17 @@ def _suppress_console_prompt_state(config: dict, section: str, *, default_prefix
             active_candidates.append((_stream_id_tuple(str(entry_id)), str(entry_id), prompt_id))
     if active_candidates:
         _, entry_id, prompt_id = min(active_candidates, key=lambda item: item[0])
-        selected = {"entry_id": entry_id, "prompt_id": prompt_id, "state": "dispatching"}
+        # Distinguish a request still waiting on the idle runway from one
+        # that might already have reached the HTTP endpoint.
+        state = "dispatching"
+        try:
+            marker = json.loads(dispatching.get(entry_id) or "{}")
+            phase = str(marker.get("phase") or "") if isinstance(marker, dict) else ""
+            if phase in {"awaiting_idle", "preparing_http"}:
+                state = phase
+        except (TypeError, ValueError):
+            pass
+        selected = {"entry_id": entry_id, "prompt_id": prompt_id, "state": state}
 
     if selected is None:
         pending_ids: set[str] | None = None
@@ -415,17 +425,20 @@ def _flush_console_suppressed_state(config: dict, section: str, *, default_prefi
         client.hdel(uncertain_key, *sorted(suppressed_records))
 
     dispatching = client.hgetall(dispatching_key)
-    active_entry_ids = {str(entry_id) for entry_id in dispatching}
-    active_prompt_ids: set[str] = set()
-    for raw in dispatching.values():
+    # A runway entry has no live HTTP request, so flushing its *delivery*
+    # can ACK/XDEL immediately. Preserve its tombstone because the dispatcher
+    # still holds the original fields and must observe cancellation before
+    # starting HTTP. For actual HTTP in-flight, leave delivery bookkeeping
+    # intact until its owner completes/parks the response.
+    live_http_entry_ids: set[str] = set()
+    for entry_id, raw in dispatching.items():
         try:
             record = json.loads(raw)
         except Exception:
+            live_http_entry_ids.add(str(entry_id))
             continue
-        if isinstance(record, dict):
-            prompt_id = str(record.get("prompt_id") or "").strip()
-            if prompt_id:
-                active_prompt_ids.add(prompt_id)
+        if not isinstance(record, dict) or record.get("phase") not in {"awaiting_idle", "preparing_http"}:
+            live_http_entry_ids.add(str(entry_id))
 
     stream_deleted = 0
     try:
@@ -435,7 +448,7 @@ def _flush_console_suppressed_state(config: dict, section: str, *, default_prefi
     for entry_id, fields in rows:
         entry_id = str(entry_id)
         prompt_id = str(dict(fields).get("prompt_id") or "").strip()
-        if not prompt_id or prompt_id not in blocked or entry_id in active_entry_ids:
+        if not prompt_id or prompt_id not in blocked or entry_id in live_http_entry_ids:
             continue
         try:
             client.xack(stream, group, entry_id)
@@ -472,12 +485,15 @@ def _flush_console_suppressed_state(config: dict, section: str, *, default_prefi
         except Exception:
             logging.exception("Could not clear orphaned ingress PEL entry %s during flush", entry_id)
 
-    # Keep only tombstones that still guard an in-flight HTTP dispatch.  Everything
-    # else has been durably discarded and should disappear from future queue views.
-    retained = blocked & active_prompt_ids
-    clear_ids = blocked - retained
-    if clear_ids:
-        client.srem(suppressed_key, *sorted(clear_ids))
+    # Tombstones are cancellation authority, not display records. Never
+    # clear them just because /flush-suppressed removed the stream row:
+    # the dispatcher may have claimed it immediately before the flush and
+    # still holds its decoded fields in memory. Prompt IDs are UUIDs, so
+    # retaining the tombstone cannot suppress an unrelated future prompt.
+    # Any future tombstone garbage collector must prove final ACK and no
+    # remaining dispatcher/HTTP/uncertain owner before removing an ID.
+    retained = blocked
+    clear_ids: set[str] = set()
 
     return {
         "uncertain_deleted": len(suppressed_records),

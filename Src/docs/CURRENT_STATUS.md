@@ -55,7 +55,7 @@ This file is a current-state snapshot only.
 - Durable workspace: %USERPROFILE%\Documents\Norm\workspace.
 - Disposable/recovery root: %USERPROFILE%\Documents\Norm\temp.
 - PostgreSQL runtime schema: norm_runtime.
-- Prompt ingress uses Redis DB3; task queues use their configured Redis databases/streams.
+- Prompt ingress uses Redis DB3; task queues use their configured Redis databases/streams. A hardware-only `resource_activity` signal delays one prompt for at most 30 seconds; tracked tasks/active requests always remain a hard gate, and unknown status is fail-closed. Suppression of a claimed ingress prompt remains effective even after `/flush-suppressed` because its prompt-ID tombstone is not removed before dispatcher admission checks.
 
 ## Agent boundary
 

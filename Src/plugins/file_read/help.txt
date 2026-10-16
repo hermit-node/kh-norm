@@ -1,0 +1,7 @@
+Norm File Read — plugin help
+
+Bounded file reading plus non-extracting archive inspection through a local 7-Zip CLI with ZIP/TAR fallbacks.
+
+No dedicated operator slash commands are registered for this plugin.
+The plugin provides its tools to Norm through the plugin manager.
+See plugins/file_read/README.md for tool usage.

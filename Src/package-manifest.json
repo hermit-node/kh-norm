@@ -9,7 +9,6 @@
   "settings": "config/settings.ini",
   "runtime_config": "config/runtime.json",
   "requirements_lock": "tools/requirements-lock.txt",
-  "build_script": "tools/build_norm.py",
   "excluded_generated_paths": [
     ".venv",
     "staging",
@@ -154,7 +153,9 @@
     "renderer": "PyMuPDF 1.28.2",
     "authority": "rendered page over untrusted text layer",
     "page_window": 10,
-    "delivery": "checksum-first managed plugin reconciliation; verified src is untouched, mismatched Norm src is repaired before any public fallback"
+    "delivery": "checksum-first managed plugin reconciliation; verified src is untouched, mismatched Norm src is repaired before any public fallback",
+    "hybrid_triage": "OCR-first for scanned PDF and image writing; confident OCR boxes masked with alpha, uncovered ink routed to local vision crops; native PDF text uses grayscale ink-accounting; explicit mode overrides",
+    "ocr": "Optional pytesseract 0.3.13 Python frontend and separate Tesseract OCR executable; NORM_TESSERACT_PATH may specify the executable"
   },
   "model_stream_safety": {
     "partial_line_flush_chars": 0,
@@ -173,7 +174,7 @@
   "imprint": "norm-imprint.json",
   "voice_profile": {
     "plugin": "plugins/voice_profile",
-    "version": "0.4.0",
+    "version": "0.4.1",
     "state_root": "state/voice_profiles",
     "pdf_extractor": "plugins/vision_parse",
     "style_activation": "explicit activate_profile; inactive by default",
@@ -212,9 +213,9 @@
     "plugins": {
       "plugins/vision_parse": {
         "name": "vision_parse",
-        "version": "0.2.1",
+        "version": "0.2.2",
         "entrypoint": "src/main.py",
-        "sha256": "c3ffc0499dd1a0b9ec5889321139b5d0ee2d2536d9fe1778cbb8fdb182f8ebe6"
+        "sha256": "ece586f8c5794c05800027c6f9ec41edc717584e969fb0712b17e3221838d424"
       },
       "plugins/web_browser": {
         "name": "Norm Web Browser",

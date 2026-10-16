@@ -43,6 +43,11 @@ class GuiPromptDispatcher:
             config.get("console_suppressed_prompt_ids_key", "norm:gui:suppressed-prompt-ids")
         )
         self.uncertain_continue_seconds = max(0.0, float(config.get("uncertain_continue_seconds", 10)))
+        # Hardware activity is only a soft admission gate. Tracked Norm work
+        # always remains a hard gate until idle; don't bypass it on a timer.
+        self.resource_activity_grace_seconds = max(
+            0.0, float(config.get("resource_activity_grace_seconds", 30))
+        )
         self.consumer = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         self.stop_event = threading.Event()
         self.activity_wakeup = threading.Event()
@@ -795,13 +800,42 @@ class GuiPromptDispatcher:
         payload = self._busy_payload()
         return True if payload is None else bool(payload.get("busy"))
 
-    def _wait_until_idle(self) -> bool:
+    def _wait_until_idle(self, prompt_id: str = "") -> bool:
+        """Admit after idle, or 30s of *resource-only* activity.
+
+        A Redis suppression tombstone overrides both exits. Busy-endpoint
+        failures and tracked Norm activity never qualify for a timed bypass.
+        """
+        resource_since: float | None = None
+        last_timeout_probe = 0.0
         while not self.stop_event.is_set():
-            if self.pause_dispatch.is_set():
+            if self.pause_dispatch.is_set() or self._prompt_retry_suppressed(prompt_id):
                 return False
             self.activity_wakeup.clear()
-            if self._busy_probe_due() and not self._busy():
-                return True
+            now = time.monotonic()
+            expired = (
+                resource_since is not None
+                and now - resource_since >= self.resource_activity_grace_seconds
+            )
+            probe = self._busy_probe_due() or (
+                expired and now - last_timeout_probe >= 1.0
+            )
+            if probe:
+                if expired:
+                    last_timeout_probe = now
+                payload = self._busy_payload()
+                # A failed busy probe must not be treated as idle or as a
+                # reason to override the queue gate.
+                if payload is not None:
+                    if not bool(payload.get("busy")):
+                        return not self._prompt_retry_suppressed(prompt_id)
+                    if str(payload.get("phase") or "") == "resource_activity":
+                        if resource_since is None:
+                            resource_since = time.monotonic()
+                        elif time.monotonic() - resource_since >= self.resource_activity_grace_seconds:
+                            return not self._prompt_retry_suppressed(prompt_id)
+                    else:
+                        resource_since = None
             # Activity wakes the scheduler only to postpone the quiet check.
             self.activity_wakeup.wait(0.1)
         return False
@@ -879,26 +913,49 @@ class GuiPromptDispatcher:
     def _dispatch_prompt(self, entry_id: str, fields: dict) -> None:
         prompt_id = str(fields.get("prompt_id") or "")
         if self._prompt_retry_suppressed(prompt_id):
-            self._defer_entry(entry_id, fields, "prompt suppressed by operator")
+            # This prompt never entered HTTP: delete its delivery rather than
+            # parking an "uncertain" record that can resurface later.
+            self._finish_entry(entry_id)
             return
         self.dispatch_active.set()
+        # Declare the preflight stage *before* waiting. Flush needs to know
+        # the dispatcher still owns this ID so it cannot revoke the tombstone.
+        dispatch_state = {
+            "prompt_id": prompt_id,
+            "message": str(fields.get("message") or ""),
+            "enqueued_at": str(fields.get("enqueued_at") or ""),
+            "dispatch_started_at": self._now_iso(),
+            "phase": "awaiting_idle",
+        }
+        self.redis.hset(self.dispatching_key, entry_id, json.dumps(dispatch_state, ensure_ascii=False))
         with self._activity_lock:
             self._last_activity = time.monotonic()
             self._last_busy_probe = time.monotonic()
             self._probed_activity = -1.0
-        if not self._wait_until_idle():
+        if not self._wait_until_idle(prompt_id):
+            if self._prompt_retry_suppressed(prompt_id):
+                self._finish_entry(entry_id)
+            else:
+                # An operator's queue rotation paused us; keep its claimed
+                # entry pending, but do not pretend an HTTP call is still live.
+                self.redis.hdel(self.dispatching_key, entry_id)
             self.dispatch_active.clear()
             return
-        dispatch_state = {
-            "prompt_id": str(fields.get("prompt_id") or ""),
-            "message": str(fields.get("message") or ""),
-            "enqueued_at": str(fields.get("enqueued_at") or ""),
-            "dispatch_started_at": self._now_iso(),
-        }
+        # The original pre-wait check is not enough: suppression and flush
+        # can occur while a prompt is waiting on resource activity.
+        if self._prompt_retry_suppressed(prompt_id):
+            self._finish_entry(entry_id)
+            self.dispatch_active.clear()
+            return
+        dispatch_state["phase"] = "preparing_http"
         self.redis.hset(self.dispatching_key, entry_id, json.dumps(dispatch_state, ensure_ascii=False))
         message = str(fields.get("message") or "")
         project_id = str(fields.get("project_id") or "default")
         thread_id = self._ensure_current_thread(project_id, message)
+        if self._prompt_retry_suppressed(prompt_id):
+            self._finish_entry(entry_id)
+            self.dispatch_active.clear()
+            return
         payload = {
             "message": message,
             "project_id": project_id,
@@ -918,8 +975,20 @@ class GuiPromptDispatcher:
         outcome: dict[str, object] = {}
         finished = threading.Event()
 
+        # Final admission check: an operator cancellation received while we
+        # bootstrapped the thread must be honored before HTTP execution.
+        if self._prompt_retry_suppressed(prompt_id):
+            self._finish_entry(entry_id)
+            self.dispatch_active.clear()
+            return
+        dispatch_state["phase"] = "http_in_flight"
+        self.redis.hset(self.dispatching_key, entry_id, json.dumps(dispatch_state, ensure_ascii=False))
+
         def _send_chat() -> None:
             try:
+                if self._prompt_retry_suppressed(prompt_id):
+                    outcome["suppressed_before_http"] = True
+                    return
                 with request.urlopen(req, timeout=None) as response:
                     outcome["result"] = json.loads(response.read().decode("utf-8"))
             except Exception as exc:
@@ -958,6 +1027,9 @@ class GuiPromptDispatcher:
                 else:
                     idle_since = None
 
+            if outcome.get("suppressed_before_http"):
+                self._finish_entry(entry_id)
+                return
             error = outcome.get("error")
             if isinstance(error, Exception):
                 self._mark_uncertain(entry_id, fields, error)
@@ -1033,7 +1105,7 @@ class GuiPromptDispatcher:
                 continue
             prompt_id = str(fields.get("prompt_id") or "")
             if self._prompt_retry_suppressed(prompt_id):
-                self._defer_entry(entry_id, fields, "prompt suppressed by operator")
+                self._finish_entry(entry_id)
                 continue
             try:
                 self._dispatch_prompt(entry_id, fields)

@@ -5,7 +5,7 @@ These are current engineering contracts for **Norm 0.53.19**. This file intentio
 ## Architectural authority
 
 - PostgreSQL is the durable authority for tasks, history, memories, summaries, maintenance notes, and long-term state.
-- Redis is hot/transient coordination state: queues, ingress, validation evidence, suppression/transition hints, and delivery state.
+- Redis is hot/transient coordination state: queues, ingress, validation evidence, suppression/transition hints, and delivery state. GUI ingress keeps suppressed prompt-ID tombstones across `/flush-suppressed` to prevent a claimed but not yet submitted prompt from being resurrected by a later idle transition. They are cancellation authority, not user-visible delivery records. Future tombstone pruning must first prove the prompt has no claimed/queued/HTTP/uncertain owner; never treat a cleared queue view alone as proof.
 - config\settings.ini is canonical resolved path/service configuration.
 - config\runtime.json is policy/configuration, not a durable state database.
 - state_root is trusted Norm-owned runtime state and is not automatically a model filesystem root.

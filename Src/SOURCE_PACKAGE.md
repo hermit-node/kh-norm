@@ -1,5 +1,9 @@
 # Norm 0.54.3 portable source package
 
+## Resource-only busy and suppression runway
+
+Resource-only busy signals yield for up to 30 seconds; actively tracked Norm work remains a hard gate. Suppressed in-flight ingress is rechecked at HTTP admission, with cancellation tombstones retained through `/flush-suppressed`.
+
 This directory is the portable source payload for **Norm 0.54.3**, derived from the user-supplied 0.54.2i + SSE source ZIP.
 
 The portable source package excludes generated or machine-private material such as .venv, compiled core\norm.exe, build output, Python caches, secrets, and private runtime state.

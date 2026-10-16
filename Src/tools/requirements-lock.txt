@@ -25,6 +25,7 @@ opencv-python==5.0.0.93
 packaging==26.3
 pefile==2024.8.26
 pillow==12.3.0
+pytesseract==0.3.13
 pluggy==1.6.0
 prompt_toolkit==3.0.53
 propcache==0.5.4

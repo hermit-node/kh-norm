@@ -1,0 +1,7 @@
+codex_reasoner — plugin help
+
+Read-only Codex CLI reasoning specialist; returns structured advice while Norm remains the sole execution agent.
+
+No dedicated operator slash commands are registered for this plugin.
+The plugin provides its tools to Norm through the plugin manager.
+See plugins/codex_reasoner/README.md for tool usage.
