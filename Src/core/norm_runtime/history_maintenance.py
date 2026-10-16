@@ -631,6 +631,7 @@ class DeepHistoryMaintainer:
                 logging.info("N1 approved destructive memory discard primary_task_id=%s reason=%s", primary["task_id"], str(parsed.get("reason") or "")[:500])
                 return None
         return {
+            "_n1_approved": bool(accepted) if destructive else True,
             "primary_task_id": primary["task_id"],
             "task_date": primary["started_at"].date(),
             "title": primary["title"],
@@ -1040,9 +1041,30 @@ class DeepHistoryMaintainer:
         mode = "incremental" if incremental else "deep-rebuild"
         fingerprint = hashlib.sha256((mode + "\n" + str(source_cutoff) + "\n" + "\n".join(lines)).encode("utf-8")).hexdigest()
         checkpoint_path = self.state_root / f"background-condensation-{mode}.json"
-        state = self._checkpoint_read(checkpoint_path, fingerprint)
-        if not state:
-            state = {"fingerprint": fingerprint, "mode": mode, "completed_batches": [], "current_index": 0, "current_partial": "", "merge_partial": ""}
+        # Freeze the input from the first attempt. New PostgreSQL memories must not
+        # invalidate already-approved chunks while this run is still unfinished.
+        try:
+            frozen = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            frozen = {}
+        if (isinstance(frozen, dict) and frozen.get("mode") == mode
+                and isinstance(frozen.get("source_chunks"), list)
+                and frozen.get("frozen_source_through")):
+            state = frozen
+            chunks = list(frozen["source_chunks"])
+            base_summary = str(frozen.get("frozen_base_summary") or "")
+            source_through = datetime.fromisoformat(frozen["frozen_source_through"])
+        else:
+            # Old checkpoints without a frozen inventory retain their existing
+            # fingerprint rule. Do not resume them against unproven source text.
+            state = self._checkpoint_read(checkpoint_path, fingerprint)
+            if not state:
+                state = {"fingerprint": fingerprint, "mode": mode, "completed_batches": [],
+                         "current_index": 0, "current_partial": "", "merge_partial": ""}
+            state["source_chunks"] = chunks
+            state["frozen_base_summary"] = base_summary
+            source_through = max(record["at"] for record in (delta_all if incremental else records))
+            state["frozen_source_through"] = source_through.isoformat()
             self._checkpoint_write(checkpoint_path, state)
         partials = list(state.get("completed_batches") or [])
         for index, chunk in enumerate(chunks):
@@ -1107,7 +1129,6 @@ class DeepHistoryMaintainer:
             )
             state["merge_over_target"] = {"chars": len(summary), "ideal": snapshot_target_chars, "ceiling": snapshot_accept_chars}
             self._checkpoint_write(checkpoint_path, state)
-        source_through = max(record["at"] for record in (delta_all if incremental else records))
         self.durable.save_background_snapshot(summary, source_through)
         self.durable.keep_latest_background_snapshot()
         checkpoint_path.unlink(missing_ok=True)
@@ -1115,6 +1136,157 @@ class DeepHistoryMaintainer:
 
     def _rebuild_background_snapshot(self) -> str:
         return self.rebuild_background_snapshot(incremental=False)
+
+    @staticmethod
+    def _full_source_batches(groups: list[list[dict]], limit: int = 20) -> list[list[list[dict]]]:
+        """Keep a grouped task intact; checkpoint at most 20 source memories otherwise."""
+        cap = max(1, int(limit))
+        batches: list[list[list[dict]]] = []
+        batch: list[list[dict]] = []
+        count = 0
+        for group in groups:
+            if batch and count + len(group) > cap:
+                batches.append(batch)
+                batch, count = [], 0
+            batch.append(group)
+            count += len(group)
+            if count >= cap:
+                batches.append(batch)
+                batch, count = [], 0
+        if batch:
+            batches.append(batch)
+        return batches
+
+    @staticmethod
+    def _thaw_full_source_groups(groups: list[list[dict]]) -> list[list[dict]]:
+        """Restore timestamps from PostgreSQL JSONB's frozen source inventory."""
+        thawed = []
+        for group in groups:
+            restored = []
+            for original in group:
+                item = dict(original)
+                for key in ('started_at', 'updated_at'):
+                    if isinstance(item.get(key), str):
+                        item[key] = datetime.fromisoformat(item[key])
+                restored.append(item)
+            thawed.append(restored)
+        return thawed
+
+    def _run_full_chunked(self, *, retention_days: int, merge_max_records: int) -> dict | None:
+        """Destructive full maintenance with frozen PG inventory and 20-memory commits.
+
+        A verified batch is compacted and its raw/obsolete sources deleted in ONE
+        PostgreSQL transaction. An interrupted run resumes only pending batches.
+        """
+        required = ('active_full_condensation_run', 'create_full_condensation_run',
+                    'commit_full_condensation_batch', 'finish_full_condensation_run')
+        if not all(hasattr(self.durable, method) for method in required):
+            raise RuntimeError('full condensation requires PostgreSQL inventory methods; refusing legacy uncheckpointed prune')
+        run = self.durable.active_full_condensation_run()
+        if run is None:
+            raw = self.durable.deep_history_candidates(retention_days, 1, all_history=True, unbounded=True)
+            archived = self.durable.task_history_archive_candidates()
+            raw_ids = {str(item['task_id']) for item in raw}
+            candidates = raw + [item for item in archived if str(item['task_id']) not in raw_ids]
+            if not candidates:
+                return None
+            candidates.sort(key=lambda item: (item['started_at'], item['updated_at']), reverse=True)
+            groups = self._group_candidates(candidates)
+            batches = self._full_source_batches(groups, 20)
+            backup_dir = str(self.config.get('deep_history_backup_dir') or
+                             (self.runtime_root.parent / 'Norm-backups' / 'history-maintenance'))
+            backup_path = self.durable.create_sql_backup(backup_dir)
+            run = self.durable.create_full_condensation_run(batches, backup_path)
+        backup_path = str(run['backup_path'])
+        if not Path(backup_path).is_file():
+            raise RuntimeError('full condensation SQL safety backup missing; refusing destructive resume')
+        run_id = str(run['run_id'])
+        verified = [record for batch in run['batches'] if batch['status'] == 'committed'
+                    for record in batch.get('results', [])]
+        completed = sum(batch['status'] == 'committed' for batch in run['batches'])
+        deleted = sum(int(batch.get('original_deleted') or 0) for batch in run['batches'])
+        replay_count = sum(sum(item.get('kind') == 'replay' and item.get('passed') for item in batch.get('verification', []))
+                           for batch in run['batches'] if batch['status'] == 'committed')
+        for batch in run['batches']:
+            if batch['status'] == 'committed':
+                continue
+            if batch['status'] != 'pending' or not batch.get('groups'):
+                raise RuntimeError(f'full condensation batch {batch["index"]} lacks frozen source; no pruning')
+            groups = self._thaw_full_source_groups(batch['groups'])
+            group_outputs = []
+            discarded_ids = []
+            verification = []
+            # Group-level N1 must approve every keep/destroy before any source is removed.
+            for group in groups:
+                newer_context = self._relevant_newer_records(group, verified + group_outputs, limit=8)
+                summary = self._summarize_group(group, newer_context=newer_context, destructive=True)
+                members = [str(item['task_id']) for item in group]
+                if summary is None:
+                    discarded_ids.extend(members)
+                    verification.extend({'kind': 'n1_destroy', 'task_id': sid, 'passed': True}
+                                        for sid in members)
+                else:
+                    if summary.get('_n1_approved') is not True:
+                        raise RuntimeError(f'N1 did not explicitly approve kept memory {members[0]}; originals preserved')
+                    summary.pop('_n1_approved', None)
+                    verification.extend({'kind': 'n1_keep', 'task_id': sid, 'passed': True}
+                                        for sid in members)
+                    passed, verdict, replay = self._replay_one(summary)
+                    repaired = False
+                    if not passed:
+                        summary = self._repair_compact_record(group, summary, verdict, replay)
+                        repaired = True
+                        passed, verdict, replay = self._replay_one(summary)
+                    if not passed:
+                        logging.warning('Full condensation batch %s replay failed for %s; no sources deleted',
+                                        batch['index'], members[0])
+                        return {'status': 'replay_failed', 'run_id': run_id, 'failed_batch': batch['index'],
+                                'completed_batches': completed, 'backup': backup_path, 'verdict': verdict}
+                    group_outputs.append(summary)
+                    verification.extend({'kind': 'replay', 'task_id': sid, 'passed': True,
+                                         'repaired': repaired, 'verdict': verdict} for sid in members)
+            # The final within-batch merge is additionally replay-verified against
+            # each constituent. Failed merges fall back to independently checked rows.
+            merged, merge_stats = self._full_merge_records(group_outputs, max_size=merge_max_records)
+            # Check the model did not accidentally omit an input, even across merge.
+            kept_ids = {str(item['task_id']) for group in groups for item in group} - set(discarded_ids)
+            covered = {str(sid) for r in merged for sid in [r['primary_task_id'], *(r.get('source_task_ids') or [])]}
+            if kept_ids - covered:
+                raise RuntimeError('full condensation merge lost constituent memory; originals preserved')
+            commit = self.durable.commit_full_condensation_batch(
+                run_id=run_id, batch_index=int(batch['index']), records=merged,
+                verification=verification, discard_ids=discarded_ids,
+            )
+            completed += 1
+            deleted += int(commit['deleted_raw']) + int(commit['deleted_compact'])
+            replay_count += sum(v.get('kind') == 'replay' and v.get('passed') for v in verification)
+            verified.extend(merged)
+            logging.info('Full condensation verified/committed batch %s/%s sources=%s compact=%s deleted=%s',
+                         batch['index'], run['total_batches'], sum(map(len, groups)),
+                         len(merged), commit['deleted_raw'] + commit['deleted_compact'])
+        # Existing full-maintenance cleanup semantics, but only after ALL frozen
+        # batches are verified and committed; checkpoint is kept until finalization.
+        conversation = self.durable.prune_covered_conversation_history(retention_days, all_history=True)
+        superseded_deleted = self.durable.delete_superseded_memories()
+        self.durable.finish_full_condensation_run(run_id)
+        self.durable.delete_sql_backup(backup_path)
+        details = {
+            'status': 'success', 'mode': 'full', 'run_id': run_id,
+            'validation_policy': 'all_memories_replay_verified_in_20_source_batches',
+            'validation_batches': completed, 'replay_samples_passed': replay_count,
+            'compact_records_in_pass': len(verified), 'original_records_deleted': deleted,
+            'messages_deleted': conversation['messages_deleted'],
+            'thread_summaries_deleted': conversation['thread_summaries_deleted'],
+            'memory_links_preserved': conversation.get('memory_links_preserved', 0),
+            'superseded_memories_deleted': superseded_deleted,
+            'backup_deleted': True, 'durable_archive': 'task_history',
+        }
+        self.durable.record_maintenance_note(
+            'deep_history_consolidation',
+            'Full maintenance committed and pruned each validated 20-memory PostgreSQL batch.',
+            details=details,
+        )
+        return details
 
     def run(self, *, force: bool = False, full: bool = False, recent_only: bool = False) -> dict | None:
         retention_days = max(1, int(self.config.get("deep_history_retention_days", 30)))
@@ -1129,6 +1301,9 @@ class DeepHistoryMaintainer:
                 return None
         if self.drain_event is not None and self.drain_event.is_set():
             return None
+        if full:
+            return self._run_full_chunked(retention_days=retention_days,
+                                          merge_max_records=full_merge_max_records)
         regular_window_days = max(1, int(self.config.get("regular_memory_window_days", 14)))
         raw_candidates = self.durable.deep_history_candidates(
             retention_days,

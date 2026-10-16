@@ -1,3 +1,7 @@
+# Norm 0.55.10r9 — batch-verified condensation
+
+The full destructive history-maintenance pass uses frozen PostgreSQL worklists, **20 source memories per validation/commit/deletion checkpoint**. N1 must approve each keep/destroy; surviving memories must recreate their important prior context without raw source history. If any retained record fails reconstruction, nothing from that batch is deleted. Source fingerprints/timestamps are checked before pruning, with the verified output, deletion and PostgreSQL checkbox in one transaction. Failed/rebooted runs resume the exact unfinished batch. The regular/weekly condensation checkpoint also freezes its source, preventing changed background-history fingerprints from repeating approved batches. This remains a source-only package; it has NOT been installed or run against KHzz live PostgreSQL.
+
 Norm 0.55.10r8 staged source: Fix QtWebEngine structured JavaScript callback return values in Visual PDF capture. Captured scrolling and real Qt screenshots were verified in an interactive KHzz test; the stitched PNG and selectable-text PDF were verified on a controlled page. No modifications to N2 self-check or N1 review from r7. PyMuPDF is a runtime dependency, not part of this portable source ZIP.
 
 Norm 0.55.10r7 staged source: N2 self-verification unchanged; N1 independently reviews completed parent steps with private pre-execution interpretation persisted in PostgreSQL.

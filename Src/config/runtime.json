@@ -302,5 +302,7 @@
   "output_overflow": {
     "final_reply_max_chars": 16000,
     "redis_ttl_seconds": 86400
-  }
+  },
+  "deep_history_full_batch_rows": 20,
+  "deep_history_full_samples_per_batch": 20
 }

@@ -1,7 +1,7 @@
 {
   "package_schema": 1,
   "name": "Norm",
-  "version": "0.55.10r8-stego2",
+  "version": "0.55.10r9-chunked-condensation",
   "package_type": "portable-source",
   "source_dir": "core",
   "entrypoint": "core/norm_main.py",
@@ -635,7 +635,7 @@
     "status": "r3 offline regression preserved; no live authenticated conversation export performed in r4"
   },
   "workspace": {
-    "default": "Qt Focus \u2014 October 11 2026 18:32 compiled/18:29 source",
+    "default": "Qt Focus — October 11 2026 18:32 compiled/18:29 source",
     "implementation": "PySide6/Qt widgets embedding actual Windows Terminal HWNDs through Win32",
     "source": "tools/workspace/app.py",
     "original_unchanged_source": "tools/workspace/qt_focus_original_source.py",
@@ -694,5 +694,14 @@
     "path": "legacy_stegosplit_plugins_r8/",
     "installed_by_default": false,
     "preserved": true
+  },
+  "maintenance_condensation": {
+    "full_mode": "PostgreSQL-frozen work inventory; at most 20 source memories per group-preserving batch",
+    "safety": "N1 explicit approvals, every surviving compact memory replayed, merged constituents independently replayed, source timestamps checked before pruning",
+    "commit": "PostgreSQL atomic transaction for compact output + verification + source deletion + progress marker",
+    "resume": "skip committed batches and read frozen pending input; no source fingerprint reset",
+    "weekly_incremental": "JSON checkpoint freezes source chunks and source cutoff; incoming records processed by next pass",
+    "originals": "full maintenance deletes covered raw task_runs and superseded task_history only after verification; conversation prune/superseded memory cleanup remains at full-run conclusion",
+    "deployment": "source-only; schema tables created via existing startup ensure_schema; no live migration tested"
   }
 }

@@ -1,3 +1,15 @@
+## Norm 0.55.10r9 — verified 20-memory PostgreSQL checkpoints (2026-10-14)
+
+Based exclusively on the user-uploaded `Norm-0.55.10r8-StegOSplit-StegoServe-2Plugin-Portable-Source.zip`. No changes to r8 StegoSplit/StegoServe, Qt workspace, other plugins, or already installed C:\Norm components.
+
+- Full/destructive maintenance freezes the exact memory work inventory in PostgreSQL `condensation_runs` and `condensation_batches`, batching up to 20 source memories without splitting a grouped task. Each batch saves its complete original source payload only while pending, source IDs and hashes, verified condensed records, replay verdicts, deletion count, and timestamps.
+- For EACH batch, N2 condenses candidate records, N1 explicitly judges keep/destroy, each surviving compact memory is reconstructed from itself alone and replay-verified; a failed replay gets one repair/replay. Within-batch compact merges undergo constituent replay validation and fall back when unsuccessful. Incomplete N1 review blocks source removal.
+- Commit is atomic: PostgreSQL verifies the frozen input hash and unchanged source updated_at/archived_at timestamps, upserts validated compact memories, deletes the corresponding raw or obsolete compact originals, removes original pending source payload, and marks the batch committed. Failure rolls the transaction back and leaves that batch's sources intact.
+- On next run, completed batches are skipped; pending batches reload frozen input from PostgreSQL rather than recomputing source history. New history goes into a subsequent inventory. The SQL backup remains until full maintenance finishes; existing covered-conversation and superseded-memory cleanup occurs at end.
+- Weekly/incremental background summary generation separately freezes its source chunks and cutoff inside the existing resumable local JSON checkpoint. Incoming records no longer invalidate its progress or cause completed work to restart from batch zero.
+- No silent destructive fallback, no unaudited unconditional deletion of original task histories, no client or database changes during packaging. Original sources are deliberately DELETED only in future live full-maintenance runs after verification and atomic commit. Back up PostgreSQL before deploying.
+- Tests: simulated abrupt power loss after first 20, resume without reprocessing accepted chunks, updated history while running, failed replay blocks deletion, N1 unapproved keep blocks deletion, grouped inputs kept together, and incremental fingerprint freeze. No live PostgreSQL migration/deletion test performed in this source-only release.
+
 ## Norm 0.55.10r8 — Visual PDF QtWebEngine callback fix (2026-10-13)
 
 - Corrected actual capture blocker: QtWebEngine returns an empty callback value for JavaScript objects/arrays on the tested KHzz setup; serialized JSON callbacks now reliably return DOM/scroll/region metadata to Python. Applied to discovery, scrolling in both directions, and visual-region detection.

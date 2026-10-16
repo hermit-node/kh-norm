@@ -1,6 +1,6 @@
 {
-  "package": "Norm-0.55.10r8-stego2",
-  "source_baseline": "Norm-0.55.10r8-visual-capture-callback-fix-portable-source.zip",
+  "package": "Norm-0.55.10r9-20Memory-Batch-Verified-Portable-Source",
+  "source_baseline": "Norm-0.55.10r8-StegOSplit-StegoServe-2Plugin-Portable-Source.zip",
   "files": [
     {
       "file": ".gitattributes",
@@ -24,8 +24,8 @@
     },
     {
       "file": "README.md",
-      "sha256": "415919f9c8be210a196ce2c1cdef9ea07706f0cd2d946111675582886487f558",
-      "bytes": 31793
+      "sha256": "e8afe4491a5bb0675ac6786708f6ce5d03c5130ad6ae4b8e839134ede2d1975b",
+      "bytes": 32642
     },
     {
       "file": "Run-Norm.bat",
@@ -34,8 +34,8 @@
     },
     {
       "file": "SOURCE_PACKAGE.md",
-      "sha256": "da357303210bdcdb042bd24cd78fab69907074533626445fec9c08e216b1dc07",
-      "bytes": 25174
+      "sha256": "e9eebaccca93b6f1a4fe6df7a7a77a0046e1a808b4826b9143aff492820a46e4",
+      "bytes": 25958
     },
     {
       "file": "Safe-Shutdown-Norm.bat",
@@ -59,8 +59,8 @@
     },
     {
       "file": "config/runtime.json",
-      "sha256": "72569957e0168bd58824311f21eb72a517210fe5dc15fa07b4615e0611e6e347",
-      "bytes": 16760
+      "sha256": "deb77778116cbc9c635e628b45d3d4d134772aacbfafcb4d980a402ae0a8a6c6",
+      "bytes": 16843
     },
     {
       "file": "config/settings.example.ini",
@@ -189,8 +189,8 @@
     },
     {
       "file": "core/norm_runtime/durable_log.py",
-      "sha256": "c1524ff0b44f96f98f1877efe3f4e897e9e9207f44568b7ac7c99918e3760084",
-      "bytes": 176102
+      "sha256": "5e5e95463df78b33821ba213d661afc090be604269cd54f6c00c6acc4e7f620c",
+      "bytes": 192381
     },
     {
       "file": "core/norm_runtime/file_access_policy.py",
@@ -204,8 +204,8 @@
     },
     {
       "file": "core/norm_runtime/history_maintenance.py",
-      "sha256": "c54eb8eb147abcda33b02eabe9be33fa26aadf5eaf2a7f05d8f7e777f09ce0ee",
-      "bytes": 85420
+      "sha256": "f3edcf6f0bc1cfcf794a87134fa274c909159f026340515c7bc3680bc4f7d311",
+      "bytes": 96118
     },
     {
       "file": "core/norm_runtime/http_api.py",
@@ -419,8 +419,8 @@
     },
     {
       "file": "docs/RELEASE_NOTES.md",
-      "sha256": "b4814ec1522bb00d299e0e3afeb5db58f2d4dbbbce9815eb5e18683ecf324303",
-      "bytes": 159296
+      "sha256": "28220885ee165ddbffb0a899d25adbb257651ef1c6e1738f55109431aade7619",
+      "bytes": 161903
     },
     {
       "file": "docs/SHARED_BROWSER.md",
@@ -679,8 +679,8 @@
     },
     {
       "file": "package-manifest.json",
-      "sha256": "a256ca6f6faf51e0aed2260729afe1cc0e22e24d9ee7017220b6ca669f6acffd",
-      "bytes": 38435
+      "sha256": "996195b9e66e7a2b3b6af236e9822ebd6a6ae7443d282871cc16af499dd4b385",
+      "bytes": 39411
     },
     {
       "file": "plugins/README.md",
@@ -1294,8 +1294,8 @@
     },
     {
       "file": "source-content-hashes.json",
-      "sha256": "bca2fa8b16e8665f3e8cbe37bd12f9154a957c3f1a0c39b014bec54643f556f4",
-      "bytes": 59821
+      "sha256": "2a4f674cfb5b23b8d43a1ceb5056d5b395f298805992f86e2de53945a438f0c2",
+      "bytes": 65952
     },
     {
       "file": "tools/7zip/7z.dll",
@@ -1693,6 +1693,11 @@
       "bytes": 4413
     },
     {
+      "file": "tools/test_full_condensation_r9.py",
+      "sha256": "1c45c970dd79ccea00e92e8669e3552c9c470ea573e03b88b822ea38d2a8b4cc",
+      "bytes": 10405
+    },
+    {
       "file": "tools/test_gui_celery_shutdown_r11.py",
       "sha256": "5da67f8d179a36d6c99823576b0031c43a2027b5ad69856264d9f7c9cda8e489",
       "bytes": 5737
@@ -1998,6 +2003,11 @@
       "bytes": 5514
     },
     {
+      "file": "tools/weasyprint.cmd",
+      "sha256": "41716ef6dfd0a7ed044fdc4bf55ce6bd18b4919bc8b3909e855ef569cbd88f37",
+      "bytes": 336
+    },
+    {
       "file": "tools/weasyprint/LICENSE",
       "sha256": "4746f7a77019f83d6d3f0efb5bb0a4d4e23f3ea8d8ef48981d413be0cdc5099e",
       "bytes": 1563
@@ -2011,11 +2021,6 @@
       "file": "tools/weasyprint/UPSTREAM_README.rst",
       "sha256": "81d863bc7b936f6869cfdb79ce7e44abcb71bbcff694676bca4a9cc01e7b450a",
       "bytes": 1670
-    },
-    {
-      "file": "tools/weasyprint.cmd",
-      "sha256": "41716ef6dfd0a7ed044fdc4bf55ce6bd18b4919bc8b3909e855ef569cbd88f37",
-      "bytes": 336
     },
     {
       "file": "tools/weasyprint_smoke.py",

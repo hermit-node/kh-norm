@@ -427,6 +427,37 @@ class PostgresTaskLog:
                     created_at timestamptz NOT NULL DEFAULT now()
                 )
             """).format(sql.Identifier(self.schema)))
+            cur.execute(sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {}.condensation_runs (
+                    run_id uuid PRIMARY KEY,
+                    mode text NOT NULL,
+                    status text NOT NULL DEFAULT 'running',
+                    backup_path text NOT NULL,
+                    source_hash text NOT NULL,
+                    total_batches integer NOT NULL,
+                    started_at timestamptz NOT NULL DEFAULT now(),
+                    completed_at timestamptz
+                )
+            """).format(sql.Identifier(self.schema)))
+            cur.execute(sql.SQL("""
+                CREATE UNIQUE INDEX IF NOT EXISTS {} ON {}.condensation_runs(mode)
+                WHERE status='running'
+            """).format(sql.Identifier(f"idx_{self.schema}_condensation_active"), sql.Identifier(self.schema)))
+            cur.execute(sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {}.condensation_batches (
+                    run_id uuid NOT NULL REFERENCES {}.condensation_runs(run_id) ON DELETE RESTRICT,
+                    batch_index integer NOT NULL,
+                    source_hash text NOT NULL,
+                    source_ids jsonb NOT NULL,
+                    source_payload jsonb,
+                    status text NOT NULL DEFAULT 'pending',
+                    results jsonb NOT NULL DEFAULT '[]'::jsonb,
+                    verification jsonb NOT NULL DEFAULT '[]'::jsonb,
+                    original_deleted integer NOT NULL DEFAULT 0,
+                    committed_at timestamptz,
+                    PRIMARY KEY(run_id,batch_index)
+                )
+            """).format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
             for table in ("task_steps", "task_evidence", "task_step_segments", "task_thinking_segments", "task_recovery_notes", "task_context_slices", "task_evidence_archive"):
                 cur.execute(sql.SQL("ALTER TABLE {}.{} ADD COLUMN IF NOT EXISTS node_uuid uuid").format(sql.Identifier(self.schema), sql.Identifier(table)))
             cur.execute(sql.SQL("ALTER TABLE {}.task_runs ADD COLUMN IF NOT EXISTS parent_task_uuid uuid").format(sql.Identifier(self.schema)))
@@ -2433,6 +2464,215 @@ class PostgresTaskLog:
                 "steps": steps.get(str(task_id), []), "evidence": evidence.get(str(task_id), []),
             })
         return out
+
+    def active_full_condensation_run(self) -> dict | None:
+        """Load the one unfinished frozen full-maintenance inventory, not live history."""
+        with self._connect() as conn, conn.cursor() as cur:
+            s = sql.Identifier(self.schema)
+            cur.execute(sql.SQL("""
+                SELECT run_id::text, backup_path, source_hash, total_batches, started_at
+                FROM {}.condensation_runs WHERE mode='full' AND status='running'
+                ORDER BY started_at LIMIT 1
+            """).format(s))
+            row = cur.fetchone()
+            if not row:
+                return None
+            cur.execute(sql.SQL("""
+                SELECT batch_index, source_hash, source_payload, source_ids, status,
+                       results, verification, original_deleted
+                FROM {}.condensation_batches WHERE run_id=%s::uuid ORDER BY batch_index
+            """).format(s), (row[0],))
+            batches = [{"index": r[0], "source_hash": r[1], "groups": r[2],
+                        "source_ids": r[3], "status": r[4], "results": r[5] or [],
+                        "verification": r[6] or [], "original_deleted": r[7]}
+                       for r in cur.fetchall()]
+        if len(batches) != row[3] or [r["index"] for r in batches] != list(range(1, row[3] + 1)):
+            raise RuntimeError("PostgreSQL full-condensation inventory incomplete; refusing new run")
+        return {"run_id": row[0], "backup_path": row[1], "source_hash": row[2],
+                "total_batches": row[3], "started_at": row[4], "batches": batches}
+
+    def create_full_condensation_run(self, groups_in_batches: list[list[list[dict]]], backup_path: str) -> dict:
+        """Freeze all source payloads and identifiers before model calls or any pruning."""
+        import hashlib
+        if not groups_in_batches or not backup_path or not Path(backup_path).is_file():
+            raise ValueError("full condensation requires a nonempty inventory and existing SQL safety backup")
+        batches = []
+        for index, groups in enumerate(groups_in_batches, 1):
+            payload = json.loads(json.dumps(groups, default=str, ensure_ascii=False))
+            ids = [str(r["task_id"]) for group in payload for r in group]
+            if not ids or len(set(ids)) != len(ids):
+                raise ValueError("duplicate or missing source IDs in condensation batch")
+            digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode('utf-8')).hexdigest()
+            batches.append((index, digest, payload, ids))
+        flat = [sid for _index, _digest, _payload, ids in batches for sid in ids]
+        if len(set(flat)) != len(flat):
+            raise ValueError("full condensation inventory overlaps between batches")
+        manifest_hash = hashlib.sha256('\n'.join(b[1] for b in batches).encode('ascii')).hexdigest()
+        run_id = str(uuid.uuid4())
+        with self._connect() as conn, conn.cursor() as cur:
+            s = sql.Identifier(self.schema)
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"norm:full-condensation:{self.schema}",))
+            cur.execute(sql.SQL("SELECT run_id FROM {}.condensation_runs WHERE mode='full' AND status='running' LIMIT 1").format(s))
+            if cur.fetchone():
+                raise RuntimeError("an unfinished full-condensation inventory already exists; resume it instead")
+            cur.execute(sql.SQL("""
+                INSERT INTO {}.condensation_runs(run_id,mode,status,backup_path,source_hash,total_batches)
+                VALUES (%s::uuid,'full','running',%s,%s,%s)
+            """).format(s), (run_id, str(backup_path), manifest_hash, len(batches)))
+            for index, digest, payload, ids in batches:
+                cur.execute(sql.SQL("""
+                    INSERT INTO {}.condensation_batches(run_id,batch_index,source_hash,source_ids,source_payload,status)
+                    VALUES (%s::uuid,%s,%s,%s,%s,'pending')
+                """).format(s), (run_id, index, digest, Jsonb(ids), Jsonb(payload)))
+        return self.active_full_condensation_run()
+
+    def commit_full_condensation_batch(self, *, run_id: str, batch_index: int,
+                                       records: list[dict], verification: list[dict],
+                                       discard_ids: list[str]) -> dict:
+        """ONE transaction: verified compact rows, raw deletion and durable checkbox.
+
+        An interrupted PostgreSQL commit either performs all three or none.
+        The original source payload is dropped only when commit succeeds.
+        """
+        import hashlib
+        s = sql.Identifier(self.schema)
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql.SQL("""
+                SELECT source_hash,source_payload,source_ids,status
+                FROM {}.condensation_batches
+                WHERE run_id=%s::uuid AND batch_index=%s FOR UPDATE
+            """).format(s), (run_id, batch_index))
+            row = cur.fetchone()
+            if row is None:
+                raise RuntimeError("unknown condensation batch")
+            source_hash, groups, source_ids, status = row
+            if status == 'committed':
+                # A replayed request must never prune twice; the caller must reload
+                # the persisted status after an uncertain connection outcome.
+                return {"already_committed": True, "deleted_raw": 0, "deleted_compact": 0}
+            if status != 'pending' or not groups:
+                raise RuntimeError("batch is not pending with a frozen source")
+            digest = hashlib.sha256(json.dumps(groups, sort_keys=True, ensure_ascii=False).encode('utf8')).hexdigest()
+            if digest != source_hash:
+                raise RuntimeError("frozen batch source hash changed; pruning refused")
+            actual_ids = [str(item['task_id']) for group in groups for item in group]
+            if set(actual_ids) != set(source_ids) or len(actual_ids) != len(source_ids):
+                raise RuntimeError("batch source IDs differ from frozen inventory")
+            discard = {str(v) for v in discard_ids}
+            if not discard <= set(source_ids):
+                raise RuntimeError("unrecognized discard source IDs")
+            survivor_ids = set()
+            primary_ids = set()
+            for record in records:
+                primary = str(record['primary_task_id'])
+                if primary in primary_ids:
+                    raise RuntimeError("duplicate compact memory primary ID")
+                primary_ids.add(primary)
+                survivor_ids.update(str(v) for v in record['source_task_ids'])
+                survivor_ids.add(primary)
+            if (survivor_ids & discard) or (set(source_ids) - (survivor_ids | discard)):
+                raise RuntimeError("uncovered or multiply-disposed source; refusing deletion")
+            # All survivors have a replay verdict, and each explicit N1 discard
+            # is named in verification. No sampled approval authorizes pruning.
+            replayed = {str(v['task_id']) for v in verification if v.get('passed') and v.get('kind') == 'replay'}
+            approved_keep = {str(v['task_id']) for v in verification if v.get('passed') and v.get('kind') == 'n1_keep'}
+            approved_destroy = {str(v['task_id']) for v in verification if v.get('passed') and v.get('kind') == 'n1_destroy'}
+            if ((set(source_ids) - discard) - (replayed & approved_keep) or
+                    discard != approved_destroy or approved_keep & discard):
+                raise RuntimeError("missing full-batch reconstruction or explicit N1 approval")
+            # A frozen inventory is valid only while its original database rows
+            # have not changed. Lock the rows BEFORE writing or pruning anything.
+            frozen_rows = {str(r['task_id']): r for group in groups for r in group}
+            raw_ids = [sid for sid in source_ids if not frozen_rows[str(sid)].get('archived_compact')]
+            archived_ids = [sid for sid in source_ids if frozen_rows[str(sid)].get('archived_compact')]
+            if raw_ids:
+                cur.execute(sql.SQL("SELECT task_id,status,updated_at FROM {}.task_runs WHERE task_id=ANY(%s) FOR UPDATE").format(s), (raw_ids,))
+                current = {str(sid):(str(status), when) for sid,status,when in cur.fetchall()}
+                if set(current) != set(raw_ids):
+                    raise RuntimeError('frozen raw task disappeared or changed before batch commit')
+                for sid in raw_ids:
+                    status, updated_at = current[sid]
+                    if status not in ('completed','failed','cancelled','passed_to'):
+                        raise RuntimeError('nonterminal frozen task; refusing deletion')
+                    expected_at = datetime.fromisoformat(frozen_rows[sid]['updated_at'])
+                    if updated_at != expected_at:
+                        raise RuntimeError('frozen raw task timestamp changed; refusing deletion')
+            if archived_ids:
+                cur.execute(sql.SQL("SELECT primary_task_id,archived_at FROM {}.task_history WHERE primary_task_id=ANY(%s) FOR UPDATE").format(s), (archived_ids,))
+                current = {str(sid): when for sid,when in cur.fetchall()}
+                if set(current) != set(archived_ids):
+                    raise RuntimeError('frozen compact memory disappeared before batch commit')
+                for sid in archived_ids:
+                    if current[sid] != datetime.fromisoformat(frozen_rows[sid]['updated_at']):
+                        raise RuntimeError('frozen compact memory was revised; refusing deletion')
+            for record in records:
+                cur.execute(sql.SQL("""
+                    INSERT INTO {}.task_history(primary_task_id,task_date,title,status,original_request,
+                        outcome,lessons,future_note,source_task_ids,validated,task_kind,parent_task_id,parent_step_id,task_depth)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,true,%s,%s,%s,%s)
+                    ON CONFLICT(primary_task_id) DO UPDATE SET
+                        task_date=EXCLUDED.task_date,title=EXCLUDED.title,status=EXCLUDED.status,
+                        original_request=EXCLUDED.original_request,outcome=EXCLUDED.outcome,
+                        lessons=EXCLUDED.lessons,future_note=EXCLUDED.future_note,
+                        source_task_ids=EXCLUDED.source_task_ids,validated=true,
+                        task_kind=EXCLUDED.task_kind,parent_task_id=EXCLUDED.parent_task_id,
+                        parent_step_id=EXCLUDED.parent_step_id,task_depth=EXCLUDED.task_depth,archived_at=now()
+                """).format(s), (
+                    record['primary_task_id'], record['task_date'], record['title'], record['status'],
+                    record['original_request'], record['outcome'], record['lessons'], record['future_note'],
+                    Jsonb(list(record['source_task_ids'])), str(record.get('task_kind') or 'root'),
+                    str(record.get('parent_task_id') or '') or None,
+                    str(record.get('parent_step_id') or '') or None, int(record.get('task_depth') or 0)
+                ))
+            raw_ids = [str(r['task_id']) for group in groups for r in group if not r.get('archived_compact')]
+            obsolete_compact = [str(r['task_id']) for group in groups for r in group
+                                if r.get('archived_compact') and str(r['task_id']) not in primary_ids]
+            if raw_ids:
+                cur.execute(sql.SQL("SELECT task_id,status FROM {}.task_runs WHERE task_id=ANY(%s)").format(s), (raw_ids,))
+                rows = cur.fetchall()
+                if any(status not in ('completed','failed','cancelled','passed_to') for _,status in rows):
+                    raise RuntimeError("nonterminal task in frozen batch; pruning refused")
+                # Only validated compact records can cover a surviving raw task.
+                cur.execute(sql.SQL("SELECT primary_task_id,source_task_ids FROM {}.task_history WHERE validated=true").format(s))
+                covered = set()
+                for primary, ids in cur.fetchall():
+                    covered.add(str(primary))
+                    covered.update(str(v) for v in (ids or []))
+                if set(raw_ids) - discard - covered:
+                    raise RuntimeError("raw task not covered by validated compact memory")
+                prepare_task_prune_cur(cur, self.schema, raw_ids)
+                cur.execute(sql.SQL("DELETE FROM {}.task_runs WHERE task_id=ANY(%s)").format(s), (raw_ids,))
+                deleted_raw = int(cur.rowcount or 0)
+            else:
+                deleted_raw = 0
+            if obsolete_compact:
+                cur.execute(sql.SQL("DELETE FROM {}.task_history WHERE primary_task_id=ANY(%s)").format(s), (obsolete_compact,))
+                deleted_compact = int(cur.rowcount or 0)
+            else:
+                deleted_compact = 0
+            clean_records = json.loads(json.dumps(records, ensure_ascii=False, default=str))
+            cur.execute(sql.SQL("""
+                UPDATE {}.condensation_batches SET status='committed',source_payload=NULL,
+                    results=%s,verification=%s,original_deleted=%s,committed_at=now()
+                WHERE run_id=%s::uuid AND batch_index=%s
+            """).format(s), (Jsonb(clean_records), Jsonb(verification),
+                           deleted_raw+deleted_compact, run_id, batch_index))
+        return {"already_committed": False, "deleted_raw": deleted_raw, "deleted_compact": deleted_compact}
+
+    def finish_full_condensation_run(self, run_id: str) -> bool:
+        with self._connect() as conn, conn.cursor() as cur:
+            s = sql.Identifier(self.schema)
+            cur.execute(sql.SQL("SELECT total_batches,status FROM {}.condensation_runs WHERE run_id=%s::uuid FOR UPDATE").format(s), (run_id,))
+            row = cur.fetchone()
+            if not row:
+                raise RuntimeError("missing condensation run")
+            if row[1] == 'completed':
+                return False
+            cur.execute(sql.SQL("SELECT COUNT(*) FROM {}.condensation_batches WHERE run_id=%s::uuid AND status='committed'").format(s), (run_id,))
+            if cur.fetchone()[0] != row[0]:
+                raise RuntimeError("cannot finalize partially committed full condensation")
+            cur.execute(sql.SQL("UPDATE {}.condensation_runs SET status='completed',completed_at=now() WHERE run_id=%s::uuid").format(s), (run_id,))
+        return True
 
     def upsert_task_history(self, records: list[dict], *, validated: bool = False) -> list[str]:
         primary_ids: list[str] = []

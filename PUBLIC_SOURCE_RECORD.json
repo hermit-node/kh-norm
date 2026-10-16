@@ -1,15 +1,14 @@
 {
-  "version": "0.55.10r8",
-  "variant": "StegOSplit-StegoServe-2Plugin",
-  "tag": "v0.55.10r8-stegosplit-stegoserve-2plugin",
-  "source_archive_sha256": "acff2efc188c1bf03758a555cb49ad0880492a2dde286068e66891f3cc8c8920",
-  "source_archive": "0.55.10r8--StegOSplit-StegoServe-2Plugin--acff2efc188c.zip",
-  "quality": "source-inventory-stale",
+  "version": "0.55.10r9",
+  "variant": "20Memory-Batch-Verified",
+  "tag": "v0.55.10r9",
+  "source_archive_sha256": "4c4ae5f9da3681567b4c952dddcc33b99a17e668ff8be224eacc2f8126f3c0c8",
+  "source_archive": "0.55.10r9--20Memory-Batch-Verified--4c4ae5f9da36.zip",
+  "quality": "source-inventory-verified",
   "known_issues": [
-    "Original producer SHA-256 sidecar not provided; SHA-256 independently computed.",
-    "Embedded source inventory stale: missing=34, mismatched=4, unlisted=65."
+    "Original producer SHA-256 sidecar not provided; SHA-256 independently computed."
   ],
-  "published_source_files": 346,
+  "published_source_files": 347,
   "omitted_paths": [
     "backups/plugins-ini/plugins-20261014-151017-561326+0000-72956dfad8bb.ini",
     "config/plugins.ini",
