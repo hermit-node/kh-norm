@@ -1,3 +1,18 @@
+## Norm 0.55.9r12 — PDF dependency packaging repair (2026-10-12)
+
+- Built from the later standalone 0.55.9r11 portable-source ZIP, preserving its additional GUI/Celery shutdown corrections and regression test. No redesign or changes to the shared_browser exporter.
+- Fixed the requirements-lock tail where literal backslash-n characters joined six, PySide6, and ReportLab into one invalid requirement. Each is now a distinct requirement line.
+- Retained ReportLab 4.4.4 and PySide6 6.12.0 as explicit installed dependencies, and added isolated PDF-export and requirements regression checks.
+- Recomputed package SHA-256 inventory; existing compiled private plugins and all plugin identities remain byte-for-byte unchanged.
+- This is a portable-source and installer-kit repair; it does not silently modify a running C:\Norm installation. Reinstall/upgrade using the packaged installer to populate missing dependencies.
+- PDF generation from ChatGPT JSONL remains explicitly partial-unverified without independent full-conversation capture evidence.
+- Native write_file now has fail-closed no-clobber CREATE, verified existing-identical no-op, and an explicit hash-guarded REPLACE with a reason and a fresh pre-commit checksum; changed files abort instead of being overwritten. replace_text uses the same mutation boundary.
+- Only clearly task-owned intermediate scripts (task temp, explicit ephemeral, or obvious transient helper names) are auto-tagged for soft-delete; their recorded hashes must still match at cleanup. Pre-existing/user-delivered scripts are excluded.
+- On verified successful task completion: commit the user-facing conclusion, soft-delete registered disposable work, check expected delivered files still exist, then restore missing outputs once from exact-path reversible-trash metadata. Recovery is terminal: no repeat cleanup, no rewrite, no trash purge, and no post-restore verification.
+- Added test_file_integrity_r12.py for no-clobber, stale-hash, competing-writer, script cleanup protection and final-stage one-shot recovery.
+- Public Verbatim Lines append, insert and run tools now route through the native guarded write boundary; their tool schemas expose expected_sha256 and replacement_reason for existing differing files. The private writer for temporary staging remains intact and the plugin source identity is unchanged.
+- Arbitrary shell commands and independently mutating third-party plugins are not OS-sandboxed by this native file-operation guard; no blanket ban or redesign of run_command was introduced.
+
 ### r11 GUI-helper / Celery shutdown hotfix (October 12, in-place revision)
 
 - tools/start_desktop_gui.py: fixed the unexpected brace field exception from applying Python str.format to PowerShell conditional block braces. Replaces only the four intended placeholders (python, args, root, user), leaving PowerShell braces intact and preserving interactive-user-only task protections.

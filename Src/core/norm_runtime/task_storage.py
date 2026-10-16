@@ -221,6 +221,7 @@ class TaskStorageManager:
             "role": str(role),
             "source": str(Path(source).resolve()) if source else None,
             "size_bytes": int(size),
+            "sha256": _sha256(target) if target.is_file() and not target.is_symlink() else None,
             "reproducible": bool(reproducible),
             "recipe": recipe,
             "retention": retention,
@@ -239,6 +240,21 @@ class TaskStorageManager:
         self._save(data)
         return item
 
+    def update_owned_asset_hash(self, path: str | Path, digest: str) -> None:
+        """Refresh a task-owned artifact only; never confer ownership on old files."""
+        if not self.task_id:
+            return
+        target = str(Path(path).resolve())
+        data = self._load()
+        changed = False
+        for item in data.get("assets", []):
+            if (isinstance(item, dict) and item.get("path") == target
+                    and item.get("created_by_norm") and not item.get("user_requested")):
+                item["sha256"] = str(digest)
+                changed = True
+        if changed:
+            self._save(data)
+
     def cleanup_candidates(self, *, suppressed: bool = False) -> list[dict[str, Any]]:
         """Return only Norm-created files safe enough for automatic soft deletion.
 
@@ -256,7 +272,11 @@ class TaskStorageManager:
             if bool(item.get("user_requested")) or str(item.get("retention") or "") == "durable":
                 continue
             path = Path(str(item.get("path") or "")).resolve(strict=False)
-            if not path.is_file():
+            if not path.is_file() or path.is_symlink():
+                continue
+            # Never delete a file that was modified after Norm registered it.
+            expected_digest = item.get("sha256")
+            if not expected_digest or _sha256(path) != expected_digest:
                 continue
             reproducible = bool(item.get("reproducible"))
             retention = str(item.get("retention") or "review")

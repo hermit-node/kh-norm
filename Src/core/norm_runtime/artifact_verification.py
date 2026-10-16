@@ -64,6 +64,12 @@ def snapshot(evidence: list[dict]) -> list[dict]:
             observed=result
         path=str(observed.get("path") or "")
         digest=str(observed.get("sha256") or "")
+        if tool == "write_file" and path and observed.get("unchanged") is True and observed.get("prewrite_verified") is True:
+            # Existing identical file was inspected BEFORE the attempted write.
+            # It was not mutated. Independently verify its current bytes instead.
+            generated[path] = _hash_file(path, expected_hash=digest, expected_size=int(observed.get("bytes") or 0))
+            generated[path]["verification_method"] = "verified_existing_identical_noop"
+            continue
         if (tool in {"write_file","replace_text"} or observed.get("file_mutation")) and path:
             writes[path]=digest
             verified={x for x in verified if x[0]!=path}

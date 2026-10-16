@@ -190,8 +190,7 @@ class FileToolExecutor:
             "- read_file(path, ...): streams bounded UTF-8/bytes from normal files. Large default text reads are context-budgeted automatically. When a result includes chunk_stream, N2 receives exactly ONE raw piece for that turn; before requesting another piece, preserve useful facts in the next call's retain field, then request exactly one piece using the returned stream_id + piece number. Piece numbers may jump; never request neighbors or multiple pieces merely for convenience. Seam markers such as {0:1}, {1:2}, and {15:0} identify boundaries while prior raw pieces are evicted from active context. Archive files are recognized and default to a non-extracting manifest. Use archive_action=read_member/hash_member/compare_directory for selective archive work; the archive adapter prefers the local 7-Zip CLI and never extracts implicitly.\n"
             "- append_task_note(content, category?): append durable internal Markdown notes in automatically rotated <=5 MiB chunks for the active task.\n"
             "- make_directory(path): creates a directory inside an allowed root.\n"
-            "- write_file(path, content, expected_sha256?, reproducible?, retention?, user_requested?, recipe?): creates a UTF-8 file; mark explicit user outputs user_requested=true/retention=durable; mark easy-to-recreate helpers reproducible=true/retention=ephemeral. Existing files "
-            "require the sha256 returned by read_file.\n"
+            "- write_file(path, content, operation?, expected_sha256?, replacement_reason?, reproducible?, retention?, user_requested?, recipe?): defaults to atomic no-clobber CREATE. If existing content already matches, skip without mutation. To change a differing file, explicitly use operation=replace with its observed read_file SHA-256 and a replacement_reason; changed pre-write state aborts. Mark explicit user outputs durable; new interim scripts are ephemeral and tracked for safe terminal cleanup.\n"
             "- replace_text(path, old_text, new_text, expected_sha256, expected_occurrences?): hash-checked exact edit.\n"
             "- delete_file(path, reason): move a file into reversible trash; permanent purge waits for graceful shutdown.\n"
             + (("- run_command(command, cwd?, timeout_seconds?, stdin_text?): execute a PowerShell command for running/tests/inspection; returns exit_code, stdout, and stderr. Prefer native file tools for file edits/deletes.\n" + (f"- For multiline or quote-heavy command work, use the operator helper at {self.verbatim_helper} with stdin_text containing the complete script (stdin is otherwise closed), then run that script and verify its result; do not build large nested PowerShell quoting expressions.\n" if self.verbatim_helper else "")) if self.shell_enabled else "")
@@ -267,11 +266,13 @@ class FileToolExecutor:
             ),
             tool(
                 "write_file",
-                "Create a UTF-8 file. To replace an existing file, supply its current SHA-256 from read_file.",
+                "Atomic no-clobber CREATE by default. Identical existing bytes are a no-op. Changing an existing file requires operation=replace, its observed current SHA-256, and a replacement_reason; abort on changed state.",
                 {
                     "path": path,
                     "content": {"type": "string"},
                     "expected_sha256": {"type": "string"},
+                    "operation": {"type": "string", "enum": ["create", "replace"]},
+                    "replacement_reason": {"type": "string", "description": "Why existing differing contents may be deliberately replaced; required for operation=replace."},
                     "reproducible": {"type": "boolean", "description": "True when the created file is easy to recreate from durable task state/source."},
                     "retention": {"type": "string", "enum": ["ephemeral", "review", "durable"]},
                     "user_requested": {"type": "boolean", "description": "True only when this file is an explicit user-requested output/artifact."},
@@ -336,7 +337,21 @@ class FileToolExecutor:
                 ),
             ])
         if self.plugin_manager is not None:
-            schemas.extend(self.plugin_manager.schemas())
+            plugin_schemas = self.plugin_manager.schemas()
+            for schema in plugin_schemas:
+                function = schema.get("function") or {}
+                tool_name = str(function.get("name") or "")
+                if (tool_name.startswith("plugin_verbatim_lines__") and
+                        tool_name.rsplit("__", 1)[-1] in {"append_text", "insert_text"}):
+                    params = function.get("parameters") or {}
+                    props = params.setdefault("properties", {})
+                    props["expected_sha256"] = {"type": "string", "description": "Required pre-write SHA-256 for an existing file; obtain through read_file."}
+                    props["replacement_reason"] = {"type": "string", "description": "Required justification when changing an existing file."}
+                    function["description"] = (
+                        str(function.get("description") or "") +
+                        " Existing differing files use native hash-guarded replace with expected_sha256 and replacement_reason; no blind append/insert."
+                    )
+            schemas.extend(plugin_schemas)
         return schemas
 
     def set_task_context(self, task_id: str | None, step_id: str | None = None) -> None:
@@ -366,13 +381,17 @@ class FileToolExecutor:
                 method = getattr(self, f"_{name}")
                 result = method(arguments)
             elif self.plugin_manager is not None and self.plugin_manager.has_tool(name):
-                envelope = self.plugin_manager.execute(name, arguments)
-                payload = envelope.get("result")
-                result = dict(payload) if isinstance(payload, dict) else {"value": payload}
-                if str(envelope.get("stderr") or "").strip():
-                    result["plugin_stderr"] = str(envelope["stderr"])[:4000]
-                if str(envelope.get("stdout") or "").strip():
-                    result["plugin_stdout"] = str(envelope["stdout"])[:4000]
+                if (name.startswith("plugin_verbatim_lines__") and
+                        name.rsplit("__", 1)[-1] in {"append_text", "insert_text", "run"}):
+                    result = self._guarded_verbatim_public_call(name, arguments)
+                else:
+                    envelope = self.plugin_manager.execute(name, arguments)
+                    payload = envelope.get("result")
+                    result = dict(payload) if isinstance(payload, dict) else {"value": payload}
+                    if str(envelope.get("stderr") or "").strip():
+                        result["plugin_stderr"] = str(envelope["stderr"])[:4000]
+                    if str(envelope.get("stdout") or "").strip():
+                        result["plugin_stdout"] = str(envelope["stdout"])[:4000]
             else:
                 raise ValueError(f"unsupported tool: {name}; deletion is not available")
             result.setdefault("ok", True)
@@ -852,6 +871,14 @@ class FileToolExecutor:
             path.unlink(missing_ok=True)
             raise
 
+    def _uncached_sha256(self, path: Path) -> str:
+        """Do not use size/mtime-cached hashes for destructive preconditions."""
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
     def _write_file(self, arguments: dict[str, Any]) -> dict[str, Any]:
         path = self._resolve(arguments.get("path"), access="write")
         content = arguments.get("content")
@@ -860,15 +887,36 @@ class FileToolExecutor:
         encoded = content.encode("utf-8")
         if len(encoded) > self.max_write_bytes:
             raise ValueError("content exceeds write limit")
-        expected = arguments.get("expected_sha256")
-        created = not path.exists()
-        if path.exists():
-            if not path.is_file():
-                raise IsADirectoryError(path)
-            actual = self._sha256(path)
-            if not isinstance(expected, str) or expected.lower() != actual:
-                raise ValueError("existing file requires its current expected_sha256")
-            self._backup(path, actual)
+
+        wanted_hash = hashlib.sha256(encoded).hexdigest()
+        operation = str(arguments.get("operation") or "create").strip().lower()
+        if operation not in {"create", "replace"}:
+            raise ValueError("operation must be 'create' or 'replace'")
+        if path.is_symlink() or getattr(path, "is_junction", lambda: False)():
+            raise PermissionError("linked files cannot be replaced by write_file")
+        exists = path.exists()
+        if exists and not path.is_file():
+            raise IsADirectoryError(path)
+        previous_hash = self._uncached_sha256(path) if exists else ""
+        if exists and previous_hash == wanted_hash:
+            # This is a verified pre-write comparison: deliberately NO mutation.
+            return {"path": str(path), "created": False, "unchanged": True,
+                    "operation": "unchanged", "prewrite_verified": True,
+                    "original_sha256": previous_hash, "bytes": len(encoded),
+                    "sha256": previous_hash}
+        if exists:
+            if operation != "replace":
+                raise FileExistsError("create refused: existing file differs; read and explicitly request replace")
+            expected = arguments.get("expected_sha256")
+            if not isinstance(expected, str) or expected.lower() != previous_hash:
+                raise ValueError("replace refused: current expected_sha256 required and must match original")
+            reason = str(arguments.get("replacement_reason") or "").strip()
+            if not reason:
+                raise ValueError("replace requires a nonempty replacement_reason")
+            self._backup(path, previous_hash)
+        elif operation == "replace":
+            raise FileNotFoundError("replace refused: target did not exist at preflight")
+
         if self.task_storage is not None and self.task_storage.task_id:
             try:
                 path.relative_to(self.task_storage.task_root)
@@ -878,46 +926,123 @@ class FileToolExecutor:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(f".{path.name}.normtmp-{uuid.uuid4().hex}")
         self._write_verbatim_temp(temporary, content, len(encoded))
-        context = arguments.get("_write_context") if isinstance(arguments.get("_write_context"), dict) else {"operation": "write_file"}
-        self._replace_with_retries(temporary, path, expected, context)
-        result = {
-            "path": str(path),
-            "created": created,
-            "bytes": len(encoded),
-            "sha256": self._sha256(path),
-        }
-        if self.task_storage is not None and self.task_storage.task_id and created:
-            retention = str(arguments.get("retention") or "review").strip().lower()
-            if retention not in {"ephemeral", "review", "durable"}:
-                retention = "review"
-            user_requested = bool(arguments.get("user_requested", False))
-            reproducible = bool(arguments.get("reproducible", False))
-            try:
-                path.relative_to(self.task_storage.temp_root)
-            except ValueError:
-                pass
-            else:
-                if not user_requested and retention == "review":
+        context = arguments.get("_write_context") if isinstance(arguments.get("_write_context"), dict) else {"operation": operation}
+        try:
+            self._replace_with_retries(temporary, path, previous_hash if exists else None, context)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
+        written_hash = self._uncached_sha256(path)
+        if written_hash != wanted_hash:
+            raise RuntimeError("post-write integrity check failed; written data differs")
+        result = {"path": str(path), "created": not exists, "unchanged": False,
+                  "operation": operation, "prewrite_verified": True,
+                  "original_sha256": previous_hash or None,
+                  "bytes": len(encoded), "sha256": written_hash}
+        if self.task_storage is not None and self.task_storage.task_id:
+            if not exists:
+                retention = str(arguments.get("retention") or "review").strip().lower()
+                if retention not in {"ephemeral", "review", "durable"}:
+                    retention = "review"
+                user_requested = bool(arguments.get("user_requested", False))
+                reproducible = bool(arguments.get("reproducible", False))
+                is_script = path.suffix.lower() in {".py", ".pyw", ".ps1", ".bat", ".cmd", ".js", ".mjs", ".cjs", ".sh"}
+                explicitly_ephemeral = str(arguments.get("retention") or "").strip().lower() == "ephemeral"
+                task_temp = path.is_relative_to(self.task_storage.temp_root)
+                obvious_helper = path.stem.lower().startswith(("probe_", "dump_", "scratch_", "tmp_", "temp_", "oneoff_"))
+                temporary_script = bool(is_script and not user_requested and (
+                    explicitly_ephemeral or task_temp or
+                    (not arguments.get("retention") and obvious_helper)
+                ))
+                if temporary_script and retention == "review":
                     retention = "ephemeral"
                     reproducible = True
-            self.task_storage.register_asset(
-                path, role="created_file", reproducible=reproducible,
-                recipe=str(arguments.get("recipe") or "").strip() or None,
-                retention="durable" if user_requested else retention,
-                created_by_norm=True, user_requested=user_requested,
-            )
-            result["task_storage"] = self.task_storage.capacity()
-            result["cleanup_metadata"] = {
-                "reproducible": reproducible, "retention": "durable" if user_requested else retention,
-                "user_requested": user_requested,
-            }
+                if task_temp and not user_requested and retention == "review":
+                    retention = "ephemeral"
+                    reproducible = True
+                self.task_storage.register_asset(
+                    path, role="temporary_script" if temporary_script else "created_file",
+                    reproducible=reproducible, recipe=str(arguments.get("recipe") or "").strip() or None,
+                    retention="durable" if user_requested else retention,
+                    created_by_norm=True, user_requested=user_requested,
+                )
+                result["task_storage"] = self.task_storage.capacity()
+                result["cleanup_metadata"] = {
+                    "reproducible": reproducible, "retention": "durable" if user_requested else retention,
+                    "user_requested": user_requested, "temporary_script": temporary_script,
+                }
+            else:
+                # Only refresh the checksum of an asset already proven created by this task.
+                self.task_storage.update_owned_asset_hash(path, written_hash)
         return result
+
+    def _guarded_verbatim_public_call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """No public Verbatim Lines mutation may bypass core pre-write protection.
+
+        The private _write_text primitive still writes only a unique temporary file
+        for an already authorized native write_file operation.
+        """
+        action = name.rsplit("__", 1)[-1]
+        args = arguments
+        if action == "run":
+            args = arguments.get("payload")
+            if not isinstance(args, dict):
+                raise ValueError("verbatim run payload must be an object")
+            action = str(args.get("action") or "append").strip().lower()
+        if action in {"append_text", "append"}:
+            mode = "append"
+        elif action in {"insert_text", "insert"}:
+            mode = "insert"
+        else:
+            raise ValueError("unsupported verbatim edit action")
+
+        path = self._resolve(args.get("path"), access="write")
+        if path.is_symlink() or getattr(path, "is_junction", lambda: False)():
+            raise PermissionError("linked verbatim edits are not authorized")
+        if path.exists() and not path.is_file():
+            raise IsADirectoryError(path)
+        before = ""
+        if path.is_file():
+            if path.stat().st_size > self.max_write_bytes:
+                raise ValueError("verbatim edit exceeds bounded text size; use an explicit safe chunk workflow")
+            with path.open("r", encoding="utf-8", newline="") as handle:
+                before = handle.read()
+        content = args.get("content")
+        if not isinstance(content, str):
+            raise ValueError("verbatim content must be a string")
+        if mode == "append":
+            desired = before + content
+            metadata = {"mode": "append", "bytes_before": len(before.encode("utf-8"))}
+        else:
+            line = int(args.get("line") or 0)
+            if line < 1:
+                raise ValueError("line must be one or greater")
+            lines = before.splitlines(keepends=True)
+            incoming = content.splitlines(keepends=True)
+            if content and not incoming:
+                incoming = [content]
+            index = min(line - 1, len(lines))
+            lines[index:index] = incoming
+            desired = "".join(lines)
+            metadata = {"mode": "insert", "line": index + 1, "inserted_lines": len(incoming)}
+
+        observed = self._write_file({
+            "path": str(path),
+            "content": desired,
+            "operation": "replace" if path.exists() else "create",
+            "expected_sha256": args.get("expected_sha256"),
+            "replacement_reason": args.get("replacement_reason"),
+            "retention": args.get("retention"),
+            "user_requested": args.get("user_requested", False),
+            "reproducible": args.get("reproducible", False),
+        })
+        return {**observed, **metadata, "bytes_after": len(desired.encode("utf-8"))}
 
     def _replace_text(self, arguments: dict[str, Any]) -> dict[str, Any]:
         path = self._resolve(arguments.get("path"), access="write")
         if not path.is_file():
             raise FileNotFoundError(path)
-        actual_hash = self._sha256(path)
+        actual_hash = self._uncached_sha256(path)
         expected_hash = arguments.get("expected_sha256")
         if not isinstance(expected_hash, str) or expected_hash.lower() != actual_hash:
             raise ValueError("expected_sha256 does not match the current file")
@@ -936,6 +1061,8 @@ class FileToolExecutor:
             {
                 "path": str(path),
                 "content": text.replace(old_text, new_text),
+                "operation": "replace",
+                "replacement_reason": "exact old_text/new_text replacement",
                 "expected_sha256": actual_hash,
                 "_write_context": {
                     "operation": "replace_text",
@@ -964,7 +1091,18 @@ class FileToolExecutor:
         last_error: PermissionError | None = None
         for attempt in range(attempts):
             try:
-                os.replace(temporary, path)
+                if expected_sha256 is None:
+                    # Hard-link publication is atomic and fails if the destination
+                    # appeared after preflight: never clobber on create.
+                    os.link(temporary, path)
+                    temporary.unlink()
+                else:
+                    # Fail closed when the original changed during construction.
+                    if not path.is_file() or path.is_symlink():
+                        raise RuntimeError("replace aborted: target disappeared or became linked")
+                    if self._uncached_sha256(path) != expected_sha256:
+                        raise RuntimeError("replace aborted: file changed after pre-write inspection")
+                    os.replace(temporary, path)
                 return
             except PermissionError as exc:
                 last_error = exc

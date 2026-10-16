@@ -1,4 +1,4 @@
-# Norm 0.55.9r11 - Shared browser visibility and control
+# Norm 0.55.9r12 - Shared browser visibility and control
 
 This revised r11 also fixes the Windows Desktop GUI helper PowerShell
 brace-template error and Celery --id worker routing during graceful

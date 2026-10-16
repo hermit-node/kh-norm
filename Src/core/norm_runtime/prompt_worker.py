@@ -1091,7 +1091,12 @@ class PromptWorker:
                 self._enqueue_final_verification(job, answer)
             if task_finished:
                 self.live.finish(job.task_id, answer)
-                self._clear_terminal_redis(job.task_id)
+                self._clear_terminal_redis(
+                    job.task_id,
+                    verified_outputs=self._artifact_snapshot(
+                        self.live.task_evidence(job.task_id) if hasattr(self.live, "task_evidence") else []
+                    ),
+                )
             else:
                 self.queue.ack(redis_id)
             logging.info("Prompt completed task=%s step=%s type=%s", job.task_id, job.step_id, request_type)
@@ -1847,7 +1852,7 @@ class PromptWorker:
                     raise RuntimeError("durable terminal summary verification failed")
             self.live.step_completed(job.task_id, job.step_id, summary, result.verification)
             self.live.finish(job.task_id, candidate["user_reply"])
-            self._clear_terminal_redis(job.task_id)
+            self._clear_terminal_redis(job.task_id, verified_outputs=candidate.get("artifacts") or [])
             logging.info("N1 final verification accepted task=%s cycle=%s", job.task_id, cycle)
             return
         max_cycles = max(3, int((self._runtime_config().get("worker") or {}).get(
@@ -1982,7 +1987,87 @@ class PromptWorker:
             logging.exception("Task artifact soft-delete failed task=%s suppressed=%s", task_id, suppressed)
             return {"staged": 0, "error": f"{type(exc).__name__}: {exc}"}
 
-    def _clear_terminal_redis(self, task_id: str) -> None:
+    def _final_output_paths(self, task_id: str, verified_outputs: list[dict]) -> list[str]:
+        """Keep explicitly delivered outputs; never protect disposable scripts as results."""
+        from pathlib import Path
+        tools = self._worker_tools()
+        tracked: dict[str, dict] = {}
+        temp_root = None
+        if tools is not None and tools.task_storage is not None:
+            tools.set_task_context(task_id, None)
+            storage = tools.task_storage
+            temp_root = storage.temp_root
+            for item in storage._load().get("assets", []):
+                if isinstance(item, dict) and item.get("path"):
+                    tracked[str(Path(item["path"]).resolve(strict=False)).casefold()] = item
+        protected: list[str] = []
+        for artifact in verified_outputs:
+            if not isinstance(artifact, dict) or not artifact.get("verified"):
+                continue
+            raw = str(artifact.get("path") or "")
+            if not raw:
+                continue
+            path = Path(raw).resolve(strict=False)
+            record = tracked.get(str(path).casefold(), {})
+            if record and not record.get("user_requested") and str(record.get("retention") or "") == "ephemeral":
+                continue
+            if path.suffix.lower() in {".py", ".pyw", ".ps1", ".cmd", ".bat", ".sh", ".js", ".cjs", ".mjs"} and not record.get("user_requested"):
+                continue
+            if temp_root is not None and path.is_relative_to(temp_root) and not record.get("user_requested"):
+                continue
+            if str(path) not in protected:
+                protected.append(str(path))
+        return protected
+
+    def _restore_missing_outputs_once(self, task_id: str, protected_paths: list[str]) -> None:
+        """LAST operation of terminal cleanup: existence, one restore attempt, STOP.
+
+        Do not re-run cleanup, overwrite results, reconcile trash, empty the bin,
+        or re-verify the restored files after this recovery phase.
+        """
+        from pathlib import Path
+        import json
+        if not protected_paths:
+            return
+        tools = self._worker_tools()
+        queue = tools.deletion_queue if tools is not None else None
+        missing = [p for p in protected_paths if not Path(p).is_file()]
+        if not missing:
+            return
+        if queue is None:
+            logging.error("Missing post-cleanup deliverables task=%s paths=%s; trash unavailable", task_id, missing)
+            return
+        # Direct metadata lookup, no reconcile() or cleanup pass.
+        records = []
+        for key, payload in queue.redis.hgetall(queue.items_key).items():
+            try:
+                row = json.loads(payload)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(row, dict) and row.get("state") == "committed":
+                records.append((str(key), row))
+        for original in missing:
+            matches = [
+                (key, row) for key, row in records
+                if str(Path(str(row.get("original_path") or "")).resolve(strict=False)).casefold()
+                == str(Path(original).resolve(strict=False)).casefold()
+            ]
+            matches.sort(key=lambda entry: (str(entry[1].get("task_id") or "") == str(task_id),
+                                             float(entry[1].get("queued_at") or 0)), reverse=True)
+            if not matches:
+                logging.error("Post-cleanup deliverable missing and not found in trash task=%s path=%s", task_id, original)
+                continue
+            try:
+                outcome = queue.restore(matches[0][0])
+                if outcome.get("restored"):
+                    logging.warning("Recovered missing deliverable from reversible trash task=%s path=%s", task_id, original)
+                else:
+                    logging.error("Post-cleanup deliverable restore blocked task=%s path=%s details=%s", task_id, original, outcome)
+            except Exception as exc:
+                logging.exception("Post-cleanup deliverable restore failed task=%s path=%s: %s", task_id, original, exc)
+        # Intentionally terminal: no post-restore verification or further cleanup.
+
+    def _clear_terminal_redis(self, task_id: str, *, verified_outputs: list[dict] | None = None) -> None:
         if not self.durable or not self.durable.terminal_summary_verified(task_id):
             raise RuntimeError(f"refusing Redis cleanup before durable terminal summary verification: {task_id}")
         if self.durable.task_status(task_id) == "passed_to":
@@ -2000,6 +2085,10 @@ class PromptWorker:
         if not self._is_literal_request(request) and not note:
             raise RuntimeError(f"refusing raw-thinking purge before effectiveness note: {task_id}")
         status = self.durable.task_status(task_id) if self.durable else None
+        protected_outputs = (
+            self._final_output_paths(task_id, verified_outputs or [])
+            if status == "completed" and verified_outputs else []
+        )
         self._soft_delete_task_assets(task_id, suppressed=(status != "completed"))
         if hasattr(self.durable, "purge_raw_thinking"):
             purged = self.durable.purge_raw_thinking(task_id)
@@ -2018,6 +2107,9 @@ class PromptWorker:
         except Exception:
             logging.exception("Terminal task temp cleanup failed task=%s; leaving temp material in place", task_id)
         logging.info("Terminal Redis cleanup task=%s queue=%s live=cleared", task_id, queue_counts)
+        # This goes last, after the user-facing answer was committed and all
+        # cleanup has finished. Restore missing outputs once; no repeat cleanup.
+        self._restore_missing_outputs_once(task_id, protected_outputs)
 
     def _clear_processed_sos(self, task_id: str) -> None:
         """Clean only the legacy root SOS.readme; current temp/recovery SOS is handled conservatively by temp cleanup."""
