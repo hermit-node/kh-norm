@@ -1,3 +1,14 @@
+## Norm 0.55.8r10d - public web_browser checksum repair (2026-10-10)
+
+- Corrects the stale Schema-2 source hash for the public managed web_browser plugin in
+  plugins/web_browser/plugin.json AND package-manifest.json.
+- The hash was computed using the installer deterministic src/ tree algorithm.
+- No plugin src/ logic, compiled private assets, or N1/N2 runtime code was modified.
+- r10c original-user-reference, step-7 continuity and PASSED_TO fixes remain intact.
+- Added package verification using the installer's own source hashing implementation.
+- Installer source remains unchanged. Package SHA-256 regenerated after packaging.
+- Live C:\Norm is not modified.
+
 ## Norm 0.55.8r10c - explicit TaskPlan user origin (2026-10-10)
 
 - Finalizes active-step-first JSON and chat handoffs from r10b.

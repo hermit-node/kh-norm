@@ -1,3 +1,7 @@
+# Norm 0.55.8r10d - verified public-plugin source identity
+
+Corrected web_browser manifest checksum without altering plugin source.
+
 # Norm 0.55.8r10c - verified reference/assignment separation
 
 TaskPlan preserves verbatim user origin separately from child assignments. N2 executes only the active step and N1 checks current evidence against the original constraints without restarting completed work.

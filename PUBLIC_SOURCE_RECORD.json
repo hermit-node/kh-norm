@@ -1,13 +1,11 @@
 {
-  "version": "0.55.8r10c",
+  "version": "0.55.8r10d",
   "variant": "",
-  "tag": "v0.55.8r10c",
-  "source_archive_sha256": "8069ab5cf78e5f6e45c46742318c2b1064b154f9f22fb0bea8ebf64129803523",
-  "source_archive": "0.55.8r10c--release--8069ab5cf78e.zip",
-  "quality": "bad web_browser SHA; use r10d",
-  "known_issues": [
-    "bad web_browser SHA; use r10d"
-  ],
+  "tag": "v0.55.8r10d",
+  "source_archive_sha256": "1c33719fe17f1be2a1450b18e0a955bb1ff83594c8a626a808b085c72851913d",
+  "source_archive": "0.55.8r10d--release--1c33719fe17f.zip",
+  "quality": "static/CLI PASS, historical",
+  "known_issues": [],
   "published_source_files": 254,
   "omitted_paths": [
     "config/plugins.ini",

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "release": "0.55.8r10c",
+  "release": "0.55.8r10d",
   "baseline": "Norm-0.55.8r9-N2-restored-portable-source.zip",
   "file_count": 295,
   "hash_algorithm": "SHA-256",
@@ -14,8 +14,8 @@
       "sha256": "c7a6f010965fab61d8d3fc7e50fcb119814a9f06f2be45329d8e07367323a416"
     },
     "_build_release.py": {
-      "bytes": 3061,
-      "sha256": "3d1629c75c8a8425efd5857cd81212550a43b30caab78df1af19c90f0703b60f"
+      "bytes": 3062,
+      "sha256": "4c050cd1e316d24d1769dcd595408f3010ba02d052fada44a14b148099468390"
     },
     "config/plugins.ini": {
       "bytes": 1706,
@@ -282,8 +282,8 @@
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
     },
     "docs/RELEASE_NOTES.md": {
-      "bytes": 123139,
-      "sha256": "44f543e5317fdf794d63086e76fc8492bd218c9776e8e67ce167fa4720ee9edd"
+      "bytes": 123808,
+      "sha256": "1e202db75ab9bad6ef049f412d4183826612820a694a3d499487c68a773ab618"
     },
     "docs/VOICE_OPERATOR_COMMANDS_PATCH.md": {
       "bytes": 1796,
@@ -331,7 +331,7 @@
     },
     "package-manifest.json": {
       "bytes": 25833,
-      "sha256": "7383f86e3ead2a14342aec8eccaf96114f6db055d05619e1eaa7393f1ad90279"
+      "sha256": "4e60232daacd34d3ce6013423e28d4afac6c2e535564fd78fbc9ad87ab4b3fec"
     },
     "plugins/backup/help.txt": {
       "bytes": 327,
@@ -786,8 +786,8 @@
       "sha256": "a7d0c90b8860ca026a4458079720bae633f7da616daba7f354a6ec272edb418c"
     },
     "plugins/web_browser/plugin.json": {
-      "bytes": 761,
-      "sha256": "273f8298ebc8dcd94fc2c927c6d743d17d94a4629b7e49ce5ba1aab3db819369"
+      "bytes": 785,
+      "sha256": "496a541728407915b3a23e675e1b276b08fa76102f50579b408100d8d94b4206"
     },
     "plugins/web_browser/README.md": {
       "bytes": 1378,
@@ -826,8 +826,8 @@
       "sha256": "5c6db61fa30f1b1bd21c8d0d4e4d67f79d7705b03afb999f926f25c7c1dd911b"
     },
     "README.md": {
-      "bytes": 20452,
-      "sha256": "337e569fa489d675aab42a3cc31a51d867dab049173b8a2085081d477ad1a93b"
+      "bytes": 20585,
+      "sha256": "de0f4c8fe404c0201c7fb28591e1f0f1a728006e7cc8c874b41b28149afeb492"
     },
     "Run-Norm.bat": {
       "bytes": 3806,
@@ -838,8 +838,8 @@
       "sha256": "cf9930fc55eb69537d91ebcc6dd7f6984206b51b506d34671dc66a93b5a9a3b2"
     },
     "SOURCE_PACKAGE.md": {
-      "bytes": 20316,
-      "sha256": "8819688574cfcee8d6d1284c098fd238a4cc77c701df016e8079a7d76e6849af"
+      "bytes": 20449,
+      "sha256": "49ddb1af8fac7b0332f37ae5e67dac633b4865562258d1c8b22979ca9b57d57d"
     },
     "tools/7zip/7z.dll": {
       "bytes": 1906688,

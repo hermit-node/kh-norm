@@ -15,7 +15,7 @@
     "file link discovery and download",
     "persistent browser sessions"
   ],
-  "sha256": "b27bd2c85ea35b2c72d97c151054437947cd552a572e34dd6a159cd15341a638",
+  "sha256": "42f54fcb0513162d4996b0e1cf56328c3c2012ee9f4e74602f3c277b0edb5a44",
   "settings": {
     "web_browser": {
       "enabled": true
