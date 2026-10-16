@@ -1,6 +1,6 @@
 # Norm current status
 
-Current package: **Norm 0.54.0 Beta** with **Installer 1.6.10-unified**.
+Current package: **Norm 0.54.0c** with **Installer 1.6.10-unified**.
 
 This file is a current-state snapshot only.
 

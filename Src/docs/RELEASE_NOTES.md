@@ -1,3 +1,8 @@
+0.54.0c ? 2026-10-05 ? Single-model maintenance writer/verifier
+- Maintenance condensation and maintenance verification now use the same active maintenance model client, matching the normal N1/N2 same-model pattern.
+- The configured maintenance chain stays synchronized by role: Granite/Granite, then north-mini-code/north-mini-code on failure, then norm/norm only as the final fallback.
+- Normal interactive N1/N2 model selection is unchanged.
+
 0.54.0 Beta 2 ? 2026-10-05 ? Installer staging + control-order correction
 - Moved N1 ingress review after the existing deterministic Python/control special-command path; handled slash/control work does not enter N1 ingress.
 - Normal conversational work still receives N1 ingress review immediately before N2 classification/execution.

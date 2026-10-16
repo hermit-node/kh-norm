@@ -785,6 +785,7 @@ class N1Gatekeeper:
         ideal_chars: int,
         acceptable_chars: int,
         proposed_disposition: str = "keep",
+        client=None,
     ) -> dict[str, Any]:
         """Judge an N2 maintenance rewrite and decide whether N2 should try again.
 
@@ -853,7 +854,8 @@ class N1Gatekeeper:
             "additionalProperties": False,
         }
         try:
-            raw = self.client.generate(
+            judge_client = client or self.client
+            raw = judge_client.generate(
                 prompt, think=True, temperature=0.0, num_predict=self.maintenance_num_predict,
                 response_format=schema, emit_stream=False,
                 timeout_seconds=self.maintenance_review_timeout_seconds,

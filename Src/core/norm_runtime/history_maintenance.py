@@ -70,6 +70,7 @@ class DeepHistoryMaintainer:
             mode=mode, source_text=source_text, candidate=candidate, attempt=attempt,
             max_attempts=max_attempts, ideal_chars=ideal_chars, acceptable_chars=acceptable_chars,
             proposed_disposition=proposed_disposition,
+            client=self.client,
         )
 
     def _condense_plain_with_n1(self, *, prompt: str, source_text: str, mode: str, ideal_chars: int, acceptable_chars: int, num_predict: int, max_attempts: int, response_so_far: str = "", on_partial=None) -> tuple[str, list[dict]]:

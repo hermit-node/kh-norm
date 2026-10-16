@@ -2,7 +2,7 @@
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.54.0 Beta / Installer 1.6.10-unified** package only. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.54.0c / Installer 1.6.11-unified** package only. Version history belongs only in RELEASE_NOTES.md.
 
 ### N1-gated memory maintenance (0.54.0 Beta baseline)
 
