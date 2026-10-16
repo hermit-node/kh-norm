@@ -1,6 +1,6 @@
 {
-  "package": "Norm-0.55.10r11-Browser-Cooperation-Portable-Source",
-  "source_baseline": "Norm-0.55.10r10-Terminal-Launcher-Portable-Source.zip",
+  "package": "Norm-0.55.10r11r1-Browser-Evidence-Fix-Portable-Source",
+  "source_baseline": "Norm-0.55.10r11-Browser-Cooperation-Portable-Source.zip",
   "files": [
     {
       "file": ".gitattributes",
@@ -24,8 +24,8 @@
     },
     {
       "file": "README.md",
-      "sha256": "31835eabd6b9656160e2653235d6661d0b1f38a17fc3a7ccf2863a0807574d05",
-      "bytes": 33233
+      "sha256": "530a07c0c27d4c9039549bad461924727ac1b1381b5f9f89095059074718d57b",
+      "bytes": 34035
     },
     {
       "file": "Run-Norm-Terminals.bat",
@@ -39,8 +39,8 @@
     },
     {
       "file": "SOURCE_PACKAGE.md",
-      "sha256": "db8d5a119edba4711f8c7b824a5b36f12adff39e07f1b771d519668a5ff96d08",
-      "bytes": 26434
+      "sha256": "81b72c03625ea0f5fec48401f17bd87ea576f7f6fe2664a98e92ac12e9d82244",
+      "bytes": 27237
     },
     {
       "file": "Safe-Shutdown-Norm.bat",
@@ -184,8 +184,8 @@
     },
     {
       "file": "core/norm_runtime/durable_log.py",
-      "sha256": "5e5e95463df78b33821ba213d661afc090be604269cd54f6c00c6acc4e7f620c",
-      "bytes": 192381
+      "sha256": "cbd1addf2db3eb7b4bee9d019a389d1e66c7691fd1f5c90f87263543e8f2414d",
+      "bytes": 193355
     },
     {
       "file": "core/norm_runtime/file_access_policy.py",
@@ -261,6 +261,11 @@
       "file": "core/norm_runtime/output_overflow.py",
       "sha256": "5954a7c23450a0c67311ee7080e52dbb28523e14fd3ba30b23099b547f45e4da",
       "bytes": 3040
+    },
+    {
+      "file": "core/norm_runtime/pg_json_safety.py",
+      "sha256": "a08706f88ffb37743195b680764fa7c7538eb681726217b0e98573b59d66d58c",
+      "bytes": 3029
     },
     {
       "file": "core/norm_runtime/plugin_identity.py",
@@ -679,8 +684,8 @@
     },
     {
       "file": "package-manifest.json",
-      "sha256": "ad4a86fa41d86de8fd8453201eda7bf18cedf910163f58098412a8b30d935b27",
-      "bytes": 39810
+      "sha256": "1f16346a1e6dfd536ab9d7bab1b0da7fcd27424531b99967b773838546b53649",
+      "bytes": 39803
     },
     {
       "file": "plugins/README.md",
@@ -1319,8 +1324,8 @@
     },
     {
       "file": "source-content-hashes.json",
-      "sha256": "55dff75bb25d93189e346a8aeea3d02b457b63e0e8c0d2c4383c3f7e6296ebeb",
-      "bytes": 67615
+      "sha256": "c9f4c06cfcd5009be79dad0c58f948d6ffe8f720c08535a6933ca5604f7a7e11",
+      "bytes": 67935
     },
     {
       "file": "tools/7zip/7z.dll",
@@ -1544,13 +1549,13 @@
     },
     {
       "file": "tools/shared_browser/browser_ui.py",
-      "sha256": "4598b4cad08e5bb8c23e55de71b82e314e072d32883ddc3aae41ffa84a80ae95",
-      "bytes": 11169
+      "sha256": "e88f5da69ffc547d6a786f29271ea3e8821766d05e77b284c5e72b9d0542bb47",
+      "bytes": 11806
     },
     {
       "file": "tools/shared_browser/conversation_js.py",
-      "sha256": "0aa1313d8d6695dce3b80730617651503ebc2f4a6463715417bbea0c7b51a4f4",
-      "bytes": 8126
+      "sha256": "78564dbeac84712a174a425c285c20fe8c03177df1664d02ffb0f6fce3fb8c6c",
+      "bytes": 11740
     },
     {
       "file": "tools/shared_browser/hybrid_ocr_pdf.py",
@@ -1589,8 +1594,8 @@
     },
     {
       "file": "tools/shared_browser/visual_capture.py",
-      "sha256": "3195a8fef4e7e563396e4be4a86606c49bb23c1c999797c07d15fd9ef0fc6302",
-      "bytes": 21887
+      "sha256": "07575ef82d98cb30b63fc02c41bc76453118522a250336f3f6e1fffdfae2aded",
+      "bytes": 25409
     },
     {
       "file": "tools/shared_browser/visual_pdf_worker.py",
@@ -1871,6 +1876,11 @@
       "file": "tools/test_pdf_slash_and_dialogue_r5.py",
       "sha256": "58a363f2b89674dc221b52ccf8a65cc674ca7c2c9c10f00de195d23bfcd8f625",
       "bytes": 7024
+    },
+    {
+      "file": "tools/test_pg_evidence_unicode_r11r1.py",
+      "sha256": "a78dae0041bb228d9e4faeac6b913fe51c54314f08c28552a7c9de1e3aee64f8",
+      "bytes": 5179
     },
     {
       "file": "tools/test_plan_self_review_0556.py",

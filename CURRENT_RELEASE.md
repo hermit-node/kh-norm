@@ -1,6 +1,6 @@
-# Norm 0.55.10r11 - Browser-Cooperation
+# Norm 0.55.10r12 - Browser-Evidence-Fix
 
-Original archive SHA-256: fb3401552368495775f8a5d12f41409a3fc8de46d7dfa9653297e2bcae9151eb
+Original archive SHA-256: 80bedd7472e0f8a0ee7cd6a13643d7c0c0523f6b120740f54452163f81e15137
 
 Historical assessment: source-inventory-verified
 
@@ -8,6 +8,6 @@ Omitted private paths: backups/plugins-ini/plugins-20261014-151017-561326+0000-7
 
 Sanitized paths: core/norm_main.py, core/norm_runtime/aiohttp_host.py
 
-Historical caveats: The original ZIP had no companion SHA-256; independent ZIP/file integrity and SHA-256 checks passed.
+Historical caveats: Normalized from 0.55.10r11r1-browser-evidence-fix; old ZIP and mapping retained in the installer kit.
 
 Public source snapshot is not identical to the original ZIP or guaranteed installable.

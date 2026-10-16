@@ -1,14 +1,14 @@
 {
-  "version": "0.55.10r11",
-  "variant": "Browser-Cooperation",
-  "tag": "v0.55.10r11",
-  "source_archive_sha256": "fb3401552368495775f8a5d12f41409a3fc8de46d7dfa9653297e2bcae9151eb",
-  "source_archive": "0.55.10r11--Browser-Cooperation--fb3401552368.zip",
+  "version": "0.55.10r12",
+  "variant": "Browser-Evidence-Fix",
+  "tag": "v0.55.10r12",
+  "source_archive_sha256": "80bedd7472e0f8a0ee7cd6a13643d7c0c0523f6b120740f54452163f81e15137",
+  "source_archive": "0.55.10r12--Browser-Evidence-Fix--80bedd7472e0.zip",
   "quality": "source-inventory-verified",
   "known_issues": [
-    "The original ZIP had no companion SHA-256; independent ZIP/file integrity and SHA-256 checks passed."
+    "Normalized from 0.55.10r11r1-browser-evidence-fix; old ZIP and mapping retained in the installer kit."
   ],
-  "published_source_files": 360,
+  "published_source_files": 362,
   "omitted_paths": [
     "backups/plugins-ini/plugins-20261014-151017-561326+0000-72956dfad8bb.ini",
     "config/plugins.ini",

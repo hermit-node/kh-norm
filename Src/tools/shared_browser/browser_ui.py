@@ -24,6 +24,7 @@ def _plugin():
 class WorkThread(QThread):
     succeeded=Signal(object)
     failed=Signal(str)
+    progress=Signal(str)
     def __init__(self,mode,**args):
         super().__init__();self.mode=mode;self.args=args
     def run(self):
@@ -31,12 +32,20 @@ class WorkThread(QThread):
             if self.mode=='preview':
                 api=_plugin()
                 s=api.conversation_preview(refresh=True)
-                for _ in range(75):
+                last_pages=-1
+                # Paginated conversations may require many authenticated page requests.
+                for _ in range(360):
                     if s.get('state') in ('ready','error'):break
-                    time.sleep(.45)
+                    pages=int(s.get('pages') or 0)
+                    if pages!=last_pages:
+                        self.progress.emit(f'Retrieving conversation: {pages} API page(s)...')
+                        last_pages=pages
+                    time.sleep(.5)
                     s=api.conversation_preview()
                 if s.get('state')!='ready':
                     raise RuntimeError('Conversation extraction: '+str(s.get('error') or s.get('state')))
+                if not int(s.get('count') or 0):
+                    raise RuntimeError('No loaded messages found; check the ChatGPT tab and login')
                 items=[]
                 for start in range(0,int(s['count']),100):
                     page=api.conversation_preview(start=start,count=100)
@@ -106,6 +115,7 @@ class ExportPanel(QWidget):
         self.worker=WorkThread(mode,**kwargs)
         self.worker.succeeded.connect(success)
         self.worker.failed.connect(self._failed)
+        self.worker.progress.connect(self.notice.setText)
         self.worker.finished.connect(lambda: self.refresh_button.setEnabled(True))
         self.worker.start()
 
@@ -195,6 +205,7 @@ class AskNormPanel(QWidget):
                                page_title=self.browser.page.title())
         self.worker.succeeded.connect(self._done)
         self.worker.failed.connect(self._failed)
+        self.worker.progress.connect(self.notice.setText)
         self.worker.finished.connect(lambda:self.send.setEnabled(True))
         self.worker.start()
     def _done(self,result):

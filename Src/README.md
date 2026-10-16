@@ -1,3 +1,7 @@
+## 0.55.10r11r1 — Export compatibility + PostgreSQL evidence recovery
+
+Source-only correction to r11. ChatGPT export now tries paginated conversation data before the legacy graph API, while the existing visual PDF capture searches more than one page/scroll layout. PostgreSQL `task_evidence` inserts now normalize NUL/unpaired-surrogate/binary values **only in the DB-bound evidence copy**, annotate any changes, and leave the executed commands and live tool results unmodified. This prevents otherwise successful file operations from entering retry solely because their result contained PostgreSQL-incompatible Unicode. The user must still verify whether previously attempted renames already happened before retrying. Tests are offline; no live Windows or PostgreSQL integration test has occurred.
+
 ## 0.55.10r11 — Norm browser cooperation candidate
 
 Adds a small left action rail, bottom contextual **Ask Norm** prompt, persistent domain-scoped JavaScript and a selectable **convo_export** extension to the existing Qt shared browser. Selection supports user/assistant/media/code categories and local PDF, Markdown, JSON and attachment ZIP output. Existing cache/profile, Playwright, MSS, terminal launcher and control semantics remain. See [implementation/limitations](docs/NORM_BROWSER_COOPERATION.md). This release is source-only, offline-tested, **not yet live-validated on KHzz**.

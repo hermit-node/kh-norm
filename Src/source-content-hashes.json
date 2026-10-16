@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "release": "0.55.10r11-browser-cooperation",
-  "baseline": "Norm-0.55.10r10-Terminal-Launcher-Portable-Source.zip",
-  "file_count": 429,
+  "release": "0.55.10r12-browser-evidence-fix",
+  "baseline": "Norm-0.55.10r11-Browser-Cooperation-Portable-Source.zip",
+  "file_count": 431,
   "hash_algorithm": "sha256",
   "files": {
     ".gitattributes": {
@@ -22,8 +22,8 @@
       "sha256": "e774f5ea91a76af90b32d07d967a17a1e2741a3e99c67ee944536cb548e6a432"
     },
     "README.md": {
-      "bytes": 33233,
-      "sha256": "31835eabd6b9656160e2653235d6661d0b1f38a17fc3a7ccf2863a0807574d05"
+      "bytes": 34035,
+      "sha256": "530a07c0c27d4c9039549bad461924727ac1b1381b5f9f89095059074718d57b"
     },
     "Run-Norm-Terminals.bat": {
       "bytes": 1005,
@@ -34,8 +34,8 @@
       "sha256": "b1caace3a4f4db1b3a5b455732dd1f49f89931a8e4da62804f3728968fc539b9"
     },
     "SOURCE_PACKAGE.md": {
-      "bytes": 26434,
-      "sha256": "db8d5a119edba4711f8c7b824a5b36f12adff39e07f1b771d519668a5ff96d08"
+      "bytes": 27237,
+      "sha256": "81b72c03625ea0f5fec48401f17bd87ea576f7f6fe2664a98e92ac12e9d82244"
     },
     "Safe-Shutdown-Norm.bat": {
       "bytes": 519,
@@ -62,8 +62,8 @@
       "sha256": "34c0c073df6e1b5a9985875f0f8297474611035a22567fc3dc621e9bda4b5cdc"
     },
     "config/settings.ini": {
-      "bytes": 3230,
-      "sha256": "9eac7103f6b72b4cff3deb4fb40def0641323d1a148c304e26c0c7740cdd71de"
+      "bytes": 3254,
+      "sha256": "5da503605f4af8c476a03bf44be428859c09dd3e902ebba74c4da3f607bbfd77"
     },
     "core/norm_main.py": {
       "bytes": 69971,
@@ -150,8 +150,8 @@
       "sha256": "c48a5f947af67d748e66100e13f9343444e2140b4dd32efa070fcda230e2dbdd"
     },
     "core/norm_runtime/durable_log.py": {
-      "bytes": 192381,
-      "sha256": "5e5e95463df78b33821ba213d661afc090be604269cd54f6c00c6acc4e7f620c"
+      "bytes": 193355,
+      "sha256": "cbd1addf2db3eb7b4bee9d019a389d1e66c7691fd1f5c90f87263543e8f2414d"
     },
     "core/norm_runtime/file_access_policy.py": {
       "bytes": 5915,
@@ -212,6 +212,10 @@
     "core/norm_runtime/output_overflow.py": {
       "bytes": 3040,
       "sha256": "5954a7c23450a0c67311ee7080e52dbb28523e14fd3ba30b23099b547f45e4da"
+    },
+    "core/norm_runtime/pg_json_safety.py": {
+      "bytes": 3029,
+      "sha256": "a08706f88ffb37743195b680764fa7c7538eb681726217b0e98573b59d66d58c"
     },
     "core/norm_runtime/plugin_identity.py": {
       "bytes": 6890,
@@ -546,8 +550,8 @@
       "sha256": "814cf6e096ac167f56bbb47c98287818949ec13c65843574b3a733698c91f982"
     },
     "package-manifest.json": {
-      "bytes": 39810,
-      "sha256": "ad4a86fa41d86de8fd8453201eda7bf18cedf910163f58098412a8b30d935b27"
+      "bytes": 39803,
+      "sha256": "1f16346a1e6dfd536ab9d7bab1b0da7fcd27424531b99967b773838546b53649"
     },
     "plugins/README.md": {
       "bytes": 903,
@@ -1234,12 +1238,12 @@
       "sha256": "16118b0064263ab470637afa2703e8e88bac51f003aeaa80782b27c1410deacb"
     },
     "tools/shared_browser/browser_ui.py": {
-      "bytes": 11169,
-      "sha256": "4598b4cad08e5bb8c23e55de71b82e314e072d32883ddc3aae41ffa84a80ae95"
+      "bytes": 11806,
+      "sha256": "e88f5da69ffc547d6a786f29271ea3e8821766d05e77b284c5e72b9d0542bb47"
     },
     "tools/shared_browser/conversation_js.py": {
-      "bytes": 8126,
-      "sha256": "0aa1313d8d6695dce3b80730617651503ebc2f4a6463715417bbea0c7b51a4f4"
+      "bytes": 11740,
+      "sha256": "78564dbeac84712a174a425c285c20fe8c03177df1664d02ffb0f6fce3fb8c6c"
     },
     "tools/shared_browser/hybrid_ocr_pdf.py": {
       "bytes": 9285,
@@ -1270,8 +1274,8 @@
       "sha256": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2"
     },
     "tools/shared_browser/visual_capture.py": {
-      "bytes": 21887,
-      "sha256": "3195a8fef4e7e563396e4be4a86606c49bb23c1c999797c07d15fd9ef0fc6302"
+      "bytes": 25409,
+      "sha256": "07575ef82d98cb30b63fc02c41bc76453118522a250336f3f6e1fffdfae2aded"
     },
     "tools/shared_browser/visual_pdf_worker.py": {
       "bytes": 8392,
@@ -1496,6 +1500,10 @@
     "tools/test_pdf_slash_and_dialogue_r5.py": {
       "bytes": 7024,
       "sha256": "58a363f2b89674dc221b52ccf8a65cc674ca7c2c9c10f00de195d23bfcd8f625"
+    },
+    "tools/test_pg_evidence_unicode_r11r1.py": {
+      "bytes": 5179,
+      "sha256": "a78dae0041bb228d9e4faeac6b913fe51c54314f08c28552a7c9de1e3aee64f8"
     },
     "tools/test_plan_self_review_0556.py": {
       "bytes": 9893,

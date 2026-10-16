@@ -1,3 +1,7 @@
+## r11r1 addendum — Browser API/scroll compatibility and evidence persistence
+
+Built on r11 Browser Cooperation source, retaining the existing installer, lightweight launcher, profile, cache and memory settings. Browser updates: API pagination fallback and multi-layout visual scroll discovery. Task-runner updates: in `PostgresTaskLog.record_evidence()`, PostgreSQL-bound copies of arguments/results encode unsupported Unicode safely; any conversion is explicitly marked in the persisted evidence. Original tool execution, arguments and in-memory result are not changed. Added `tools/test_pg_evidence_unicode_r11r1.py`. A task previously parked for this fault may already have renamed its files; verify source/destination state before resuming. Live database and Qt verification remain outstanding.
+
 ## r11 addendum — Norm Browser Cooperation
 
 From unchanged r10 source baseline; new `norm_browser` plugin and Qt-browser UI additions. All code changes are documented in `docs/NORM_BROWSER_COOPERATION.md`; original r10 launcher and cache allocations are retained. Source-only candidate; live Qt browser verification is outstanding.

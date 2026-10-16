@@ -16,45 +16,116 @@ from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
 
 PREPARE_JS = r"""(()=>{
- const all=[...document.querySelectorAll('[data-message-author-role]')];
- if(all.length<2) return {error:'Conversation contains fewer than two loaded messages'};
- const e=all[0]; let target=null;
- for(let n=e;n;n=n.parentElement){
-   const h=n.scrollHeight-n.clientHeight, style=getComputedStyle(n);
-   if(h>80 && /(auto|scroll)/.test(style.overflowY)){target=n;break;}
- }
- target=target||document.scrollingElement;
- if(!target)return {error:'No conversation scroll container found'};
+ const getTurns=()=>{
+   const candidates=['[data-message-author-role]','section[data-turn-id]',
+     '[data-testid^="conversation-turn-"]','main article','main [data-message-id]'];
+   let chosen=[],selector='';
+   for(const css of candidates){
+     const nodes=Array.from(document.querySelectorAll(css)).filter(n=>
+       (n.innerText||n.textContent||'').trim()||n.querySelector('img,canvas'));
+     if(nodes.length>chosen.length){chosen=nodes;selector=css;}
+     if(nodes.length>=2 && css==='[data-message-author-role]')break;
+   }
+   return {nodes:chosen,selector};
+ };
+ const findScroll=(seed)=>{
+   let n=null;
+   // Prefer a scrollable ancestor of the actual conversation content.
+   for(let p=seed;p;p=p.parentElement){
+     const diff=p.scrollHeight-p.clientHeight;
+     if(diff>80 && /(auto|scroll)/.test(getComputedStyle(p).overflowY)){n=p;break;}
+   }
+   if(n)return n;
+   // ChatGPT variants sometimes scroll <main> or a nested data-overflow div.
+   const root=document.querySelector('main,[role="main"]')||document.body;
+   let best=null,score=-1;
+   for(const p of [root,...root.querySelectorAll('*')]){
+     if(p.scrollHeight-p.clientHeight<=80)continue;
+     if(!/(auto|scroll)/.test(getComputedStyle(p).overflowY))continue;
+     const rect=p.getBoundingClientRect();
+     const area=Math.max(0,Math.min(innerWidth,rect.right)-Math.max(0,rect.left))*
+       Math.max(0,Math.min(innerHeight,rect.bottom)-Math.max(0,rect.top));
+     if(area<20000)continue;
+     const rating=area+Math.min(p.scrollHeight-p.clientHeight,5000)*10;
+     if(rating>score){best=p;score=rating;}
+   }
+   if(best)return best;
+   const doc=document.scrollingElement;
+   if(doc)return doc;  // A short conversation can fit on a single page.
+   return root;
+ };
+ const {nodes:all,selector}=getTurns();
+ if(!all.length) return {error:'No visible conversation turns in this page variant',selector,
+   diagnostics:{old:document.querySelectorAll('[data-message-author-role]').length,
+     turn:document.querySelectorAll('section[data-turn-id]').length,
+     testid:document.querySelectorAll('[data-testid^="conversation-turn-"]').length,
+     article:document.querySelectorAll('main article').length}};
+ const target=findScroll(all[0]);
+ if(!target)return {error:'No scrollable conversation viewport detected',selector,count:all.length};
  target.setAttribute('data-norm-visual-scroll','active');
  const r=target===document.scrollingElement?
   {left:0,top:0,right:innerWidth,bottom:innerHeight}:target.getBoundingClientRect();
  const x=Math.max(0,Math.ceil(r.left)),y=Math.max(0,Math.ceil(r.top));
  const right=Math.min(innerWidth,Math.floor(r.right)),bottom=Math.min(innerHeight,Math.floor(r.bottom));
- const prompts=all.filter(n=>n.getAttribute('data-message-author-role')==='user')
+ const prompts=all.filter(n=>n.getAttribute('data-message-author-role')==='user'||n.getAttribute('data-turn')==='user')
      .slice(-6).map(n=>(n.innerText||n.textContent||'').trim().slice(0,260));
  return {x,y,w:right-x,h:bottom-y,scroll_y:target.scrollTop,
    max:Math.max(0,target.scrollHeight-target.clientHeight),count:all.length,
-   prompts,title:document.title,url:location.href};
+   selector,prompts,title:document.title,url:location.href};
 })()"""
 
-# Return scrolling information, message fingerprints, and visible loading-icon
-# boxes. CSS loaders are only hints; capture samples determine if they move.
+# Read scroll information and visible loading indicators.
 SCROLL_JS = r"""(()=>{
+ const getTurns=()=>{
+   const candidates=['[data-message-author-role]','section[data-turn-id]',
+     '[data-testid^="conversation-turn-"]','main article','main [data-message-id]'];
+   let chosen=[],selector='';
+   for(const css of candidates){
+     const nodes=Array.from(document.querySelectorAll(css)).filter(n=>
+       (n.innerText||n.textContent||'').trim()||n.querySelector('img,canvas'));
+     if(nodes.length>chosen.length){chosen=nodes;selector=css;}
+     if(nodes.length>=2 && css==='[data-message-author-role]')break;
+   }
+   return {nodes:chosen,selector};
+ };
+ const findScroll=(seed)=>{
+   let n=null;
+   // Prefer a scrollable ancestor of the actual conversation content.
+   for(let p=seed;p;p=p.parentElement){
+     const diff=p.scrollHeight-p.clientHeight;
+     if(diff>80 && /(auto|scroll)/.test(getComputedStyle(p).overflowY)){n=p;break;}
+   }
+   if(n)return n;
+   // ChatGPT variants sometimes scroll <main> or a nested data-overflow div.
+   const root=document.querySelector('main,[role="main"]')||document.body;
+   let best=null,score=-1;
+   for(const p of [root,...root.querySelectorAll('*')]){
+     if(p.scrollHeight-p.clientHeight<=80)continue;
+     if(!/(auto|scroll)/.test(getComputedStyle(p).overflowY))continue;
+     const rect=p.getBoundingClientRect();
+     const area=Math.max(0,Math.min(innerWidth,rect.right)-Math.max(0,rect.left))*
+       Math.max(0,Math.min(innerHeight,rect.bottom)-Math.max(0,rect.top));
+     if(area<20000)continue;
+     const rating=area+Math.min(p.scrollHeight-p.clientHeight,5000)*10;
+     if(rating>score){best=p;score=rating;}
+   }
+   if(best)return best;
+   const doc=document.scrollingElement;
+   if(doc)return doc;  // A short conversation can fit on a single page.
+   return root;
+ };
  let n=document.querySelector('[data-norm-visual-scroll="active"]');
  if(!n || !n.isConnected){
-   let seed=document.querySelector('[data-message-author-role]')||document.body;
-   for(let p=seed;p;p=p.parentElement){
-     if(p.scrollHeight-p.clientHeight>80 && /(auto|scroll)/.test(getComputedStyle(p).overflowY)){n=p;break;}
-   }
-   n=n||document.scrollingElement;
+   const turns=getTurns().nodes;
+   n=findScroll(turns[0]||document.querySelector('main'));
    if(n)n.setAttribute('data-norm-visual-scroll','active');
  }
  if(!n)return {error:'Conversation scroll container is missing'};
  n.scrollTop+=STEP;
  n.dispatchEvent(new Event('scroll',{bubbles:true}));
- const nodes=[...document.querySelectorAll('[data-message-author-role]')];
+ const nodes=getTurns().nodes;
  const first=nodes[0],last=nodes[nodes.length-1];
- const fingerprint=(e)=>e ? String(e.getAttribute('data-message-id')||e.id||'')+'|'+
+ const fingerprint=e=>e ? String(e.getAttribute('data-message-id')||e.getAttribute('data-turn-id')||e.id||'')+'|'+
     (e.textContent||'').slice(0,90) : '';
  const bounds=n===document.scrollingElement?
    {left:0,top:0,right:innerWidth,bottom:innerHeight}:n.getBoundingClientRect();
@@ -150,7 +221,7 @@ class VisualCapture:
         # logged-in page. Show only if it is currently hidden.
         if not self.browser.isVisible():
             self.browser.show()
-            self.browser.raise_()
+            # Deliberately leave foreground focus and z-order unchanged.
         QTimer.singleShot(350,self._prepare)
         return dict(self.state)
 
@@ -203,6 +274,8 @@ class VisualCapture:
         if self.job is None:return
         if not isinstance(data,dict) or data.get('error'):
             issue=(data or {}).get('error','JavaScript returned no scroll metadata') if isinstance(data,dict) else 'JavaScript returned no scroll metadata'
+            if isinstance(data,dict) and data.get('diagnostics'):
+                issue+=': '+json.dumps(data['diagnostics'],sort_keys=True)
             if self.job['prepare_attempts']<9 and not self.cancelled:
                 self.state={'state':'capturing','id':self.job['id'],
                             'frames':0,'message':f'Waiting for conversation DOM ({self.job["prepare_attempts"]}/9): {issue}'}

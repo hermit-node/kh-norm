@@ -13,6 +13,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 
 from .models import StepResult, TaskPlan
+from .pg_json_safety import normalize_pg_jsonb
 from .integrity_repair import prepare_task_prune_cur, repair_task_lineage_cur
 from .resource_status import merge_resource_status
 from .backup_retention import DEFAULT_BACKUP_LIMIT, prune_backup_files
@@ -1922,7 +1923,20 @@ class PostgresTaskLog:
                     continue
                 arguments = item.get("arguments") if isinstance(item.get("arguments"), dict) else {}
                 result = item.get("result") if isinstance(item.get("result"), dict) else {}
-                rows.append((task_id,step_id,node_uuid,str(item.get("tool") or "unknown"),Jsonb(arguments),Jsonb(result),bool(item.get("deterministic_verification"))))
+                # The executed tool may have succeeded already. Never turn invalid
+                # evidence Unicode into a task retry (or replay a file rename).
+                # Only the PostgreSQL-bound copies are normalized.
+                arguments_safe, argument_changes = normalize_pg_jsonb(arguments)
+                result_safe, result_changes = normalize_pg_jsonb(result)
+                if argument_changes or result_changes:
+                    result_safe = dict(result_safe)
+                    result_safe["_norm_persistence_notice"] = {
+                        "not_verbatim": True,
+                        "reason": "PostgreSQL JSONB cannot store NUL or invalid Unicode; evidence normalized",
+                        "changes": ([{"field": "arguments", **c} for c in argument_changes] +
+                                    [{"field": "result", **c} for c in result_changes]),
+                    }
+                rows.append((task_id,step_id,node_uuid,str(item.get("tool") or "unknown"),Jsonb(arguments_safe),Jsonb(result_safe),bool(item.get("deterministic_verification"))))
             if not rows:
                 return
             cur.executemany(sql.SQL("""

@@ -11,97 +11,169 @@ START = r'''(() => {
     return {started:false,error:'Not a ChatGPT page'};
   if (window.__normConversation?.state === 'loading')
     return {started:false,error:'Extraction already running'};
-  const snap = {state:'loading',source:null, complete:false, messages:[],error:null,
-                url:location.href,title:document.title,startedAt:Date.now()};
+  const snap = {state:'loading',source:null,complete:false,messages:[],error:null,
+                url:location.href,title:document.title,startedAt:Date.now(),pages:0};
   window.__normConversation = snap;
-  const asText = x => typeof x === 'string' ? x : '';
-  const formatPart = part => {
-    if (typeof part === 'string') return part;
-    if (!part || typeof part !== 'object') return '';
-    if (part.content_type === 'image_asset_pointer') return '[Image]';
-    if (typeof part.text === 'string') return part.text;
-    if (typeof part.content === 'string') return part.content;
+  const text = x => typeof x === 'string' ? x : '';
+  const formatPart = p => {
+    if (typeof p === 'string') return p;
+    if (!p || typeof p !== 'object') return '';
+    if (p.content_type === 'image_asset_pointer') return '[Image]';
+    if (typeof p.text === 'string') return p.text;
+    if (typeof p.content === 'string') return p.content;
     return '';
   };
-  const toMsg = (node, idx) => {
-    const m=node.message || {}, meta=m.metadata || {}, body=m.content || {};
-    const rawParts=Array.isArray(body.parts) ? body.parts : [];
+  const toMsg = (m,idx,nodeId) => {
+    m=m||{};
+    const meta=m.metadata||{}, body=m.content||{}, parts=Array.isArray(body.parts)?body.parts:[];
     const attachments=[];
     for (const a of Array.isArray(meta.attachments)?meta.attachments:[]) {
-      if (!a || typeof a !== 'object') continue;
+      if (!a||typeof a!=='object') continue;
       attachments.push({kind:(a.mime_type||'').startsWith('image/')?'image':'file',
         name:a.name||a.file_name||'attachment',id:a.id||a.file_id||null,
         url:a.download_url||a.url||null,mime:a.mime_type||null});
     }
-    for (const p of rawParts) {
-      if (p && typeof p==='object' && p.content_type==='image_asset_pointer') {
-        attachments.push({kind:'image',name:'Image',id:asText(p.asset_pointer).replace(/^sediment:\/\//,''),
+    for (const p of parts) {
+      if (p&&typeof p==='object'&&p.content_type==='image_asset_pointer') {
+        attachments.push({kind:'image',name:'Image',id:text(p.asset_pointer).replace(/^sediment:\/\//,''),
           url:p.download_url||null,mime:'image/png'});
       }
     }
-    const text=rawParts.map(formatPart).filter(Boolean).join('\n\n') ||
-      (typeof body.text==='string'?body.text : typeof body.content==='string'?body.content:'');
-    return {id:m.id||node.id||String(idx),role:(m.author||{}).role||'unknown',
-      model:meta.model_slug||meta.resolved_model_slug||'',
-      timestamp:m.create_time||null,text,attachments,
-      content_type:body.content_type||'text',position:idx};
+    let content=parts.map(formatPart).filter(Boolean).join('\n\n');
+    if (!content) content=text(body.text)||text(body.content)||text(body.result)||text(body.summary);
+    return {id:m.id||nodeId||String(idx),role:(m.author||{}).role||'unknown',
+      model:meta.model_slug||meta.resolved_model_slug||'',timestamp:m.create_time||null,
+      text:content,attachments,content_type:body.content_type||'text',position:idx};
   };
   const domFallback = () => {
-    const elements=Array.from(document.querySelectorAll('[data-message-author-role]'));
-    snap.messages=elements.map((el,i)=>({id:el.getAttribute('data-message-id')||'dom-'+i,
-      role:el.getAttribute('data-message-author-role')||'unknown',position:i,
-      text:el.innerText||el.textContent||'',model:'',timestamp:null,
-      attachments:Array.from(el.querySelectorAll('img')).map((img,j)=>({kind:'image',
-        name:img.alt||'Image '+(j+1),url:img.currentSrc||img.src||null,id:null,mime:null})),
-      content_type:'dom'}));
-    snap.source='dom';snap.complete=false;snap.state='ready';
+    // ChatGPT can render both traditional message nodes and turn-based layouts.
+    // DOM reads are never treated as proof of complete conversation coverage.
+    const selectors=[
+      '[data-message-author-role]',
+      'section[data-turn-id]',
+      '[data-testid^="conversation-turn-"]',
+      'main article',
+      'main [data-message-id]'
+    ];
+    let nodes=[],selector='';
+    for (const candidate of selectors) {
+      const found=Array.from(document.querySelectorAll(candidate));
+      const usable=found.filter(el=>(el.innerText||el.textContent||'').trim()||el.querySelector('img,canvas'));
+      if (usable.length>nodes.length) {nodes=usable;selector=candidate;}
+      if (usable.length>=2&&candidate==='[data-message-author-role]') break;
+    }
+    if (!nodes.length) throw Error('No conversation turns in the loaded DOM; check page state or authentication');
+    snap.messages=nodes.map((el,i)=>{
+      const tagged=el.matches('[data-message-author-role]')?el:el.querySelector('[data-message-author-role]');
+      let role=(tagged?.getAttribute('data-message-author-role')||el.getAttribute('data-turn')||
+        el.getAttribute('data-role')||'').toLowerCase();
+      if (!['user','assistant'].includes(role)) role='unknown';
+      return {id:el.getAttribute('data-message-id')||el.getAttribute('data-turn-id')||'dom-'+i,
+        role,position:i,text:el.innerText||el.textContent||'',model:'',timestamp:null,
+        attachments:Array.from(el.querySelectorAll('img')).map((img,j)=>({kind:'image',
+          name:img.alt||'Image '+(j+1),url:img.currentSrc||img.src||null,id:null,mime:null})),
+        content_type:'dom'};
+    });
+    snap.source='dom ('+selector+')';snap.complete=false;snap.state='ready';
+  };
+  const live = () => location.href===snap.url && window.__normConversation===snap;
+  const getJSON = async (url,headers) => {
+    const resp=await fetch(url,{credentials:'same-origin',headers});
+    if (!resp.ok) throw Error(url.split('?')[0]+': HTTP '+resp.status);
+    return resp.json();
   };
   (async()=>{
     try {
-      const route=location.pathname.match(/^\/c\/([0-9a-f-]{36})\/?$/i);
-      if(!route) {domFallback();return;}
-      const id=route[1];
-      let token=asText(window.__normChatAuth);
-      try {
-        const session=await fetch('/api/auth/session',{credentials:'same-origin'});
-        if(session.ok) token=asText((await session.json()).accessToken)||token;
-      } catch(_) {}
-      const headers=token?{Authorization:'Bearer '+token}:{};
-      const resp=await fetch('/backend-api/conversation/'+encodeURIComponent(id),
-        {credentials:'same-origin',headers});
-      if(!resp.ok) throw Error('Conversation API HTTP '+resp.status);
-      const data=await resp.json();
-      if(!data || !data.mapping || typeof data.mapping!=='object')
-        throw Error('Conversation graph unavailable');
-      let node=data.current_node; const chain=[],visited=new Set();
-      while(node && data.mapping[node] && !visited.has(node) && chain.length<30000) {
-        visited.add(node);chain.push(data.mapping[node]);node=data.mapping[node].parent;
+      const match=location.pathname.match(/(?:^|\/)c\/([0-9a-f-]{36})(?:\/|$)/i);
+      if (!match) {domFallback();return;}
+      const id=match[1];
+      let auth=text(window.__normChatAuth);
+      if (!auth) {
+        try {
+          const session=await fetch('/api/auth/session',{credentials:'same-origin'});
+          if(session.ok) auth=text((await session.json()).accessToken)||auth;
+        } catch (_) {}
       }
-      if(!chain.length) throw Error('Conversation branch empty');
-      chain.reverse();
-      snap.messages=chain.filter(n=>n.message && n.message.author &&
-        ['user','assistant'].includes(n.message.author.role))
-        .map((n,i)=>toMsg(n,i));
-      // Resolve file IDs through the same authenticated session. URL values are
-      // handed to Python only; access tokens never leave the web renderer.
+      const headers=auth?{Authorization:'Bearer '+auth}:{};
+      let result=null, flatError=null;
+      try {
+        // Current ChatGPT layout: selected conversation branch paginated in 100-turn batches.
+        const url='/backend-api/conversations/'+encodeURIComponent(id)+
+          '?include_has_versions=true&num_turns=100';
+        const chunks=[],seenCursors=new Set();
+        let before='',pageCount=0;
+        for (;;) {
+          if (!live()) return;
+          if (++pageCount>800) throw Error('Pagination safety limit (800 pages) reached');
+          const page=await getJSON(url+(before?'&before='+encodeURIComponent(before):''),headers);
+          if (!Array.isArray(page.messages)) throw Error('Paginated messages array unavailable');
+          chunks.unshift(page.messages);
+          snap.pages=pageCount;
+          const pagination=page.page_info||{};
+          if (typeof pagination.has_previous_page!=='boolean')
+            throw Error('Paginated response has no reliable coverage metadata');
+          if (!pagination.has_previous_page) {
+            const all=chunks.flat();const unique=new Set();
+            const parsed=[];
+            for (const message of all) {
+              const m=message?.message||message;
+              if (!m || !['user','assistant'].includes(m.author?.role)) continue;
+              const key=m.id||message.id;
+              if (key && unique.has(key)) continue;
+              if (key) unique.add(key);
+              parsed.push(toMsg(m,parsed.length,message.id));
+            }
+            if (!parsed.length) throw Error('Paginated API returned no user/assistant turns');
+            result={source:'api-paginated',messages:parsed,title:page.title,complete:true};
+            break;
+          }
+          const next=text(pagination.start_cursor);
+          if (!next||seenCursors.has(next)) throw Error('Pagination stalled or missing start_cursor');
+          seenCursors.add(next);before=next;
+        }
+      } catch (e) {flatError=String(e);}
+      if (!result) {
+        try {
+          // Legacy mapping endpoint remains available on some accounts.
+          const data=await getJSON('/backend-api/conversation/'+encodeURIComponent(id),headers);
+          if (!data?.mapping || typeof data.mapping!=='object')
+            throw Error('Legacy conversation graph unavailable');
+          let node=data.current_node;
+          const chain=[],visited=new Set();
+          while(node&&data.mapping[node]&&!visited.has(node)&&chain.length<30000){
+            visited.add(node);chain.push(data.mapping[node]);node=data.mapping[node].parent;
+          }
+          if (!chain.length||node&&data.mapping[node]) throw Error('Legacy branch incomplete or cyclic');
+          chain.reverse();
+          const msgs=chain.filter(n=>n.message&&['user','assistant'].includes(n.message.author?.role))
+            .map((n,i)=>toMsg(n.message,i,n.id));
+          if (!msgs.length) throw Error('Legacy graph contained no visible turns');
+          result={source:'api-legacy',messages:msgs,title:data.title,complete:true};
+        } catch (legacyError) {
+          snap.error='Paginated API: '+flatError+'; legacy API: '+String(legacyError);
+          domFallback();return;
+        }
+      }
+      if (!live()) return;
+      snap.messages=result.messages;snap.title=result.title||document.title;
+      snap.source=result.source;snap.complete=result.complete;
+      // Resolve optional attachments in bounded batches; failure remains visible in export manifest.
       const assets=snap.messages.flatMap(m=>m.attachments).filter(a=>a.id&&!a.url).slice(0,1500);
-      for(let start=0; start<assets.length;start+=6){
+      for (let start=0;start<assets.length;start+=6) {
+        if (!live()) return;
         await Promise.all(assets.slice(start,start+6).map(async a=>{
           try {
             const fileId=String(a.id).replace(/^sediment:\/\//,'').split('?')[0];
-            const req=await fetch('/backend-api/files/download/'+encodeURIComponent(fileId)+
-              '?conversation_id='+encodeURIComponent(id),{headers,credentials:'same-origin'});
-            if(req.ok){const info=await req.json();if(typeof info.download_url==='string')
-              a.url=info.download_url;}
-          }catch(_){}
+            const info=await getJSON('/backend-api/files/download/'+encodeURIComponent(fileId)+
+              '?conversation_id='+encodeURIComponent(id),headers);
+            if (typeof info.download_url==='string') a.url=info.download_url;
+          } catch (_) {}
         }));
       }
-      snap.title=data.title||document.title;
-      snap.source='api';snap.complete=!node || !data.mapping[node];snap.state='ready';
-      if(!snap.messages.length) throw Error('No user/assistant messages in graph');
-    } catch(e) {
+      if (live()) snap.state='ready';
+    } catch (e) {
       snap.error=String(e);
-      try {domFallback();} catch(f) {snap.state='error';snap.error+='; DOM: '+String(f);}
+      try {domFallback();} catch (f) {snap.state='error';snap.error+='; DOM: '+String(f);}
     }
   })();
   return {started:true};
@@ -111,7 +183,7 @@ STATUS = r'''(() => {
   const s=window.__normConversation;
   if(!s)return {state:'none'};
   return {state:s.state,source:s.source,complete:s.complete,error:s.error,
-    title:s.title,url:s.url,count:s.messages.length};
+    title:s.title,url:s.url,count:s.messages.length,pages:s.pages};
 })()'''
 
 ITEM = r'''((index,start,length) => {
