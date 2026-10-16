@@ -1,9 +1,9 @@
 {
-  "version": "0.55.8r10d",
+  "version": "0.55.9",
   "variant": "",
-  "tag": "v0.55.8r10d",
-  "source_archive_sha256": "1c33719fe17f1be2a1450b18e0a955bb1ff83594c8a626a808b085c72851913d",
-  "source_archive": "0.55.8r10d--release--1c33719fe17f.zip",
+  "tag": "v0.55.9",
+  "source_archive_sha256": "0a8c708a2e2697b931f2362dc074e9e25a92bfefb102b4163cbf7c649313d8ba",
+  "source_archive": "0.55.9--release--0a8c708a2e26.zip",
   "quality": "static/CLI PASS, historical",
   "known_issues": [],
   "published_source_files": 254,

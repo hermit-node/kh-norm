@@ -1,4 +1,4 @@
-# Norm 0.55.8r10d - verified public-plugin source identity
+# Norm 0.55.9 - verified public-plugin source identity
 
 Corrected web_browser manifest checksum without altering plugin source.
 

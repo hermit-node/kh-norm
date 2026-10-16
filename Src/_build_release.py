@@ -1,9 +1,9 @@
 from pathlib import Path
 import ast,hashlib,json,sys,zipfile
 root=Path(r'D:\LOCAL_Share\Code Projects\Norm')
-src=root/'Norm-0.55.8r10d-STAGING'
+src=root/'Norm-0.55.9-STAGING'
 old=root/'Norm-0.55.7-CLEAN-RELEASE'/'Norm-0.55.8r9-N2-restored-portable-source.zip'
-out=root/'Norm-0.55.8r10d-portable-source.zip'
+out=root/'Norm-0.55.9-portable-source.zip'
 if out.exists():
     raise SystemExit(f'Refusing to overwrite existing release: {out}')
 bad=[]
@@ -33,7 +33,7 @@ for name,body in originals.items():
         raise SystemExit('Protected binary changed or missing: '+name)
 print('PROTECTED PLUGIN PAYLOADS:',len(originals),'binary/hash-sensitive files unchanged from r9')
 manifest={
-    'schema':1,'release':'0.55.8r10d',
+    'schema':1,'release':'0.55.9',
     'baseline':'Norm-0.55.8r9-N2-restored-portable-source.zip',
     'file_count':len(files),
     'hash_algorithm':'SHA-256',

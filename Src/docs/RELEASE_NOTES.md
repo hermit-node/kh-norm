@@ -1,4 +1,4 @@
-## Norm 0.55.8r10d - public web_browser checksum repair (2026-10-10)
+## Norm 0.55.9 - public web_browser checksum repair (2026-10-10)
 
 - Corrects the stale Schema-2 source hash for the public managed web_browser plugin in
   plugins/web_browser/plugin.json AND package-manifest.json.
