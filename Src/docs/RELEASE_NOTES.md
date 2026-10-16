@@ -1,3 +1,25 @@
+## Norm 0.55.8r10b - active-step-first handoffs (2026-10-10)
+
+- Fixes N2 executing the original user's root prompt again during later steps
+  (e.g. step 7/7), overwriting or repeating verified earlier work.
+- All N2 JSON handoffs carry original_user_prompt for authentic user intent,
+  task_user_prompt for task scope, and the CURRENT active assignment separately.
+- N2's system + user-role chat messages place CURRENT step execution first and
+  preserve the complete original user prompt as a clearly bracketed reference.
+  The original is never sent alone as the user turn during an internal step.
+- N1 reviews actual current-step results against observed evidence and the
+  original user's constraints. The original may override conflicting generated
+  step constraints but does not supersede the active work assignment or force a
+  root-task restart.
+- TaskPlan and recovery handoff JSON retain original_user_prompt; final candidate
+  normalization no longer discards it. Legacy queued JSON is repaired using
+  authentic PostgreSQL root-task state when possible.
+- r10a PromptJob data-class field and Redis serialization remains compatible.
+- Regression suites now assert active step-first execution rather than legacy
+  bare-root-prompt user-role messages.
+- No live files were overwritten. Full live model / tool orchestration testing
+  and EXE recompilation have not been performed.
+
 ## Norm 0.55.8r10a - original prompt handoff preservation (2026-10-10)
 
 - Source-only hotfix after r10. Original r10 archive remains untouched.

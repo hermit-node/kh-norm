@@ -67,7 +67,11 @@ assert n2.metadata['is_final_candidate'] is True
 assert n2.metadata['verification_cycle']==2
 assert 'N1 issues' in n2.prompt
 assert n2.metadata['original_user_prompt']=='Write a verified report'
-assert PromptWorker._tool_slice_initial_messages(n2)[1]['content']=='Write a verified report'
+repair_handoff = PromptWorker._tool_slice_initial_messages(n2)[1]['content']
+assert 'Write a verified report' in repair_handoff
+assert '[ORIGINAL USER PROMPT: REFERENCE ONLY' in repair_handoff
+assert 'N1 issues' in repair_handoff
+assert repair_handoff != 'Write a verified report'
 
 w2=worker();j2=deepcopy(original)
 w2._n1_final_verification=lambda *_:(verdict('accept'),False)

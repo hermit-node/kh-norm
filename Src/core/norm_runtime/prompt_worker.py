@@ -1250,7 +1250,8 @@ class PromptWorker:
         prompt_origin = str(metadata.get("prompt_origin") or ("user_prompt" if request_type == "prompt" else "norm_internal"))
         is_user_prompt = request_type == "prompt" and prompt_origin in {"user_prompt", "prompt_interface", "gui_prompt", "ssh_prompt"}
         invoke_source = work_invoke_source(request_type, prompt_origin, metadata)
-        original_user_prompt = str(metadata.get("original_user_prompt") or (job.prompt if is_user_prompt else "")).strip()
+        original_user_prompt = self._ensure_original_user_prompt(job)
+        metadata = job.metadata or {}
         task_user_prompt = str(metadata.get("task_user_prompt") or original_user_prompt).strip()
         instruction = str(job.prompt or "")
         if not is_user_prompt:
@@ -1283,7 +1284,21 @@ class PromptWorker:
             "project_id": job.project_id,
             "command": self._command_from_job(job),
             "original_user_request": original_user_prompt,
+            "original_user_prompt": original_user_prompt,
+            "task_user_prompt": task_user_prompt,
             "primary_task_request": task_user_prompt,
+            "active_assignment": {
+                "task_id": job.task_id,
+                "step_id": job.step_id,
+                "instruction": instruction,
+                "expected_result_kind": str(metadata.get("expected_result_kind") or "step_result"),
+                "acceptance_criteria": str(metadata.get("verification") or ""),
+            },
+            "handoff_precedence": {
+                "original_user_prompt": "authoritative user constraints over conflicting generated step wording",
+                "active_assignment": "current execution target, not the entire original request",
+                "prior_progress": "preserve completed steps and artifacts unless specifically invalidated",
+            },
             "instruction": instruction,
             "context": {
                 "task_working_memory": task_memory,
@@ -1345,6 +1360,7 @@ class PromptWorker:
         return merge_resource_status(*statuses)
 
     def _step_result_envelope(self, job: PromptJob, request_type: str, answer: str, *, resource_status: dict | None = None) -> str:
+        original_prompt = self._ensure_original_user_prompt(job)
         evidence = self.live.task_evidence(job.task_id) if hasattr(self.live, "task_evidence") else []
         resource_status = merge_resource_status(
             resource_status,
@@ -1354,6 +1370,8 @@ class PromptWorker:
         payload = {
             "schema_version": PROTOCOL_VERSION, "kind": "step_result", "status": "completed",
             "task_id": job.task_id, "step_id": job.step_id, "request_type": request_type,
+            "original_user_prompt": original_prompt,
+            "task_user_prompt": str((job.metadata or {}).get("task_user_prompt") or original_prompt),
             "invoke_source": "n2", "invoke_target": "n1",
             "command_category": self._command_from_job(job)["category"],
             "content": answer,
@@ -1365,6 +1383,7 @@ class PromptWorker:
         return json.dumps(payload, ensure_ascii=False)
 
     def _build_final_candidate(self, job: PromptJob, answer: str) -> dict:
+        original_prompt = self._ensure_original_user_prompt(job)
         evidence = self.live.task_evidence(job.task_id) if hasattr(self.live, "task_evidence") else []
         resource_status = merge_resource_status(
             (job.metadata or {}).get("resource_status"),
@@ -1373,6 +1392,8 @@ class PromptWorker:
         payload = {
             "schema_version": PROTOCOL_VERSION, "kind": "final_candidate",
             "task_id": job.task_id, "step_id": job.step_id, "status": "completed",
+            "original_user_prompt": original_prompt,
+            "task_user_prompt": str((job.metadata or {}).get("task_user_prompt") or original_prompt),
             "invoke_source": "n2", "invoke_target": "n1",
             "command": self._command_from_job(job),
             "user_reply": answer,
@@ -1384,9 +1405,10 @@ class PromptWorker:
             "evidence_count": len(evidence),
             "resource_status": resource_status,
         }
-        return validate_final_candidate(payload)
+        return validate_final_candidate(payload, require_original_prompt=True)
 
     def _enqueue_final_verification(self, job: PromptJob, answer: str) -> None:
+        self._ensure_original_user_prompt(job)
         if str((job.metadata or {}).get("expected_result_kind") or "") == "recovery_analysis":
             analysis = self._parse_recovery_analysis(
                 answer, parent_scope=self._recovery_scope_items(job))
@@ -1583,8 +1605,17 @@ class PromptWorker:
         }, False
 
     def _process_final_verification(self, redis_id: str, job: PromptJob, name: str, started) -> None:
+        original_prompt = self._ensure_original_user_prompt(job)
         try:
-            candidate = validate_final_candidate(json.loads(job.prompt))
+            raw_candidate = json.loads(job.prompt)
+            if isinstance(raw_candidate, dict) and not raw_candidate.get("original_user_prompt"):
+                # Legacy already-queued verification envelopes can be repaired
+                # using authentic durable intent, not re-running N2.
+                raw_candidate["original_user_prompt"] = original_prompt
+                raw_candidate["task_user_prompt"] = str(
+                    (job.metadata or {}).get("task_user_prompt") or original_prompt
+                )
+            candidate = validate_final_candidate(raw_candidate, require_original_prompt=True)
         except (json.JSONDecodeError, ValueError) as exc:
             raise VerifierProtocolError(f"queued final candidate failed deterministic schema validation: {exc}") from exc
         artifact_state = self._final_artifact_state(candidate)
@@ -3924,39 +3955,48 @@ class PromptWorker:
 
     @staticmethod
     def _tool_slice_initial_messages(job: PromptJob) -> list[dict]:
-        """Keep the human's request as a genuine user-role message on every slice.
+        """Current step drives execution; original user prompt is reference only.
 
-        A generated step is not a new request to plan the parent task. Its
-        current executable instruction and verified progress are supplied by
-        the *system* work_request; the user-role text remains the unchanged
-        original goal/constraints for semantic grounding and final review.
-        Ollama also requires an actual user message for its chat template.
+        Preserve the original verbatim for semantic constraints and N1 review,
+        but do not present it as a standalone fresh task on a late step.
         """
         metadata = job.metadata or {}
         request_type = normalize_request_type(job.request_type)
-        user_request = str(metadata.get("original_user_prompt") or metadata.get("task_user_prompt") or "").strip()
-        direct_user_turn = (
-            request_type == "prompt"
-            and str(metadata.get("prompt_origin") or "user_prompt")
-            in {"user_prompt", "prompt_interface", "gui_prompt", "ssh_prompt"}
+        original = str(metadata.get("original_user_prompt") or
+                       getattr(job, "original_user_prompt", "") or "").strip()
+        if not original:
+            raise RuntimeError("Missing validated original_user_prompt in execution handoff")
+        direct = (request_type == "prompt" and
+                  str(metadata.get("prompt_origin") or "user_prompt") in {
+                      "user_prompt", "prompt_interface", "gui_prompt", "ssh_prompt"
+                  })
+        if direct:
+            return [{"role": "system", "content": ""},
+                    {"role": "user", "content": original}]
+        assignment = str(job.prompt or "").strip()
+        if not assignment:
+            raise RuntimeError("Missing active step instruction in execution handoff")
+        position = int(metadata.get("generated_step_index") or 0)
+        total = int(metadata.get("generated_step_count") or 0)
+        step_label = f"{position}/{total}" if position and total else job.step_id
+        user_turn = (
+            "[CURRENT ASSIGNMENT: NOT A NEW ROOT TASK]\n"
+            f"Task {job.task_id}; step {step_label}\n"
+            f"Do now: {assignment}\n"
+            f"Verify: {metadata.get('verification') or 'current step result'}\n"
+            "Preserve established progress and existing outputs. Do not restart "
+            "the original task, replay completed steps, or overwrite their "
+            "artifacts unless the active step explicitly requires it or "
+            "new evidence proves the result wrong.\n\n"
+            "[ORIGINAL USER PROMPT: REFERENCE ONLY, VERBATIM]\n"
+            f"{original}\n"
+            "[END ORIGINAL PROMPT REFERENCE]\n"
+            "Use the original request to resolve constraints if a generated "
+            "step contradicts the user's intent; the current assignment "
+            "still determines what work is performed now."
         )
-        if not user_request and direct_user_turn:
-            user_request = str(job.prompt or "").strip()
-        if not user_request:
-            # Old queued step metadata may have lost the separate field, while
-            # the original task survives in its generated step text.
-            old_step = str(job.prompt or "")
-            marker = "AUTHORITATIVE PRIMARY TASK REQUEST:\n"
-            end_marker = "\n\nNORM-GENERATED EXECUTION STEP:"
-            if marker in old_step and end_marker in old_step.split(marker, 1)[1]:
-                user_request = old_step.split(marker, 1)[1].split(end_marker, 1)[0].strip()
-        if not user_request:
-            raise RuntimeError(
-                "Cannot execute an Ollama tool slice without the original user request. "
-                "Restore original_user_prompt/task_user_prompt from durable task metadata; "
-                "do not invent a replacement user message."
-            )
-        return [{"role": "system", "content": ""}, {"role": "user", "content": user_request}]
+        return [{"role": "system", "content": ""},
+                {"role": "user", "content": user_turn}]
 
     @staticmethod
     def _tool_slice_execution_instructions(job: PromptJob) -> str:
@@ -3981,9 +4021,11 @@ class PromptWorker:
             return recovery_directive + (
                 "[NORM EXECUTION PHASE — ACTIVE STEP, NOT TASK PLANNING]\n"
                 f"Current execution target: {stage}.\n"
-                "The original user request remains in the user role ONLY as reference "
-                "for overall purpose, constraints, and success criteria. DO NOT execute "
-                "that user-role text as a new task, nor replan/restart it.\n"
+                "The original user request is supplied as a LABELED REFERENCE, "
+                "not as a standalone instruction. The CURRENT assignment determines "
+                "what work to do now. If a generated step contradicts the user's "
+                "original constraints, keep those constraints while repairing this "
+                "step only. Do not replan or restart the root request.\n"
                 "Planning and N1 plan verification have ALREADY occurred. Actively "
                 "PROSECUTE the CURRENT work_request.instruction and its verification "
                 "requirement, using the current continuation, task memory, and "
@@ -4090,9 +4132,9 @@ class PromptWorker:
                 self._active_voice_instructions(),
                 self._tool_slice_execution_instructions(job),
                 "[NORM INTERNAL TASK/STEP INSTRUCTION — NOT USER-AUTHORED]\n"
-                "The user-role message contains the operator's original task, "
-                "preserved on each slice for purpose and constraints. The scoped "
-                "internal work_request below defines WHAT TO EXECUTE NOW. "
+                "The user-role message is anchored to the CURRENT active step "
+                "with the verbatim original user request clearly marked as reference. "
+                "The scoped internal work_request defines WHAT TO EXECUTE NOW. "
                 "Never attribute this internal step or its corrections to the user.\n"
                 + prompt,
                 live_injection,

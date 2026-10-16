@@ -87,6 +87,54 @@ class R10Contracts(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"Conflicting original user prompts"):
             queue._job_to_fields(job)
 
+    def test_step_seven_does_not_reissue_original_prompt(self):
+        job=self._job({
+            "original_user_prompt":"Make an entire document and all seven components.",
+            "task_user_prompt":"Review accumulated work and finish the final section.",
+            "prompt_origin":"norm_generated_step",
+            "generated_step_index":7,"generated_step_count":7,
+            "verification":"Final section references verified earlier results.",
+        })
+        job.step_id="step-07"
+        job.prompt="Finalize section seven from existing verified files."
+        msgs=PromptWorker._tool_slice_initial_messages(job)
+        self.assertEqual(len(msgs),2)
+        user=msgs[1]["content"]
+        self.assertIn("step 7/7",user)
+        self.assertIn("Finalize section seven",user)
+        self.assertIn("[ORIGINAL USER PROMPT: REFERENCE ONLY",user)
+        self.assertIn("Make an entire document and all seven components.",user)
+        self.assertNotEqual(user,job.metadata["original_user_prompt"])
+        self.assertIn("Do not restart",user)
+        self.assertIn("Preserve established progress",user)
+
+    def test_direct_user_prompt_still_executes_as_direct_turn(self):
+        job=self._job({"original_user_prompt":"What time is it?",
+                       "prompt_origin":"user_prompt"})
+        job.request_type="prompt"
+        msgs=PromptWorker._tool_slice_initial_messages(job)
+        self.assertEqual(msgs[1]["content"],"What time is it?")
+
+    def test_final_json_never_strips_original_user_prompt(self):
+        from norm_runtime.protocol import validate_final_candidate,PROTOCOL_VERSION
+        payload={"schema_version":PROTOCOL_VERSION,"kind":"final_candidate",
+                 "task_id":"child-1","step_id":"work","status":"completed",
+                 "original_user_prompt":"Create a research report.",
+                 "task_user_prompt":"Finalize the current section.",
+                 "command":{"category":"task","intent":"Finalize the current section.",
+                            "requires_file_mutation":False,
+                            "requires_external_research":False,
+                            "input_has_media":False,"output_requires_media":False,
+                            "expected_output":{"type":"answer","format":"text"}},
+                 "user_reply":"The verified section is complete.","artifacts":[],
+                 "requirements":{},"evidence_count":0}
+        cleaned=validate_final_candidate(payload,require_original_prompt=True)
+        self.assertEqual(cleaned["original_user_prompt"],payload["original_user_prompt"])
+        self.assertEqual(cleaned["task_user_prompt"],payload["task_user_prompt"])
+        payload.pop("original_user_prompt")
+        with self.assertRaisesRegex(ValueError,"original_user_prompt"):
+            validate_final_candidate(payload,require_original_prompt=True)
+
     def test_analysis_kind_and_identity(self):
         self.assertEqual(json.loads(self.validate(GOOD)),GOOD)
 

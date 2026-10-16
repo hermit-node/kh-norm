@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "release": "0.55.8r10a",
+  "release": "0.55.8r10b",
   "baseline": "Norm-0.55.8r9-N2-restored-portable-source.zip",
   "file_count": 295,
   "hash_algorithm": "SHA-256",
@@ -15,7 +15,7 @@
     },
     "_build_release.py": {
       "bytes": 3061,
-      "sha256": "cef779e4eaf45c03895ce0d6daa3ba9d5c0ad92881790e306aaf03dcee27093e"
+      "sha256": "10472b61d32cd6dcbfcc3684d92d8e9480d3d1e278ce9edca78eada03f61ab2c"
     },
     "config/plugins.ini": {
       "bytes": 1706,
@@ -146,12 +146,12 @@
       "sha256": "ac6d1d872037396943b5c6709562b68914b3451c4b4ab997ed78d8599d29d146"
     },
     "core/norm_runtime/models.py": {
-      "bytes": 2685,
-      "sha256": "cbf1a94decbc7e95f9185bf77b62c091a4b51e71c49f7daf821e3d430c0b308e"
+      "bytes": 2745,
+      "sha256": "30dbbf11ae66910987e1d0a13f14a8ce2572cc3265bb52129d419d0554d1e95c"
     },
     "core/norm_runtime/n1_gatekeeper.py": {
-      "bytes": 98027,
-      "sha256": "b0cd2fd46a354a9acd08ceb5c99036640e9c2f5159e2d8c1df8bca52ebdd05c8"
+      "bytes": 98698,
+      "sha256": "207ac120b1b5be34ac9336028ae2604c0948c09e3e8d9e26105cba93e1a03620"
     },
     "core/norm_runtime/ollama_client.py": {
       "bytes": 33032,
@@ -190,12 +190,12 @@
       "sha256": "b2c39070add4e948be4998d75a72f4305661c130f6e7ba1b223f30ac7097bd32"
     },
     "core/norm_runtime/prompt_worker.py": {
-      "bytes": 324712,
-      "sha256": "ff75e2895d5ff7f45a5b4ba89e70ec3ed2f2822cc344929d1349992a54d606a4"
+      "bytes": 327230,
+      "sha256": "ec4c2a35d8d37903f92e4e904df4c1ce8483450ce420d2322c4ffbf6b43cddae"
     },
     "core/norm_runtime/protocol.py": {
-      "bytes": 13746,
-      "sha256": "2f23c30eb95b6bc4b84ba0cd9d0822563408cba3c9fa33f19bc3dcd20f8e9794"
+      "bytes": 14182,
+      "sha256": "2465cc621ed64ab1974a2e0cf11146c3e296f0d7250b5c214f1124e0d5e4b3af"
     },
     "core/norm_runtime/queue_visibility.py": {
       "bytes": 4452,
@@ -282,8 +282,8 @@
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
     },
     "docs/RELEASE_NOTES.md": {
-      "bytes": 120663,
-      "sha256": "393568bf9292cb903e2930fb9acddb0e412b4e1670a0bc465848336b351b1d05"
+      "bytes": 122054,
+      "sha256": "ecb29f52f7cd8c0e59ec89b1124fc1502b45d772e2309ed9f51cdda9a59156b8"
     },
     "docs/VOICE_OPERATOR_COMMANDS_PATCH.md": {
       "bytes": 1796,
@@ -314,8 +314,8 @@
       "sha256": "21cfa8dd0fffdbebe3b1c82ed4899258985f7792c040f283399335a8bec90f76"
     },
     "objects/recovery.py": {
-      "bytes": 5890,
-      "sha256": "8fc6ef6e1178b5923d0037d745e22ce06c65104591920f6d3632ced1d12b1710"
+      "bytes": 5988,
+      "sha256": "85ebe1d906b28eb02ba8c7a19b07767c96d2f1b1e75ec66ba96522ac54d250e8"
     },
     "objects/review.py": {
       "bytes": 5776,
@@ -331,7 +331,7 @@
     },
     "package-manifest.json": {
       "bytes": 25833,
-      "sha256": "6f38468f5002e64974bcd33cfd6053640f1e8c4f0fd7c1c6af17f04ef27100ed"
+      "sha256": "a00efb5cfa53856a27fb888d7de3d89c4b94a0caabc4ed81efdf87585df12d1c"
     },
     "plugins/backup/help.txt": {
       "bytes": 327,
@@ -826,8 +826,8 @@
       "sha256": "5c6db61fa30f1b1bd21c8d0d4e4d67f79d7705b03afb999f926f25c7c1dd911b"
     },
     "README.md": {
-      "bytes": 19863,
-      "sha256": "76f3a99aefd6fa65532b5533aea4d6dee2aab03ef39a84030c9d6d5e1b0a4773"
+      "bytes": 20182,
+      "sha256": "d41f5acfe2ab2aa45e1271edabf81f8389af8a849e8e1e57456d813b4af8044e"
     },
     "Run-Norm.bat": {
       "bytes": 3806,
@@ -838,8 +838,8 @@
       "sha256": "cf9930fc55eb69537d91ebcc6dd7f6984206b51b506d34671dc66a93b5a9a3b2"
     },
     "SOURCE_PACKAGE.md": {
-      "bytes": 19727,
-      "sha256": "78be3f1e590aca34c3e031499f2e6df285edbfd795f7c11720d51e0f8e191e17"
+      "bytes": 20046,
+      "sha256": "393670525e9966c189746315d8573c24943678fa253ce2c6f39b01123c34f32c"
     },
     "tools/7zip/7z.dll": {
       "bytes": 1906688,
@@ -1006,8 +1006,8 @@
       "sha256": "b4c27458ecfc2adb2375494ca8d0fd1c71f659f80088b85cb954def285cb794a"
     },
     "tools/test_final_n2_n1_r9.py": {
-      "bytes": 4191,
-      "sha256": "9182c410d69425307c2b5cbd9683c6667b1cf0cf6ea4a275cf7ee5ebca7a8046"
+      "bytes": 4378,
+      "sha256": "47d07031383f5519c98c343b574f859dcf53431a300c8059f8795d4d3964d197"
     },
     "tools/test_first_answer_preservation_0555.py": {
       "bytes": 4413,
@@ -1102,12 +1102,12 @@
       "sha256": "da659fa0a5930c39cfb7ac00087cbb6a2bf8d8fabcfeb18ef5a9149931645281"
     },
     "tools/test_r10_contract_integration.py": {
-      "bytes": 9180,
-      "sha256": "347ca1ef8c18d2c0fdb045a5e8bd3418c43b4b9594e08bec1acb840a05783814"
+      "bytes": 12047,
+      "sha256": "337d0c200e3ed92cf7bb16c52a930b7712a45f090b62ea676a38b69b69f1c0d8"
     },
     "tools/test_recovery_r9.py": {
-      "bytes": 5822,
-      "sha256": "52d12d374372bc578870d8f3d6e9ca9043d158f2fffd87f680b0dd771f994840"
+      "bytes": 5996,
+      "sha256": "f0403fb39d602b75d7cf718b2ca6f042e5a920d3079dda916ae91c2fa2496b0c"
     },
     "tools/test_requirements_manifest.py": {
       "bytes": 1685,

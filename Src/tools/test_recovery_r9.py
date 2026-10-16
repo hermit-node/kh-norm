@@ -80,8 +80,12 @@ assert len(w.queue.saved) == 5  # duplicate retry must NOT spawn a second recove
 assert w.queue.saved[0].node_id == plan.steps[2].node_id
 
 # No N2 inference from Celery. Full N2 execution still has exact user-role reference.
-assert PromptWorker._tool_slice_initial_messages(w.queue.saved[0])[1]['content']==plan.original_request
-assert 'original user request remains in the user role ONLY as reference' in PromptWorker._tool_slice_execution_instructions(w.queue.saved[0])
+handoff_user_text = PromptWorker._tool_slice_initial_messages(w.queue.saved[0])[1]['content']
+assert plan.original_request in handoff_user_text
+assert '[ORIGINAL USER PROMPT: REFERENCE ONLY' in handoff_user_text
+assert '[CURRENT ASSIGNMENT:' in handoff_user_text
+assert handoff_user_text != plan.original_request
+assert 'CURRENT assignment determines' in PromptWorker._tool_slice_execution_instructions(w.queue.saved[0])
 print('PASS r9 dedicated recovery, original prompt provenance, compact context, normal N2 jobs')
 
 # A PASSED_TO parent is an archive, NOT a cleanup target: no soft deletion,

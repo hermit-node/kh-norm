@@ -1,9 +1,9 @@
 {
-  "version": "0.55.8r10a",
+  "version": "0.55.8r10b",
   "variant": "",
-  "tag": "v0.55.8r10a",
-  "source_archive_sha256": "8b11a1ff65517bb99abb3b711eadd2b8add36921926d93054795cef4826d9079",
-  "source_archive": "0.55.8r10a--release--8b11a1ff6551.zip",
+  "tag": "v0.55.8r10b",
+  "source_archive_sha256": "5afa4fad86c3e6a4a0fd6be9a1b76388bfa7cd18fd748892f881ed6ad3a904fe",
+  "source_archive": "0.55.8r10b--release--5afa4fad86c3.zip",
   "quality": "bad web_browser SHA; use r10d",
   "known_issues": [
     "bad web_browser SHA; use r10d"

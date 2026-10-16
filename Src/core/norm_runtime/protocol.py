@@ -119,7 +119,9 @@ def normalize_command(value: dict[str, Any], fallback_text: str = "") -> dict[st
     return result
 
 
-def validate_final_candidate(value: dict[str, Any]) -> dict[str, Any]:
+def validate_final_candidate(
+    value: dict[str, Any], *, require_original_prompt: bool = False
+) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("final candidate must be an object")
     required = {"schema_version", "kind", "task_id", "step_id", "status", "command", "user_reply", "artifacts", "requirements", "evidence_count"}
@@ -134,6 +136,10 @@ def validate_final_candidate(value: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("final candidate task_id is required")
     if not isinstance(value.get("step_id"), str) or not value["step_id"]:
         raise ValueError("final candidate step_id is required")
+    original_prompt = str(value.get("original_user_prompt") or "").strip()
+    if require_original_prompt and not original_prompt:
+        raise ValueError("final candidate JSON missing required original_user_prompt")
+    task_prompt = str(value.get("task_user_prompt") or original_prompt).strip()
     command = normalize_command(value.get("command") or {}, "final response")
     reply = value.get("user_reply")
     if not isinstance(reply, str) or not reply.strip():
@@ -163,6 +169,8 @@ def validate_final_candidate(value: dict[str, Any]) -> dict[str, Any]:
         "task_id": value["task_id"],
         "step_id": value["step_id"],
         "status": "completed",
+        "original_user_prompt": original_prompt,
+        "task_user_prompt": task_prompt,
         # These fields originate from the trusted caller, not from the generated reply.
         # Preserve them during schema normalization so resumed N1/N2 handoffs
         # cannot be mistaken for a new operator turn.

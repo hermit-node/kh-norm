@@ -51,6 +51,7 @@ class TaskPlan:
             "title": self.title,
             "created_at": self.created_at.isoformat(),
             "original_request": self.original_request,
+            "original_user_prompt": self.original_request,
             "source_prompt_id": self.source_prompt_id,
             "source_user_message_id": self.source_user_message_id,
             "ingrained_detail_count": int(self.ingrained_detail_count or 0),

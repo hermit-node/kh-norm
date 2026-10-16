@@ -122,4 +122,6 @@ class RecoveryHandoff:
         return f"PASSED_TO:{self.new_task_id}"
 
     def to_dict(self) -> dict:
-        return as_payload(self)
+        payload = as_payload(self)
+        payload["original_user_prompt"] = self.original.original_prompt
+        return payload

@@ -1,3 +1,7 @@
+# Norm 0.55.8r10b - active-step-first portable source
+
+All internal N1/N2 handoffs preserve the original user request for constraints and provenance. N2 executes only the current assigned step and preserves completed work; N1 checks that step against evidence and original-user intent without reissuing the root task.
+
 # Norm 0.55.8r10a original-prompt handoff hotfix
 
 Includes explicit PromptJob.original_user_prompt and durable-root restoration before N2 execution and delegation. Built from the r10 portable source staging tree, preserving the same live-derived PDF/web plugin fixes. See release notes.
