@@ -233,7 +233,7 @@ class ConversationService:
             status = self.durable.task_status(task_id)
             if status == "completed":
                 return task_id, self.durable.latest_summary(task_id) or "Resumed task completed.", full_context_status()
-            if status in {"failed", "cancelled"}:
+            if status in {"failed", "cancelled", "passed_to"}:
                 return task_id, self.durable.latest_summary(task_id) or f"Resumed task ended {status}.", full_context_status()
             if status == "suppressed":
                 return task_id, "The task was suppressed again before completion.", full_context_status()
@@ -370,7 +370,7 @@ class ConversationService:
         deadline = time.monotonic() + self.wait_timeout_seconds
         while time.monotonic() < deadline:
             status = self.durable.task_status(task_id)
-            if status in {"completed", "failed", "cancelled"}:
+            if status in {"completed", "failed", "cancelled", "passed_to"}:
                 reply = self.durable.latest_summary(task_id)
                 if not reply and hasattr(self.durable, "ensure_terminal_summary"):
                     self.durable.ensure_terminal_summary(task_id)
@@ -2009,7 +2009,7 @@ class ConversationService:
                     else full_context_status()
                 )
                 return task_id, self._limit_human_reply(task_id, reply), merge_resource_status(resource_status, task_resource_status)
-            if status in {"failed", "cancelled"}:
+            if status in {"failed", "cancelled", "passed_to"}:
                 # The task is already durably terminal. Return its durable result to
                 # the synchronous /api/chat owner so DB3 ingress can ACK the original
                 # prompt exactly once. Raising here makes prompt_ingress classify an

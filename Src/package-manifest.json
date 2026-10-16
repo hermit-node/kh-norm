@@ -493,5 +493,23 @@
     "condensation_attempts": 3,
     "policy": "retain full generated original and submit shortest complete summary; no bypass of N1/N2 verification",
     "normal_output_child_tasks": "not included; deferred"
+  },
+  "release_revision": "0.55.8-continuity-r7-terminal",
+  "terminal_conclusion": {
+    "scope": "final generated multi-step conclusion only",
+    "module": "core/norm_runtime/terminal_conclusion.py",
+    "report_card_prefix": "norm:terminal:v1:",
+    "statuses": [
+      "TRUE",
+      "FALSE",
+      "UNKNOWN",
+      "PENDING"
+    ],
+    "max_checks": 24,
+    "deadline_seconds": 3600,
+    "model_concurrency": 1,
+    "handoff_status": "passed_to",
+    "prior_version": "0.55.8 continuity r6 installed source",
+    "live_validation": "not performed"
   }
 }

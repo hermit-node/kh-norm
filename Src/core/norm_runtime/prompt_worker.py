@@ -853,6 +853,11 @@ class PromptWorker:
         request_type = normalize_request_type(job.request_type)
         name = str(metadata.get("step_name") or job.step_id)
         logging.info("Processing queued request task=%s step=%s type=%s", job.task_id, job.step_id, request_type)
+        if (request_type == "conclusion" and self.durable
+                and self.durable.task_status(job.task_id) in {"passed_to", "completed"}):
+            self.queue.ack(redis_id)
+            logging.info("Discarded terminal replay of already concluded task=%s",job.task_id)
+            return
         if self._task_suppressed(job.task_id):
             # A durable suppression snapshot is the resume source of truth. Delete any
             # stale live Redis copy so a suppressed tree cannot block unrelated work.
@@ -918,6 +923,17 @@ class PromptWorker:
                 return
             if request_type == "final_verification":
                 self._process_final_verification(redis_id, job, name, started)
+                return
+
+            # Only the LAST generated action step uses the isolated Redis-backed
+            # terminal pipeline. Earlier planning/execution and direct prompts stay intact.
+            if (request_type == "conclusion"
+                    and bool(metadata.get("is_final_candidate"))
+                    and int(metadata.get("generated_step_count") or 0) > 1
+                    and bool((self._runtime_config().get("terminal_conclusion") or {}).get("enabled", True))):
+                from .terminal_conclusion import TerminalConclusion
+                result = TerminalConclusion(self).run(job)
+                self._finish_terminal_conclusion(redis_id, job, name, started, result)
                 return
 
             task_memory = ""
@@ -1513,6 +1529,68 @@ class PromptWorker:
             "issues": [issue[:600]], "repair_scope": "response",
             "n1_reason": str(judgment.get("reason") or ""),
         }, False
+
+    def _finish_terminal_conclusion(self, redis_id, job, name, started, outcome) -> None:
+        """Persist a final-stage result without re-entering the oversized final reviewer."""
+        state = str(outcome.status)
+        if state not in {"completed", "passed_to", "unresolved"}:
+            raise ValueError("unrecognized terminal conclusion state")
+        if (getattr(self, "_suppression_requested", lambda _: False)(job.task_id)
+                or (self.durable and self.durable.task_status(job.task_id) == "suppressed")
+                or getattr(getattr(self, "_stop_all_now", None), "is_set", lambda:False)()):
+            raise ModelGenerationCancelled("Terminal conclusion interrupted before durable finalization")
+        report_key = f"norm:terminal:v1:{job.task_id}:checks"
+        summary = json.dumps({
+            "schema_version":PROTOCOL_VERSION,"kind":"terminal_report_card",
+            "status":state,"report_card":report_key,
+            "successor_task_id":str(outcome.successor_id or ""),
+            "verified_step_ids":list(outcome.report.get("passed") or []),
+            "failed_step_ids":list(outcome.report.get("failed") or []),
+            "unknown_step_ids":list(outcome.report.get("unknown") or []),
+        },ensure_ascii=False)
+        ok = state in {"completed","passed_to"}
+        status = StepStatus.COMPLETED if ok else StepStatus.FAILED
+        if self.durable:
+            self.durable.checkpoint_step(StepResult(
+                task_id=job.task_id,step_id=job.step_id,name=name,status=status,
+                summary=summary,verification="redis-terminal-checks",
+                started_at=started,completed_at=_utc_now(),
+            ))
+            if ok:
+                self.durable.checkpoint_step(StepResult(
+                    task_id=job.task_id,step_id="final-verify",
+                    name="Verify final candidate envelope",status=StepStatus.COMPLETED,
+                    summary=summary,verification="terminal-paragraph-checks" if state=="completed"
+                        else "terminal-recovery-handoff",
+                    started_at=started,completed_at=_utc_now(),
+                ))
+                if state == "completed" and not self.durable.all_steps_completed(job.task_id):
+                    raise RuntimeError("Terminal conclusion cannot report success with missing planned steps")
+            self.durable.finalize_task(job.task_id,outcome.answer,
+                "failed" if state=="unresolved" else state)
+            if not self.durable.terminal_summary_verified(job.task_id):
+                raise RuntimeError("Terminal summary was not verified after durable write")
+        if ok:
+            self.live.step_completed(job.task_id,job.step_id,summary,
+                "redis-terminal-checks")
+            self.live.step_started(job.task_id,"final-verify","Verify final candidate envelope")
+            self.live.step_completed(job.task_id,"final-verify",summary,
+                "terminal-paragraph-checks" if state=="completed" else "terminal-recovery-handoff")
+            if state == "passed_to":
+                self.live.transfer_task(job.task_id,outcome.successor_id,outcome.answer)
+            else:
+                self.live.finish(job.task_id,outcome.answer)
+        else:
+            # Inconclusive verification is not task success. Keep the report card
+            # persisted, and let the ordinary failed-task resume workflow handle it.
+            self.live.step_failed(job.task_id,job.step_id,outcome.answer)
+        # The special terminal stage deliberately avoids legacy terminal cleanup:
+        # it would invoke another unrestricted model call for an effectiveness note,
+        # delete Redis state needed for handoff, and potentially soft-delete artifacts
+        # referenced by a passed_to successor. Retention is handled separately.
+        self.queue.ack(redis_id)
+        logging.info("Terminal conclusion task=%s outcome=%s successor=%s",
+            job.task_id,state,outcome.successor_id)
 
     def _process_final_verification(self, redis_id: str, job: PromptJob, name: str, started) -> None:
         try:

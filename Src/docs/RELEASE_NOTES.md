@@ -1,3 +1,7 @@
+## Norm 0.55.8 continuity r7 - terminal only
+
+Redis checkpointed final-step verification; N1 repair handoff; short independently checked report paragraphs. No changes to earlier planned execution steps. Source-only, mock-tested. See TERMINAL_CONCLUSION_R7.md.
+
 ## Norm 0.55.8 continuity r6 — preserve original user role and execute the active step (2026-10-09)
 
 - **Cumulative source-only update built directly from r5.** Corrected a r4/r5 regression in which generated N2 step/child chat calls contained only `system` messages. Ollama's `norm` chat template rejected them with HTTP 500 `no user query found in messages`; automatic retries repeated the invalid envelope.

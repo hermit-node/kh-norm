@@ -127,6 +127,14 @@ class RedisTaskLog:
         self.client.hset(self._state_key(task_id), mapping={"status": "completed", "current_step": "", "updated_at": _now()})
         self._emit(task_id, "task_completed", summary=summary)
 
+    def transfer_task(self, task_id: str, successor_task_id: str, summary: str) -> None:
+        self.client.hset(self._state_key(task_id), mapping={
+            "status": "passed_to", "current_step": "",
+            "successor_task_id": str(successor_task_id), "updated_at": _now(),
+        })
+        self._emit(task_id, "task_passed_to",
+                   successor_task_id=successor_task_id, summary=summary)
+
     def state(self, task_id: str) -> dict[str, str]:
         return self.client.hgetall(self._state_key(task_id))
 
