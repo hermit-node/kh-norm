@@ -31,12 +31,21 @@ START = r'''(() => {
       if (!a||typeof a!=='object') continue;
       attachments.push({kind:(a.mime_type||'').startsWith('image/')?'image':'file',
         name:a.name||a.file_name||'attachment',id:String(a.id||a.file_id||a.asset_pointer||'').replace(/^sediment:\/\//,'')||null,
-        url:a.download_url||a.downloadUrl||a.url||a.public_url||null,mime:a.mime_type||a.mime||null});
+        url:a.download_url||a.downloadUrl||a.url||a.public_url||null,mime:a.mime_type||a.mime||null,
+        message_id:m.id||nodeId||null});
     }
     for (const p of parts) {
       if (p&&typeof p==='object'&&p.content_type==='image_asset_pointer') {
         attachments.push({kind:'image',name:'Image',id:text(p.asset_pointer).replace(/^sediment:\/\//,''),
-          url:p.download_url||null,mime:'image/png'});
+          url:p.download_url||p.url||p.public_url||null,mime:p.mime_type||'image/*',
+          message_id:m.id||nodeId||null});
+      } else if (p&&typeof p==='object'&&p.content_type==='image_v2'&&Array.isArray(p.images)) {
+        for (const image of p.images) {
+          if (!image||typeof image!=='object') continue;
+          attachments.push({kind:'image',name:'Generated image',id:image.id||image.asset_pointer||null,
+            url:image.public_url||image.content_url||image.thumbnail_url||null,mime:'image/*',
+            message_id:m.id||nodeId||null});
+        }
       }
     }
     // ChatGPT commonly lists the same image twice: metadata file_... and
@@ -158,7 +167,8 @@ START = r'''(() => {
           while(node&&data.mapping[node]&&!visited.has(node)&&chain.length<30000){
             visited.add(node);chain.push(data.mapping[node]);node=data.mapping[node].parent;
           }
-          if (!chain.length||node&&data.mapping[node]) throw Error('Legacy branch incomplete or cyclic');
+          if (!chain.length || (node!==null && node!==undefined))
+            throw Error('Legacy branch missing oldest ancestor or cyclic');
           chain.reverse();
           const msgs=chain.filter(n=>n.message&&['user','assistant'].includes(n.message.author?.role))
             .map((n,i)=>toMsg(n.message,i,n.id));
@@ -172,43 +182,71 @@ START = r'''(() => {
       if (!live()) return;
       snap.messages=result.messages;snap.title=result.title||document.title;
       snap.source=result.source;snap.complete=result.complete;
-      // Resolve every distinct attachment once. This endpoint generally returns
-      // {url: 'https://files.oaiusercontent.com/...'}, NOT download_url.
-      // Keep signed URLs ephemeral; Python strips them from the saved JSON.
-      const groups=new Map();
-      for (const a of snap.messages.flatMap(m=>m.attachments)) {
-        const fileId=String(a.id||'').replace(/^sediment:\/\//,'').split(/[?#]/)[0];
-        if (!fileId||a.url) continue;
-        if (!groups.has(fileId)) groups.set(fileId,[]);
-        groups.get(fileId).push(a);
+      // Match the extension's two-stage operation: resolve signed first-party
+      // URLs by file ID, then let the local exporter fetch the actual bytes.
+      // Keep these short-lived URLs inside the live page until packaging ends.
+      const groups=new Map(), allAssets=snap.messages.flatMap(m=>m.attachments||[]);
+      for (const a of allAssets) {
+        const raw=String(a.id||'').replace(/^sediment:\/\//,'').split(/[?#]/)[0];
+        if (!raw) continue;
+        if (!/^[A-Za-z0-9_-]{4,150}$/.test(raw)) {
+          a.resolution_error='Unsupported attachment ID format';continue;
+        }
+        a.id=raw;
+        if (!groups.has(raw)) groups.set(raw,[]);
+        groups.get(raw).push(a);
       }
-      snap.attachmentResolution={requested:groups.size,resolved:0,failed:0,
-        failures:[],limited:groups.size>1500};
+      snap.attachmentResolution={expected:groups.size,resolved:0,failed:0,
+        failures:[],references:allAssets.length,limited:groups.size>1500};
       const entries=Array.from(groups.entries());
-      for (let start=0;start<entries.length;start+=4) {
+      if(entries.length>1500) {
+        snap.attachmentResolution.failed=entries.length;
+        snap.attachmentResolution.failures.push({reason:'Attachment safety limit exceeded (1500 distinct IDs)'});
+      }
+      for (let start=0;start<Math.min(entries.length,1500);start+=3) {
         if (!live()) return;
-        await Promise.all(entries.slice(start,start+4).map(async ([fileId,aliases])=>{
+        await Promise.all(entries.slice(start,start+3).map(async ([fileId,aliases])=>{
           try {
-            const info=await getJSON('/backend-api/files/download/'+encodeURIComponent(fileId)+
-              '?conversation_id='+encodeURIComponent(id),headers);
-            const candidate=info?.download_url||info?.url||info?.downloadUrl||info?.public_url;
-            if (typeof candidate!=='string'||!candidate.trim()) throw Error('No signed asset URL');
+            // Prefer a signed URL already supplied in attachment metadata.
+            let candidate=aliases.map(a=>a.url).find(x=>typeof x==='string'&&x.trim());
+            if(!candidate) {
+              let err;
+              const queries=['conversation_id='+encodeURIComponent(id)];
+              const messageId=aliases.map(a=>a.message_id).find(Boolean);
+              // ChatGPT Exporter can use message_id rather than conversation_id
+              // for certain file contexts. Do not substitute an invented ID.
+              if(messageId) queries.push('message_id='+encodeURIComponent(messageId));
+              for (const query of queries) {
+                try {
+                  const info=await getJSON('/backend-api/files/download/'+encodeURIComponent(fileId)+'?'+query,headers);
+                  candidate=info?.download_url||info?.url||info?.downloadUrl||info?.public_url||
+                    info?.data?.url||info?.data?.download_url;
+                  if(candidate)break;
+                  err=Error('No signed asset URL in file metadata');
+                }catch(e){err=e;}
+              }
+              if(!candidate)throw err||Error('ChatGPT did not provide a file URL');
+            }
             const parsed=new URL(candidate,location.origin);
             const host=parsed.hostname.toLowerCase();
             if (parsed.protocol!=='https:' || parsed.username || parsed.password ||
-                !(['chatgpt.com','chat.openai.com','openai.com','oaistatic.com','oaiusercontent.com']
-                  .includes(host) || ['openai.com','oaistatic.com','oaiusercontent.com']
-                  .some(base=>host.endsWith('.'+base))))
-              throw Error('Unrecognized asset host');
-            aliases.forEach(a=>a.url=parsed.href);
+                !(['chatgpt.com','chat.openai.com','images.openai.com',
+                   'openai.com','oaistatic.com','oaiusercontent.com'].includes(host) ||
+                  ['openai.com','oaistatic.com','oaiusercontent.com'].some(base=>host.endsWith('.'+base))))
+              throw Error('Asset URL outside allowed OpenAI domains');
+            aliases.forEach(a=>{a.url=parsed.href;delete a.resolution_error;});
             snap.attachmentResolution.resolved++;
-          } catch (error) {
+          }catch(error){
+            const description=String(error).slice(0,170);
+            aliases.forEach(a=>a.resolution_error=description);
             snap.attachmentResolution.failed++;
-            if (snap.attachmentResolution.failures.length<30)
-              snap.attachmentResolution.failures.push({id:fileId,reason:String(error).slice(0,160)});
+            if(snap.attachmentResolution.failures.length<40)
+              snap.attachmentResolution.failures.push({id:fileId,reason:description});
           }
         }));
       }
+      if (snap.attachmentResolution.limited)
+        snap.error='Media resolution limit: more than 1500 distinct files. Partial assets are not verified.';
       if (live()) snap.state='ready';
     } catch (e) {
       snap.error=String(e);

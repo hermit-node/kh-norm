@@ -1,15 +1,15 @@
 {
-  "version": "0.55.10r12a",
-  "variant": "No-Celery-Browser-Assets",
-  "tag": "v0.55.10r12a",
-  "source_archive_sha256": "657ff2121b8ea5ceedeb09f9b9269c60242a6a6209c0104769a7d1e7db8ba73b",
-  "source_archive": "0.55.10r12a--No-Celery-Browser-Assets--657ff2121b8e.zip",
+  "version": "0.55.10r22",
+  "variant": "Strict-Recovery-No-Celery-Browser-Assets-Step-Boundary",
+  "tag": "v0.55.10r22",
+  "source_archive_sha256": "34ce407123d4fa28dd01c442cbcbdcf86e599f9564923a9f1cee6fcfa6ec4d31",
+  "source_archive": "0.55.10r22--Strict-Recovery-No-Celery-Browser-Assets-Step-Boundary--34ce407123d4.zip",
   "quality": "source-inventory-verified",
   "known_issues": [
-    "Independent legacy r11r10 branch, NOT derived from archived sequential r20 or r22.",
-    "Live signed-in Qt export behavior unverified."
+    "Release notes explicitly identify r21 as parent; no standalone r21 ZIP available in searched locations.",
+    "Compared with r20 as the closest available earlier sequential release, not the missing r21."
   ],
-  "published_source_files": 371,
+  "published_source_files": 375,
   "omitted_paths": [
     "backups/plugins-ini/plugins-20261014-151017-561326+0000-72956dfad8bb.ini",
     "config/plugins.ini",

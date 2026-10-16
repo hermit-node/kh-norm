@@ -116,7 +116,7 @@ def _collect_one(index: int, expected_id: str) -> dict:
     return metadata
 
 
-def _asset_via_browser(url: str, destination: Path) -> int:
+def _asset_via_browser_js(url: str, destination: Path) -> int:
     """Fetch into the already-authenticated Qt page, then stream bounded base64 chunks.
 
     This is a fallback for ChatGPT-origin assets not accessible to Python's
@@ -155,11 +155,64 @@ def _asset_via_browser(url: str, destination: Path) -> int:
         except Exception:pass
 
 
+
+def _asset_via_browser_native(url: str, destination: Path) -> int:
+    """CORS-independent Chromium-profile download, extension-worker equivalent.
+
+    Qt downloads into a disposable local directory using the logged-in cookie
+    jar. Copy the bytes into the export staging folder, then discard the temp.
+    """
+    import shutil
+    from norm_runtime.settings import load_path_settings
+    allowed=(Path(load_path_settings(ROOT)['workspace_root'])/
+             'web'/'shared_browser').resolve()
+    started=_rpc('convo_asset_native_start',url=url)
+    if not started.get('ok'):
+        raise RuntimeError(str(started.get('error') or 'Native download rejected'))
+    try:
+        deadline=time.monotonic()+38
+        status={}
+        while time.monotonic()<deadline:
+            status=_rpc('convo_asset_native_status')
+            if status.get('state') in ('ready','failed'):break
+            time.sleep(.2)
+        if status.get('state')!='ready':
+            raise RuntimeError(str(status.get('error') or 'Chromium native download timed out'))
+        length=int(status.get('length') or 0)
+        file=Path(str(status.get('path') or '')).resolve()
+        if not file.is_relative_to(allowed) or file.name!='asset.bin':
+            raise RuntimeError('Native asset returned an invalid temporary location')
+        if not 0<length<=24*1024*1024 or not file.is_file() or file.stat().st_size!=length:
+            raise RuntimeError('Native asset has inconsistent size')
+        shutil.copyfile(file,destination)
+        return length
+    finally:
+        try:_rpc('convo_asset_native_drop')
+        except Exception:pass
+
+
+def _asset_via_browser(url: str, destination: Path) -> int:
+    """Try the real Chromium background network stack before page JS fetch.
+
+    The old JavaScript fallback remains useful for first-party URLs, but the
+    native download avoids the CORS restrictions that caused previous failures.
+    """
+    try:
+        return _asset_via_browser_native(url,destination)
+    except Exception as native_error:
+        destination.unlink(missing_ok=True)
+        try:
+            return _asset_via_browser_js(url,destination)
+        except Exception as js_error:
+            raise RuntimeError('Authenticated Chromium download: '+str(native_error)[:120]+
+                               '; page transfer: '+str(js_error)[:130]) from js_error
+
+
 def conversation_export(selected_indices: list[int], fmt: str='zip',
                         title: str='', timestamps: bool=True, models: bool=False,
                         attachments: bool=True,page_size: str='Letter',
                         density: str='comfortable',
-                        allow_incomplete_assets: bool=True) -> dict:
+                        allow_incomplete_assets: bool=False) -> dict:
     """Export selected conversation turns locally with assets, PDF/MD/JSON/ZIP.
 
     Requires an already-prepared browser snapshot. The user may choose any

@@ -1,3 +1,7 @@
+**r22 intermediate-step context:** New N2 steps already start fresh. Bound generic background rehydration on planned steps after the first (8,000 chars), and limit intermediate-step verification to current-step evidence while preserving full Redis/PG history and complete final verification. See `docs/R22_STEP_BOUNDARY_CONTEXT.md`; source-only, not deployed.
+
+**r21 media/export patch:** see `docs/R21_CHATGPT_MEDIA_EXPORT.md`; live Qt verification still required.
+
 ## 0.55.10r11r2 — Shared PostgreSQL boundary and python-sql
 
 - All Norm-owned PostgreSQL connections through `postgres_pool` use one per-connection JSON/JSONB serialization policy (`configure` callback). No process-global psycopg adapter, extra pool, new database, or new connection credentials are introduced.

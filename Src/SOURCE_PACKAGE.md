@@ -1,10 +1,10 @@
-## 0.55.10r12a — normalized release label (2026-10-16)
+## 0.55.10r22 — Lean N2 step-boundary context (2026-10-16)
 
-Renamed the existing r11r10 no-Celery browser/attachment-fidelity build to **0.55.10r12a**. No runtime, browser, installer, plugin, test or export behavior changed. Older `r11r8`, `r11r9`, and `r11r10` labels below remain historical lineage, not part of the new version. Subsequent patches should use `r12b`, `r12c`, etc., without chaining revision strings. All source integrity ledgers were rebuilt.
+Built directly on uploaded r21, with only intermediate-step context changes. Norm already starts fresh N2 messages after N1-accepted step completion; r22 bounds generic background rehydration to 8K characters on later generated steps and prevents old steps' full Redis evidence from entering intermediate-step verification. Original user constraints, prior-step pointers, on-demand Postgres/Redis retrieval, N1 acceptance, final-task evidence, browser assets, no-Celery and installer remain intact. No additional model summarization. Offline focused test passed; no live installation. See `docs/R22_STEP_BOUNDARY_CONTEXT.md`.
 
-## 0.55.10r11r10 — Local attachment export fix (2026-10-16)
+## 0.55.10r21 - ChatGPT image/file collection (2026-10-16)
 
-Based on the r11r9 no-Celery Browser Compatibility source. Resolved ChatGPT `url` vs `download_url` metadata mismatch, deduplicated multimodal image pointers, added authenticated Qt-local asset-fetch fallback, and made missing attachments explicit. Local ZIP and ReportLab PDF exports now carry actual image/files in synthetic 531-message/38-image tests. Live Qt ChatGPT verification pending. See `docs/R11R10_LOCAL_ATTACHMENT_EXPORT.md`.
+Direct patch to the normalized r20 no-Celery source. Added extension-style first-party file-ID resolution, a Qt native browser download fallback for HTTP 403 failures, actual local binary export, image signatures, distinct media coverage reporting, default missing-file refusal, and focused regression tests. No live signed-in Qt verification; see `docs/R21_CHATGPT_MEDIA_EXPORT.md`.
 
 ## 0.55.10r11r9 — Shared browser ChatGPT compatibility (2026-10-16)
 

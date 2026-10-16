@@ -18,6 +18,7 @@
     "poll_ms": 5000,
     "model_timeout_seconds": 86400,
     "step_round_limit": 16,
+    "step_boundary_background_chars": 8000,
     "task_round_limit": 128,
     "max_subtask_depth": 4,
     "max_length_continuations_per_slice": 3,

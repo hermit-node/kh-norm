@@ -31,7 +31,7 @@ def _safe_host(url: str) -> bool:
         if u.scheme != 'https' or u.username or u.password or (u.port not in (None, 443)):
             return False
         host = (u.hostname or '').lower()
-        return host in {'chatgpt.com', 'chat.openai.com', 'openai.com', 'oaistatic.com', 'oaiusercontent.com'} or any(
+        return host in {'chatgpt.com', 'chat.openai.com', 'images.openai.com', 'openai.com', 'oaistatic.com', 'oaiusercontent.com'} or any(
             host.endswith('.' + base) for base in ('openai.com','oaistatic.com','oaiusercontent.com')
         )
     except ValueError:
@@ -183,7 +183,7 @@ def _pdf(messages, title: str, destination: Path, options: dict, asset_dir: Path
 def export_conversation(messages: list[dict], *, root: Path, title: str,
                         fmt: str='zip', options: dict | None=None,
                         source_url: str='',complete: bool=False,source: str='dom',
-                        asset_fetcher=None, allow_incomplete_assets: bool=True,
+                        asset_fetcher=None, allow_incomplete_assets: bool=False,
                         attachment_resolution: dict | None=None) -> dict:
     """Create one export atomically. Caller must supply explicitly selected messages.
 
@@ -204,13 +204,19 @@ def export_conversation(messages: list[dict], *, root: Path, title: str,
     for message in items:
         message['attachments']=_unique_attachments(message)
     unique_refs=sum(len(m.get('attachments') or []) for m in items)
+    expected_image_keys={('id:'+str(a.get('id')) if a.get('id') else 'url:'+str(a.get('url')))
+        for m in items for a in m.get('attachments') or []
+        if a.get('kind')=='image' or str(a.get('mime') or '').startswith('image/')}
+    expected_images=len(expected_image_keys)
     manifest={'title':title,'source_url':source_url,'source':source,'complete':bool(complete),
               'selected_count':len(items),'created_at':datetime.now(timezone.utc).isoformat(),
               'format':fmt,'options':options,'missing_assets':[],'saved_assets':[],
               'history_complete':bool(complete),'attachment_references':unique_refs,
               'duplicate_references_removed':original_references-unique_refs,
               'attachment_resolution':attachment_resolution or {},
-              'assets_complete':None,'warnings':[]}
+              'assets_complete':None,'warnings':[],
+              'image_assets_expected':0,'image_assets_saved':0}
+    manifest['image_assets_expected']=expected_images if options.get('attachments',True) else 0
     try:
         seen={};count_bytes=0
         if options.get('attachments',True):
@@ -220,7 +226,8 @@ def export_conversation(messages: list[dict], *, root: Path, title: str,
                     asset_id=str(a.get('id') or '')
                     if not url:
                         manifest['missing_assets'].append({'message':i+1,'asset':j+1,
-                            'id':asset_id,'name':a.get('name'),'reason':'ChatGPT did not resolve an asset URL'})
+                            'id':asset_id,'name':a.get('name'),
+                            'reason':a.get('resolution_error') or 'ChatGPT did not resolve an asset URL'})
                         continue
                     # A signed URL can differ for two references to the same file.
                     # Asset ID, rather than URL, is the primary deduplication key.
@@ -264,11 +271,13 @@ def export_conversation(messages: list[dict], *, root: Path, title: str,
                             local='assets/'+file.name
                         a['local_path']=local;seen[key]=local
                         manifest['saved_assets'].append({'path':local,'bytes':size,'id':asset_id,'kind':a.get('kind')})
+                        if expected_image:manifest['image_assets_saved']+=1
                     except Exception as exc:
                         file.unlink(missing_ok=True)
                         manifest['missing_assets'].append({'message':i+1,'asset':j+1,
                             'id':asset_id,'name':a.get('name'),'reason':str(exc)[:260]})
         manifest['assets_complete']=not manifest['missing_assets'] if options.get('attachments',True) else None
+        manifest['fidelity_complete']=bool(complete) and manifest['assets_complete'] is True
         if manifest['missing_assets']:
             missing=len(manifest['missing_assets'])
             manifest['warnings'].append(f'{missing} attachment(s) not embedded; text coverage does not imply visual completeness')
@@ -321,6 +330,8 @@ def export_conversation(messages: list[dict], *, root: Path, title: str,
                 'expected_assets':unique_refs if options.get('attachments',True) else 0,
                 'assets_complete':manifest['assets_complete'],
                 'missing_assets':len(manifest['missing_assets']),
+                'image_assets_expected':manifest['image_assets_expected'],
+                'image_assets_saved':manifest['image_assets_saved'],
                 'coverage':'api-selected-branch' if complete else 'partial-unverified'}
     finally:
         shutil.rmtree(temp,ignore_errors=True)

@@ -13,5 +13,5 @@ Uses ChatGPT's authenticated conversation API when available and a visibly marke
 Browser RPC starts the original single-instance Qt helper on demand for explicit operations, not for read-only health/status. Existing API-first conversation extraction and local export are unchanged. Live Qt ChatGPT login and API behavior must be validated on KHzz.
 
 
-### r11r10 attached media
-Conversation export resolves each unique ChatGPT `file_...` ID via the signed first-party asset metadata API (`url` or `download_url`). ZIP includes actual files under `assets/`; local PDF includes recognizable images. If Python direct fetch is denied, the authenticated Qt tab can transfer the bytes to the same local export worker in bounded chunks. No third-party PDF service. The UI fails on missing files by default; opt into partial export deliberately. Details: `docs/R11R10_LOCAL_ATTACHMENT_EXPORT.md`.
+### r21 local ChatGPT attachment export
+Resolve each unique ChatGPT file ID through its authenticated first-party metadata endpoint. Fetch the signed asset bytes locally using the Python exporter (or bounded Qt fallback), embed ZIP/PDF images, and report separate history vs asset coverage. A partial export requires explicit opt-in. See `docs/R21_CHATGPT_MEDIA_EXPORT.md`.

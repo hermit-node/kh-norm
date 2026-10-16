@@ -910,6 +910,22 @@ class PromptWorker:
                 self._stop.wait(2)
         logging.info("Prompt worker stopped consumer=%s", self.consumer)
 
+    def _background_memory_budget(self, job: PromptJob) -> int:
+        """Bound general history on later planned steps, not authoritative task facts.
+
+        Previous step instructions/evidence remain available through the durable
+        step index and read_task_record; the original user request is untouched.
+        No model summarization or extra N1 call is required at the boundary.
+        """
+        config = self._runtime_config()
+        configured = max(0, int((config.get("memory") or {}).get("background_context_chars", 32000)))
+        metadata = job.metadata or {}
+        if (normalize_request_type(job.request_type) in {"step", "task_step"}
+                and int(metadata.get("generated_step_index") or 0) > 1):
+            limit = max(0, int((config.get("worker") or {}).get("step_boundary_background_chars", 8000)))
+            return min(configured, limit)
+        return configured
+
     def _process(self, redis_id: str, job: PromptJob) -> None:
         metadata = job.metadata or {}
         request_type = normalize_request_type(job.request_type)
@@ -1037,9 +1053,16 @@ class PromptWorker:
                         logging.warning("PostgreSQL prior-step context unavailable; continuing impaired task=%s step=%s error=%s", job.task_id, job.step_id, exc)
                 if self.durable and hasattr(self.durable, "background_memory_context"):
                     try:
-                        background = self.durable.background_memory_context(
-                            max_chars=int(self._runtime_config().get("memory", {}).get("background_context_chars", 32000))
-                        )
+                        background_budget = self._background_memory_budget(job)
+                        if background_budget:
+                            background = self.durable.background_memory_context(max_chars=background_budget)
+                        if (int((job.metadata or {}).get("generated_step_index") or 0) > 1
+                                and normalize_request_type(job.request_type) in {"step", "task_step"}):
+                            logging.info(
+                                "N2 fresh step context task=%s step=%s prior_index_chars=%s "
+                                "background_chars=%s historical_evidence=on_demand",
+                                job.task_id, job.step_id, len(str(prior or "")), len(background),
+                            )
                     except psycopg.Error as exc:
                         resource_status = merge_resource_status(
                             resource_status,
@@ -4293,7 +4316,16 @@ class PromptWorker:
                 answer = self._prepare_final_report(job, answer)
             return self._verify_and_correct_without_tools(job, prompt, answer, system_context=voice_instructions)
 
-        historical_evidence = self.live.task_evidence(job.task_id) if hasattr(self.live, "task_evidence") else []
+        # A new planned step is a fresh N2 conversation. Verify its own tool
+        # results without replaying old steps' full Redis evidence into another
+        # verifier prompt. Conclusion/final work deliberately retains full-task
+        # evidence; previous intermediate steps remain queryable on demand.
+        intermediate = (normalize_request_type(job.request_type) in {"step", "task_step"}
+                        and not (job.metadata or {}).get("is_final_candidate"))
+        if intermediate and hasattr(self.live, "step_evidence"):
+            historical_evidence = self.live.step_evidence(job.task_id, job.step_id)
+        else:
+            historical_evidence = self.live.task_evidence(job.task_id) if hasattr(self.live, "task_evidence") else []
         try:
             outcome = self._run_tool_slice(job, base_prompt, tools)
         except ModelContextExceeded as exc:

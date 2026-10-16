@@ -243,6 +243,25 @@ class RedisTaskLog:
                 collected.extend(item for item in items if isinstance(item, dict))
         return collected
 
+    def step_evidence(self, task_id: str, step_id: str) -> list[dict]:
+        """Return only observed evidence for one step; keep the task stream intact.
+
+        Active-step self/N1 review must not import old directory inventories
+        just because previous steps belong to the same task. Final review and
+        recovery continue to use task_evidence() when they need the whole task.
+        """
+        collected: list[dict] = []
+        for _, fields in self.client.xrange(self._stream_key(task_id), min="-", max="+"):
+            if fields.get("event") != "step_evidence" or fields.get("step_id") != step_id:
+                continue
+            try:
+                items = json.loads(fields.get("evidence", "[]"))
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(items, list):
+                collected.extend(item for item in items if isinstance(item, dict))
+        return collected
+
     def working_memory_compact(
         self, task_id: str, *, max_chars: int = 6500, max_events: int = 24,
     ) -> str:

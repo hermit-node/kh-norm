@@ -144,8 +144,12 @@ class ExportPanel(QWidget):
         self.title.setText(str(status.get('title') or 'ChatGPT'))
         source=status.get('source','?')
         completeness='complete selected branch' if status.get('complete') else 'PARTIAL — not verified'
+        resolution=status.get('attachment_resolution') or {}
+        media_status=(f"\nImage/file URLs: {resolution.get('resolved',0)} / "
+            f"{resolution.get('expected',0)} resolved; {resolution.get('failed',0)} failed"
+            if resolution else '')
         self.notice.setText(f"{len(result['messages'])} turns · {source.upper()} · {completeness}"+
-            (f"\nAPI fallback: {status['error']}" if status.get('error') else ''))
+            media_status+(f"\nAPI/asset issue: {status['error']}" if status.get('error') else ''))
         self.export_button.setEnabled(bool(result['messages']))
 
     def bulk(self,which):
@@ -177,7 +181,8 @@ class ExportPanel(QWidget):
            ' | Attachments: '+str(result.get('saved_assets'))+' / '+
            str(result.get('expected_assets'))+
            ' | Missing: '+str(result.get('missing_assets'))+
-           (' | INCOMPLETE' if result.get('assets_complete') is False else ''))
+           '\nImages: '+str(result.get('image_assets_saved'))+' / '+str(result.get('image_assets_expected'))+
+           (' | INCOMPLETE ASSETS' if result.get('assets_complete') is False else ''))
         self.last_export_path=result.get('path')
         self.open_folder.setEnabled(bool(self.last_export_path))
         self.export_button.setEnabled(True)

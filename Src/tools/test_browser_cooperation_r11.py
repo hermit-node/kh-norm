@@ -24,7 +24,8 @@ with tempfile.TemporaryDirectory(prefix='norm-browser-r11-') as d:
                'attachments':[{'kind':'file','name':'outside','url':'https://example.com/bad.pdf'}]}]
     output=mod.export_conversation(messages,root=root,title='Test Conversation',fmt='zip',
          options={'attachments':True,'timestamps':True,'page_size':'Letter'},
-         source_url='https://chatgpt.com/c/00000000-0000-0000-0000-000000000000',complete=True,source='api')
+         source_url='https://chatgpt.com/c/00000000-0000-0000-0000-000000000000',complete=True,source='api',
+         allow_incomplete_assets=True)
     assert output['message_count']==2,output
     assert output['saved_assets']==1,output
     assert output['missing_assets']==1,output
@@ -60,7 +61,7 @@ with tempfile.TemporaryDirectory(prefix='norm-js-r11-') as d:
         subprocess.run(['node','--check',str(file)],check=True,capture_output=True)
     test='''const fs=require('fs'),vm=require('vm'),assert=require('assert');
 const source=fs.readFileSync(process.argv[2],'utf8');
-const context={window:{},URL:URL,document:{title:'Test page'},
+const context={URL,window:{},document:{title:'Test page'},
  location:{hostname:'chatgpt.com',origin:'https://chatgpt.com',
  href:'https://chatgpt.com/c/11111111-1111-1111-1111-111111111111',
  pathname:'/c/11111111-1111-1111-1111-111111111111'},

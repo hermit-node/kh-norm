@@ -1,6 +1,6 @@
-# Norm 0.55.10r12a - No-Celery-Browser-Assets
+# Norm 0.55.10r22 - Strict-Recovery-No-Celery-Browser-Assets-Step-Boundary
 
-Original archive SHA-256: 657ff2121b8ea5ceedeb09f9b9269c60242a6a6209c0104769a7d1e7db8ba73b
+Original archive SHA-256: 34ce407123d4fa28dd01c442cbcbdcf86e599f9564923a9f1cee6fcfa6ec4d31
 
 Historical assessment: source-inventory-verified
 
@@ -8,6 +8,6 @@ Omitted private paths: backups/plugins-ini/plugins-20261014-151017-561326+0000-7
 
 Sanitized paths: core/norm_main.py, core/norm_runtime/aiohttp_host.py
 
-Historical caveats: Independent legacy r11r10 branch, NOT derived from archived sequential r20 or r22.; Live signed-in Qt export behavior unverified.
+Historical caveats: Release notes explicitly identify r21 as parent; no standalone r21 ZIP available in searched locations.; Compared with r20 as the closest available earlier sequential release, not the missing r21.
 
 Public source snapshot is not identical to the original ZIP or guaranteed installable.

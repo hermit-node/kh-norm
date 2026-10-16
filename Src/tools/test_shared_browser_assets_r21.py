@@ -15,7 +15,7 @@ sys.path.insert(0,str(ROOT/'tools/shared_browser'))
 import conversation_js as js
 
 # Mock the *actual* API response shape {url:...}, 531 messages and duplicate image pointers.
-with tempfile.TemporaryDirectory(prefix='norm-r11r10-js-') as d:
+with tempfile.TemporaryDirectory(prefix='norm-r21-js-') as d:
     temp=Path(d)
     for name in ('START','STATUS','ITEM','PREVIEW','ASSET_START','ASSET_STATUS','ASSET_CHUNK','ASSET_DROP'):
         p=temp/(name+'.js');p.write_text(getattr(js,name),encoding='utf8')
@@ -93,7 +93,7 @@ def fake_download(url,destination):
     ident=re.search(r'file_\d+',url).group(0)
     destination.write_bytes(imgs[ident]);return len(imgs[ident])
 
-with tempfile.TemporaryDirectory(prefix='norm-r11r10-zip-') as d:
+with tempfile.TemporaryDirectory(prefix='norm-r21-zip-') as d:
     mod._download=fake_download
     z=mod.export_conversation(messages,root=Path(d),title='Test images',fmt='zip',
                               options={'attachments':True},allow_incomplete_assets=False,complete=True,source='api')

@@ -11,9 +11,13 @@ import os
 import secrets
 import sys
 import threading
+import base64
+import tempfile
+import shutil
+from urllib.parse import urlsplit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from time import time
+from time import time, monotonic
 
 HERE=Path(__file__).resolve().parent
 ROOT=HERE.parents[1]
@@ -27,7 +31,7 @@ if "--enable-cdp" in sys.argv:
 from PySide6.QtCore import QObject, QUrl, Signal, Slot, Qt, QTimer
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,
     QPushButton,QLineEdit,QLabel,QMessageBox)
-from PySide6.QtWebEngineCore import QWebEnginePage,QWebEngineProfile,QWebEngineSettings,QWebEngineScript
+from PySide6.QtWebEngineCore import QWebEnginePage,QWebEngineProfile,QWebEngineSettings,QWebEngineScript,QWebEngineDownloadRequest
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from browser_cooperation import ScriptRegistry,origin_from_url
 from conversation_js import (START as CONVO_START,STATUS as CONVO_STATUS,
@@ -123,6 +127,11 @@ class Browser(QMainWindow):
         self.profile.setPersistentCookiesPolicy(
             QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
         self.profile.setHttpCacheMaximumSize(DISK_CACHE)
+        # Like a browser-extension background fetch, Qt's native download API
+        # uses the existing Chromium profile and is not blocked by page CORS.
+        # Only an explicit export request is ever accepted, into a private temp.
+        self._native_asset=None
+        self.profile.downloadRequested.connect(self._native_asset_download_requested)
         # Preserve original persistent profile/cache/cookie settings exactly.
         self.scripts=ScriptRegistry(self.profile,BASE)
         # First-party conversation adapter hook, exact ChatGPT origin only.
@@ -333,6 +342,100 @@ class Browser(QMainWindow):
         self.hide()  # Explicit user close means hide, never delete browser profile.
 
     @staticmethod
+    def _allowed_asset_url(raw: str) -> bool:
+        try:
+            u=urlsplit(str(raw or ''))
+            if u.scheme!='https' or u.username or u.password or u.port not in (None,443):
+                return False
+            host=(u.hostname or '').lower()
+            return host in ('chatgpt.com','chat.openai.com','images.openai.com',
+                            'openai.com','oaistatic.com','oaiusercontent.com') or any(
+                host.endswith('.'+base) for base in ('openai.com','oaistatic.com','oaiusercontent.com'))
+        except (ValueError,TypeError):return False
+
+    def _native_asset_download_requested(self,request):
+        """Accept only the signed URL requested for the active asset export.
+
+        Other browser downloads retain the previous Qt default behavior; no
+        arbitrary page can choose a filesystem destination through this hook.
+        """
+        item=self._native_asset
+        if not item or item.get('state')!='loading':return
+        url=request.url().toString()
+        if url!=item['url'] or not self._allowed_asset_url(url):return
+        try:
+            request.setDownloadDirectory(str(item['folder']))
+            request.setDownloadFileName('asset.bin')
+            item['request']=request
+            request.stateChanged.connect(lambda state,j=item:self._native_asset_changed(j,state))
+            request.receivedBytesChanged.connect(lambda *_,j=item:self._native_asset_progress(j))
+            request.accept()
+        except Exception as exc:
+            item['state']='failed'
+            item['error']='Chromium download setup: '+str(exc)[:130]
+
+    def _native_asset_progress(self,item):
+        request=item.get('request')
+        if self._native_asset is item and request and request.receivedBytes()>24*1024*1024:
+            item['state']='failed';item['error']='Chromium asset exceeds 24 MiB'
+            request.cancel()
+
+    def _native_asset_changed(self,item,state):
+        if self._native_asset is not item or item.get('state')=='failed':return
+        enum=QWebEngineDownloadRequest.DownloadState
+        if state==enum.DownloadCompleted:
+            try:
+                path=item['folder']/'asset.bin'
+                size=path.stat().st_size
+                if not 0<size<=24*1024*1024:raise ValueError('Empty/oversized asset')
+                item['state']='ready';item['length']=size
+            except (OSError,ValueError) as exc:
+                item['state']='failed';item['error']='Chromium download output: '+str(exc)[:130]
+        elif state in (enum.DownloadInterrupted,enum.DownloadCancelled):
+            item['state']='failed'
+            reason=item.get('request')
+            item['error']='Chromium download '+(
+                reason.interruptReasonString()[:170] if reason else 'interrupted')
+
+    def _native_asset_start(self,url):
+        if self.page.url().host().lower() not in ('chatgpt.com','chat.openai.com'):
+            raise ValueError('Open the authenticated ChatGPT tab')
+        if not self._allowed_asset_url(url):raise ValueError('Blocked asset URL host')
+        if self._native_asset is not None:raise ValueError('Another asset transfer is active')
+        folder=Path(tempfile.mkdtemp(prefix='asset-',dir=str(BASE)))
+        item={'state':'loading','url':url,'folder':folder,'started':monotonic(),
+              'request':None,'length':0,'error':None}
+        self._native_asset=item
+        try:
+            self.page.download(QUrl(url),'asset.bin')
+        except Exception:
+            self._native_asset_drop()
+            raise
+        return {'ok':True,'state':'loading'}
+
+    def _native_asset_status(self):
+        item=self._native_asset
+        if not item:return {'state':'none'}
+        if item['state']=='loading' and monotonic()-item['started']>35:
+            item['state']='failed';item['error']='Chromium asset fetch timed out'
+            if item.get('request'):
+                try:item['request'].cancel()
+                except RuntimeError:pass
+        data={'state':item['state'],'length':item['length'],'error':item['error']}
+        if item['state']=='ready':data['path']=str(item['folder']/'asset.bin')
+        return data
+
+    def _native_asset_drop(self):
+        item=self._native_asset
+        self._native_asset=None
+        if item:
+            if item.get('request') and item.get('state')=='loading':
+                try:item['request'].cancel()
+                except RuntimeError:pass
+            shutil.rmtree(item['folder'],ignore_errors=True)
+        return {'dropped':True}
+
+    @staticmethod
     def done(job,result=None,error=""):
         job["result"]=result if result is not None else {}
         job["error"]=str(error);job["event"].set()
@@ -354,7 +457,8 @@ class Browser(QMainWindow):
         safe_when_manual={"status","show","hide","take_control","release","visual_pdf_status",
                           "visual_pdf_cancel","quit","cooperation_status","chatgpt_diagnostics","convo_start",
                           "convo_status","convo_preview","convo_item",
-                          "convo_asset_start","convo_asset_status","convo_asset_chunk","convo_asset_drop"}
+                          "convo_asset_start","convo_asset_status","convo_asset_chunk","convo_asset_drop",
+                          "convo_asset_native_start","convo_asset_native_status","convo_asset_native_drop"}
         if self.manual and act not in safe_when_manual:
             self.done(job,error="Human controls this page; return control to Norm")
             return
@@ -451,6 +555,12 @@ class Browser(QMainWindow):
                     login_control_visible:login,challenge_detected:challenge};
                 })()"""
                 self.script(job,script)
+            elif act=='convo_asset_native_start':
+                self.done(job,self._native_asset_start(str(args.get('url') or '')[:5000]))
+            elif act=='convo_asset_native_status':
+                self.done(job,self._native_asset_status())
+            elif act=='convo_asset_native_drop':
+                self.done(job,self._native_asset_drop())
             elif act=='convo_asset_start':
                 url=json.dumps(str(args.get('url') or '')[:3500])
                 self.script(job,CONVO_ASSET_START+'('+url+')',world=int(QWebEngineScript.ScriptWorldId.MainWorld))

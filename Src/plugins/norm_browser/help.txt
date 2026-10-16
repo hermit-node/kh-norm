@@ -5,4 +5,4 @@ Norm Browser Cooperation
 - Page script tools: browser_script_execute, browser_script_register, browser_script_remove.
 - Session defaults to the existing shared Qt profile; Playwright remains a separate optional backend.
 
-Export attachment fidelity: resolves `file_...` and multimodal `sediment://file_...` references using the logged-in ChatGPT tab. ReportLab PDF and ZIP are generated locally. Missing attachments block UI export by default; user may explicitly permit partial export; all failures are reported.
+r21 image/file export: signed URL resolution uses conversation_id and actual message_id fallback. Local ZIP includes assets, PDF embeds images, missing assets block by default unless the user explicitly opts into partial export.

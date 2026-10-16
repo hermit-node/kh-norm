@@ -28,6 +28,6 @@ for name in ('shared_browser','norm_browser'):
     data=verify_identity(ROOT/'plugins'/name)
     assert data and len(data['sha256'])==64
 manifest=json.loads((ROOT/'package-manifest.json').read_text(encoding='utf8'))
-assert ('r11r9' in manifest['version'] or 'r11r10' in manifest['version']) and 'no-celery' in manifest['version']
-print('PASS r11r9 shared browser source/integrity/offline smoke tests')
+assert manifest['version'] == '0.55.10r21-strict-recovery-no-celery-browser-assets'
+print('PASS r21 shared browser source/integrity/offline smoke tests')
 print('LIVE CHATGPT QT SESSION NOT TESTED')
