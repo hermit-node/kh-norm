@@ -1,3 +1,11 @@
+0.54.2g — 2026-10-07 — Restore managed plugin payloads
+
+- Restored `plugins/vision_parse`, `plugins/web_browser`, `plugins/jan`, `plugins/vane`, and `plugins/opencode`, which were present in the known-installing 0.54.2c package but accidentally omitted from both 0.54.2 and 0.54.2f.
+- Verified every restored Schema-2 `src/` tree against the exact SHA-256 already declared in 0.54.2f's `package-manifest.json`; no plugin source was changed during the repair.
+- Repointed the managed-plugin public package identity to 0.54.2g so future repair/fresh-install fallback no longer targets the incomplete 0.54.2 archive.
+- Retained all 0.54.2f runtime fixes: multi-viewer Replies/Runtime fan-out, direct byte-cursor streamed-evidence marking, and source-package exclusion of `core/norm.exe`.
+- Retained the final 0.54.2 N1 action-boundary protected-literal/Bird behavior and oversize-recovery corrections unchanged.
+
 0.54.2f — 2026-10-07 — Viewer fan-out and byte-cursor verifier fix
 
 - Kept Norm Prompt as the only singleton operator console; removed named-mutex singleton enforcement from read-only Norm Replies and Norm Runtime viewers so invisible orphan viewer processes cannot block replacement windows.

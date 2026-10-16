@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "name": "opencode",
+  "version": "1.0.2",
+  "date": "2026-10-05",
+  "entrypoint": "src/main.py",
+  "description": "Remote OpenCode session/task adapter using an operator-configured Tailscale endpoint and shared model provider.",
+  "capabilities": [
+    "network",
+    "remote-agent",
+    "coding",
+    "filesystem-remote"
+  ],
+  "sha256": "207108cfad6c17aff0cb977ad66ae3a5a60f895827ba4de71c559c4425cc081a",
+  "settings": {
+    "model_provider": {
+      "enabled": false,
+      "chat_base_url": "",
+      "primary_model": "",
+      "secondary_model": "",
+      "embedding_base_url": "",
+      "embedding_model": "",
+      "timeout_seconds": 180
+    },
+    "opencode": {
+      "enabled": false,
+      "scheme": "http",
+      "host": "",
+      "port": 4096,
+      "username": "opencode",
+      "provider_id": "norm-shared",
+      "model": "primary",
+      "fallback_model": "secondary"
+    }
+  }
+}

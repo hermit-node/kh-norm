@@ -2,11 +2,11 @@
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.54.2f / Installer 2.0.0** package only. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.54.2g / Installer 2.0.0** package only. Version history belongs only in RELEASE_NOTES.md.
 
-### Console fan-out + direct byte-cursor verification (0.54.2f)
+### Package completeness + console/byte-cursor fixes (0.54.2g)
 
-Norm Prompt remains singleton because duplicate input frontends can submit duplicate work. Norm Replies and Norm Runtime are read-only viewers and may coexist locally or remotely; they no longer acquire named Windows mutexes. Explicit byte-cursor text reads are treated as streamed evidence even when N2 supplies start_byte, so N1 checks in deterministic file/fingerprint/cursor metadata without invoking the verification_value model on the raw chunk. Portable-source archives also exclude core/norm.exe.
+Norm 0.54.2g restores the exact SHA-verified `vision_parse`, `web_browser`, `jan`, `vane`, and `opencode` payloads accidentally omitted from the 0.54.2/0.54.2f source archives, and the managed-plugin public fallback now targets the matching 0.54.2g package. Norm Prompt remains singleton because duplicate input frontends can submit duplicate work. Norm Replies and Norm Runtime are read-only viewers and may coexist locally or remotely; they no longer acquire named Windows mutexes. Explicit byte-cursor text reads are treated as streamed evidence even when N2 supplies start_byte, so N1 checks in deterministic file/fingerprint/cursor metadata without invoking the verification_value model on the raw chunk. Portable-source archives also exclude core/norm.exe.
 
 ### Recovery scope + action-boundary protected-literal guard (0.54.2)
 
@@ -39,6 +39,11 @@ Model context size and agent-persistent instructions are owned by `config/runtim
 Scheduled memory has two independent modes. The weekly 7-day pass is reductive: N2 ranks and rewrites, preserving important/current information and shrinking less-important context. N1 judges each N2 candidate and decides accept/retry. Up to four attempts are allowed; <=1,800 characters is the ideal early-stop size and 3,400 characters is the practical batch ceiling. The 21-day long-cycle pass is destructive: N2 may propose removal of obsolete/useless memory, but N1 must approve destruction before the record is omitted.
 
 N1 maintenance review limits are operator-configurable in `config/runtime.json`: `agents.n1.maintenance_num_predict` controls the per-review output allowance (default 5000) and `agents.n1.maintenance_review_timeout_seconds` controls the per-review wall-clock timeout (default 720 seconds / 12 minutes). These are runtime settings, not compile-time constants.
+
+
+### Portable remote SSE viewer
+
+Run `make_sse.bat` from the installed Norm root to build `Norm-SSE.exe` from that machine's current network configuration. The output is a single read-only Windows SSE viewer that can be moved to another tailnet-connected Windows PC. It connects directly to the source machine's activity `/events` endpoint and embeds no Redis/PostgreSQL passwords or other Norm secret values. Re-run `make_sse.bat` after changing the source machine name/domain/activity port.
 
 
 ## Runtime layout

@@ -1,11 +1,13 @@
-# Norm 0.54.2f portable source package
+# Norm 0.54.2g portable source package
 
-This directory is the portable source payload for **Norm 0.54.2f**.
+This directory is the portable source payload for **Norm 0.54.2g**.
 
 The portable source package excludes generated or machine-private material such as .venv, compiled core\norm.exe, build output, Python caches, secrets, and private runtime state.
 
-## 0.54.2f viewer fan-out and direct byte-cursor verification
+## 0.54.2g packaged-plugin repair + 0.54.2f runtime fixes
 
+- Restored the exact verified `vision_parse`, `web_browser`, `jan`, `vane`, and `opencode` Schema-2 plugin payloads that were accidentally omitted from the 0.54.2/0.54.2f portable-source archives. Their `src/` trees match the SHA-256 identities already declared by this package.
+- The managed-plugin public fallback now points to the matching 0.54.2g source package instead of the incomplete 0.54.2 archive.
 - Norm Prompt remains singleton; Norm Replies and Norm Runtime are read-only fan-out viewers and do not use named mutexes.
 - Explicit text byte-cursor reads are marked as streamed evidence so N1 records deterministic metadata instead of running the raw chunk through verification_value.
 - Portable-source generation excludes core/norm.exe; the installer builds and validates the executable from source.
@@ -15,6 +17,11 @@ The portable source package excludes generated or machine-private material such 
 
 Installer 1.6.9 adds shared chat/embedding provider fields plus explicit Jan, Vane, and OpenCode Tailscale endpoints on the Environment page. Managed public/optional plugins are reconciled checksum-first. Existing `src\` trees are hashed before any write; an exact target SHA is left untouched. A mismatch repairs only Norm-owned `src\` from the packaged release and re-hashes it; the pinned public 0.53.20 source is used only if that repair still fails. Missing plugins prefer the exact public 0.53.20 source and use the verified packaged adapter only as an offline fallback. Non-src plugin state/cache survives repair.
 
+
+
+## Portable remote SSE viewer
+
+The installed root includes `make_sse.bat`. Running it uses the installed `.venv` and current `config\settings.ini` to build a single `Norm-SSE.exe` beside the batch file. The generated viewer embeds the current Norm machine's tailnet activity `/events` endpoint, contains no Redis/PostgreSQL passwords or other Norm secrets, and can be copied to another Windows machine on the same tailnet. `Norm-SSE.exe` is read-only and reconnects automatically when the source Norm instance is offline or restarting.
 
 ## Included capabilities
 

@@ -1,9 +1,10 @@
 # Norm current status
 
-Current package: **Norm 0.54.2f** with **Installer 2.0.0**.
+Current package: **Norm 0.54.2g** with **Installer 2.0.0**.
 
-### Console fan-out + byte-cursor verification fix (0.54.2f)
+### Package completeness + console/byte-cursor fixes (0.54.2g)
 
+- Restored the exact SHA-verified `vision_parse`, `web_browser`, `jan`, `vane`, and `opencode` plugin payloads omitted from 0.54.2/0.54.2f. The package no longer depends on the incomplete 0.54.2 source ZIP to repair a plugin that is also absent there; its managed public fallback targets 0.54.2g.
 - Norm Prompt remains the only singleton operator console. Norm Replies and Norm Runtime are read-only fan-out viewers and no longer use Windows named mutexes, so an invisible orphan viewer cannot block a usable replacement window. Multiple Replies viewers use independent Redis XREAD cursors; multiple Runtime viewers receive independent SSE subscriber queues.
 - Explicit text read_file calls with start_byte are now tagged as streamed evidence even when N2 supplies the byte cursor directly. N1 records deterministic path/fingerprint/cursor metadata instead of sending the raw chunk through verification_value, eliminating the Laguna output-truncation path seen during chunked source inspection.
 - Portable-source packaging now omits core/norm.exe as the manifest already promised, preventing an older compiled binary from riding inside a source-only installer payload.

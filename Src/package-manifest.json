@@ -1,7 +1,7 @@
 {
   "package_schema": 1,
   "name": "Norm",
-  "version": "0.54.2f",
+  "version": "0.54.2g",
   "package_type": "portable-source",
   "source_dir": "core",
   "entrypoint": "core/norm_main.py",
@@ -242,8 +242,8 @@
   },
   "public_plugin_install": {
     "policy": "hash installed managed plugin src first; if target SHA matches, leave src untouched and refresh only changed trusted metadata; otherwise repair Norm src from packaged release, re-hash, then use pinned public source only if packaged repair still fails; missing plugins prefer public source",
-    "package_url": "https://raw.githubusercontent.com/hermit-node/kh-norm/main/Norm-0.54.2-portable-source.zip",
-    "package_version": "0.54.2",
+    "package_url": "https://raw.githubusercontent.com/hermit-node/kh-norm/main/Norm-0.54.2g-portable-source.zip",
+    "package_version": "0.54.2g",
     "subtrees": [
       "plugins/vision_parse",
       "plugins/web_browser",
@@ -417,5 +417,14 @@
       "replay_payload_max_bytes": 393216,
       "max_replay_records": 3
     }
+  },
+  "remote_sse_client": {
+    "builder": "make_sse.bat",
+    "build_script": "tools/build_sse_client.py",
+    "output": "Norm-SSE.exe",
+    "transport": "read-only HTTP server-sent events from activity /events over the configured tailnet host",
+    "configuration": "builder resolves the installed network.current_machine/current_domain and activity_port at build time and embeds only the remote SSE endpoint",
+    "secrets": "none; generated client does not embed Redis/PostgreSQL credentials or Norm secret environment values",
+    "portability": "single Windows executable intended to be copied to another tailnet-connected Windows machine"
   }
 }
