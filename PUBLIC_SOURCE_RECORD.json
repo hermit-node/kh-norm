@@ -1,14 +1,14 @@
 {
-  "version": "0.55.9r7",
-  "variant": "discovered-source",
-  "tag": "v0.55.9r7",
-  "source_archive_sha256": "f5dad6b704fa34f5fe89bcb639f8ecc00aa17c6a17fb34154105a4376130453e",
-  "source_archive": "0.55.9r7--discovered-source--f5dad6b704fa.zip",
-  "quality": "unverified",
+  "version": "0.55.9r8",
+  "variant": "release",
+  "tag": "v0.55.9r8",
+  "source_archive_sha256": "4d59f2b519dff60c2aa25ade9b00d4c4680e2c8b949e1036de76328cc1a3d78a",
+  "source_archive": "0.55.9r8--release--4d59f2b519df.zip",
+  "quality": "external-sha-verified-internal-inventory-inconsistent",
   "known_issues": [
-    "Archive and Python syntax validated; actual Redis/N1 recovery workflow still unverified end-to-end."
+    "Embedded source-content-hashes.json is stale/inconsistent. External CRC and SHA-256 verified but internal inventory has not been validated."
   ],
-  "published_source_files": 276,
+  "published_source_files": 278,
   "omitted_paths": [
     "config/plugins.ini",
     "config/settings.ini",

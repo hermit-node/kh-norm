@@ -1,3 +1,14 @@
+## Norm 0.55.9r8 - N1-adaptive Celery result checks
+
+- N1 still decides whether to return fresh cached evidence or dispatch a tool. Celery remains only an executor. A completed result (including ok=false) runs through N1.after_tool before N2 sees it.
+- Pending approved informational calls are checked at 30 seconds, 60 seconds, then 4, 7, 10, 13, and 15 minutes after dispatch.
+- At 15 minutes, N1 estimates the next check time based on workload, worker state, and elapsed time. At each later missed check N1 re-estimates. The original 60-minute deadline never extends.
+- No repeated N2 model turns just to poll. A separate Redis sorted-set parks only async continuations until their due times; ordinary synchronous execution, checkpointing, suppression, original prompt, and N1 authorization remain unchanged.
+- At 60 minutes an unresolved operation is reported as outcome unknown; no Celery cancellation or duplicate re-execution. N1-processed evidence and dispatch ID are preserved in the ordinary evidence path.
+- Delayed jobs are visible in queue-full; task cleanup removes them.
+- New offline tests: tools/test_celery_adaptive_r8.py and tools/test_celery_queue_r8.py. Previous test_async_celery_r2.py updated to assert due-time behavior.
+- This candidate has NOT been installed into the running C:\\Norm environment, and live >15m Celery/N1 interactions are not yet validated.
+
 ## Norm 0.55.9r7 - parent-side Redis reconstruction before recovery
 
 - Preserve the existing RedisTaskLog evidence stream; alongside it, save bounded actual tool-return values (including screenshot paths and measurements) as an additional Redis-only reconstruction layer.

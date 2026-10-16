@@ -1,3 +1,13 @@
+# Norm 0.55.9r8 - separate asynchronous tool queue and adaptive N1 completion checks
+
+N1-approved Celery informational tools now use Redis-delayed checks at 30s,
+60s, 4m, 7m, 10m, 13m, 15m. From 15m, N1 estimates each subsequent check
+time (reviewing again if the operation remains pending), up to a strict
+one-hour deadline from the original dispatch. Sync tools retain the old path.
+N1 reviews tool results before N2 sees them. No user interaction is needed
+during waits, and N2 does not burn model rounds merely to poll. queue-full
+shows waiting Celery steps. See docs/RELEASE_NOTES.md.
+
 # Norm 0.55.9r7 - Redis corroboration for step and recovery continuity
 
 r7 adds a compact, task-local Redis record of actually observed tool returns

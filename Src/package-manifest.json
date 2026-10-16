@@ -1,7 +1,7 @@
 {
   "package_schema": 1,
   "name": "Norm",
-  "version": "0.55.9r7",
+  "version": "0.55.9r8",
   "package_type": "portable-source",
   "source_dir": "core",
   "entrypoint": "core/norm_main.py",
@@ -499,7 +499,7 @@
     "policy": "retain full generated original and submit shortest complete summary; no bypass of N1/N2 verification",
     "normal_output_child_tasks": "not included; deferred"
   },
-  "release_revision": "r7 parent-side reconstruction from Redis step events and corroborating tool-result ledger",
+  "release_revision": "r8 N1 adaptive Celery checks and separate delayed async queue",
   "celery_tool_transport": {
     "transport": "Celery",
     "enabled_setting": "config/settings.ini:[celery].enabled",
@@ -519,5 +519,25 @@
     "original_prompt": "preserved verbatim as reference in each successor execution slice",
     "persistence": "Redis only for supplemental ledger; no new PostgreSQL writes",
     "safety": "failed parent preserved if reconciliation or N1 review fails"
+  },
+  "n1_celery_adaptive_wait": {
+    "early_checks_elapsed_seconds": [
+      30,
+      60,
+      240,
+      420,
+      600,
+      780,
+      900
+    ],
+    "n1_review_elapsed_seconds": 900,
+    "next_checks": "N1 model selects next check delay; reassesses if still pending",
+    "hard_timeout_elapsed_seconds": 3600,
+    "deadline": "From original dispatch; never resets on N1 estimates or restarts",
+    "execution_authority": "N1.before_tool chooses reuse or Celery execution; N1.after_tool processes every returned result",
+    "tracking": "Per-step receipts in Redis; delayed continuations Redis sorted set",
+    "sync_compatibility": "Normal tool/yield path is unchanged; only approved information tools asynchronous",
+    "unresolved": "Result status=unresolved, not falsely failed; Redis marker prevents same-task duplicate execution",
+    "ui": "queue-full shows delayed Celery check jobs"
   }
 }

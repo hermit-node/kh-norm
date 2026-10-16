@@ -518,6 +518,87 @@ class RedisPromptQueue:
         self.r.delete(self._task_round_key(task_id))
         self.reset_task_round_budget(task_id)
 
+    def _async_delayed_key(self) -> str:
+        return f"{self.stream}:celery-delayed"
+
+    def yield_async_job(
+        self, redis_id: str, job: PromptJob, checkpoint: str,
+        *, next_check_at: float, step_rounds: int, task_rounds: int,
+    ) -> None:
+        """Park ONLY an N1-approved pending async step until its Redis due time.
+
+        This does not change ordinary yield_job, retries, or N1/N2 work limits.
+        The chain tail is parked with the step to avoid taking subsequent steps
+        while a tool answer is outstanding. A single transaction moves them.
+        """
+        if not checkpoint.strip() or next_check_at <= 0:
+            raise ValueError("Async checkpoint and next check time required")
+        meta = dict(job.metadata or {})
+        meta["last_yield_reason"] = "n1_async_pending"
+        meta["last_step_rounds"] = int(step_rounds)
+        meta["last_task_rounds"] = int(task_rounds)
+        job.metadata = meta
+        job.context = checkpoint.strip()
+        job.created_at = time.time()
+        entries = [(redis_id, job)]
+        if job.chain_id:
+            for msg_id, fields in self.r.xrange(self.stream, min="-", max="+"):
+                if msg_id == redis_id:
+                    continue
+                queued = self._fields_to_job(msg_id, fields)
+                if queued.chain_id == job.chain_id and queued.chain_index > job.chain_index:
+                    entries.append((msg_id, queued))
+        entries.sort(key=lambda entry: entry[1].chain_index)
+        from redis.exceptions import RedisError
+        pipe = self.r.pipeline(transaction=True)
+        for msg_id, pending in entries:
+            pipe.zadd(self._async_delayed_key(), {
+                json.dumps(self._job_to_fields(pending), ensure_ascii=False, sort_keys=True):
+                float(next_check_at)
+            })
+            pipe.xack(self.stream, self.group, msg_id)
+            pipe.xdel(self.stream, msg_id)
+        pipe.execute()
+
+    def promote_due_async(self, *, now: float | None = None, limit: int = 80) -> int:
+        """Atomically put due asynchronous continuations back into the work queue."""
+        import redis as redis_module
+        now = time.time() if now is None else float(now)
+        key = self._async_delayed_key()
+        for _ in range(3):
+            with self.r.pipeline() as pipe:
+                try:
+                    pipe.watch(key)
+                    members = pipe.zrangebyscore(key, "-inf", now, start=0, num=limit)
+                    if not members:
+                        pipe.unwatch()
+                        return 0
+                    rows = []
+                    for raw in members:
+                        fields = json.loads(raw)
+                        if not isinstance(fields, dict):
+                            raise RuntimeError("Invalid delayed async job payload")
+                        job = self._fields_to_job("queued", fields)
+                        if self._task_suppressed(job.task_id):
+                            continue
+                        if self.durable and self.durable.task_status(job.task_id) in {
+                            "passed_to", "completed", "failed", "suppressed", "cancelled"
+                        }:
+                            continue
+                        rows.append(fields)
+                    pipe.multi()
+                    for fields in rows:
+                        pipe.xadd(self.stream, fields)
+                    pipe.zrem(key, *members)
+                    pipe.execute()
+                    return len(rows)
+                except redis_module.WatchError:
+                    continue
+        return 0
+
+    def async_delayed_count(self) -> int:
+        return int(self.r.zcard(self._async_delayed_key()))
+
     def yield_job(self, redis_id: str, job: PromptJob, checkpoint: str, *, reason: str, step_rounds: int, task_rounds: int) -> str:
         """Yield current node and its chain tail behind unrelated work, without failure."""
         if not checkpoint or not checkpoint.strip():
@@ -712,7 +793,15 @@ class RedisPromptQueue:
         return moved
 
     def cleanup_task(self, task_id: str) -> dict[str, int]:
-        counts = {"work": 0, "retry": 0, "escalation": 0, "dead": 0, "round_key": 0, "budget_key": 0}
+        counts = {"work": 0, "retry": 0, "escalation": 0, "dead": 0, "round_key": 0, "budget_key": 0, "async_delayed": 0}
+        delayed_key = self._async_delayed_key()
+        for raw in self.r.zrange(delayed_key, 0, -1):
+            try:
+                fields = json.loads(raw)
+                if str(fields.get("task_id") or "") == task_id:
+                    counts["async_delayed"] += int(self.r.zrem(delayed_key, raw))
+            except (ValueError, TypeError):
+                continue
         streams = ((self.stream, "work"), (self.retry_stream, "retry"),
                    (self.escalation_stream, "escalation"), (self.dead_letter_stream, "dead"))
         for stream, label in streams:

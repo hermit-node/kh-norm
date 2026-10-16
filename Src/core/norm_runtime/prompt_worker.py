@@ -844,6 +844,12 @@ class PromptWorker:
                 self._maybe_migrate_validation_pool()
                 self._maybe_reconcile_redis(reason='periodic')
                 self.queue.reclaim_stale()
+                # A separate delayed Redis channel holds ONLY Celery continuations.
+                # Sync work is never delayed or rerouted through async workers.
+                if hasattr(self.queue, "promote_due_async"):
+                    due = self.queue.promote_due_async()
+                    if due:
+                        logging.info("Promoted due N1/Celery result checks=%s", due)
                 try:
                     claimed = self.queue.read_one(block_ms=self.poll_ms)
                 except redis.TimeoutError:
@@ -857,6 +863,11 @@ class PromptWorker:
                     restored = self.queue.restore_parked_if_idle()
                     if restored:
                         logging.info("Restored parked prompts count=%s", restored)
+                    elif (hasattr(self.queue, "async_delayed_count") and
+                          self.queue.async_delayed_count()):
+                        # Don't start potentially lengthy idle-only maintenance
+                        # while a Celery due-time continuation is outstanding.
+                        pass
                     else:
                         if not self._run_manual_memory_condense_if_requested():
                             self._maybe_consolidate_background_memory()
@@ -4340,6 +4351,20 @@ class PromptWorker:
         async_bridge.inject_receipts(messages)
         pending_verification: dict[str, str] = {}
         evidence: list[dict] = []
+        # Redis delayed continuations check the existing Celery dispatch without
+        # wasting another N2 generation, N1 tool approval, or retry attempt.
+        if async_bridge.pending and (job.metadata or {}).get("last_yield_reason") == "n1_async_pending":
+            if async_bridge.deliver(messages, evidence) == 0:
+                next_due = async_bridge.next_due()
+                return {
+                    "yielded": True, "reason": "n1_async_pending",
+                    "checkpoint": str(job.context or "Waiting for N1-approved Celery result; original prompt and task unchanged."),
+                    "step_rounds": 0, "task_rounds": self.queue.task_rounds(job.task_id),
+                    "evidence": evidence, "next_check_at": next_due,
+                    "resume_metadata": {
+                        "n1_pending_dispatch_ids": [item["id"] for item in async_bridge.pending],
+                    },
+                }
         step_rounds = 0
         last_content = ""
         answer_segments: list[str] = []
@@ -4466,23 +4491,22 @@ class PromptWorker:
                 continue
             if not calls:
                 if async_bridge.pending and done_reason != "length":
+                    # N2 has no independent work left. Park the step until its
+                    # next due Celery check; no artificial 90-second busy wait.
                     messages.append({"role": "assistant", "content": content})
-                    if async_bridge.wait_for_one(messages, evidence, seconds=90):
-                        continue
-                    checkpoint, resume_metadata = self._distilled_continuation_checkpoint(
-                        job, prompt, messages, reason="n1_async_pending",
-                        headroom={"remaining_fraction": 1.0, "prompt_eval_count": 0,
-                                  "eval_count": 0, "context_limit_tokens": 0},
-                        chunk_manager=chunk_manager,
-                        step_rounds=step_rounds, task_rounds=task_rounds,
+                    checkpoint = self._continuation_checkpoint(
+                        job, prompt, messages, "n1_async_pending",
+                        step_rounds, task_rounds,
                     )
-                    resume_metadata["n1_pending_dispatch_ids"] = [
-                        item["id"] for item in async_bridge.pending
-                    ]
-                    return {"yielded": True, "checkpoint": checkpoint,
-                            "reason": "n1_async_pending", "step_rounds": step_rounds,
-                            "task_rounds": task_rounds, "evidence": evidence,
-                            "resume_metadata": resume_metadata}
+                    return {
+                        "yielded": True, "checkpoint": checkpoint,
+                        "reason": "n1_async_pending", "step_rounds": step_rounds,
+                        "task_rounds": task_rounds, "evidence": evidence,
+                        "next_check_at": async_bridge.next_due(),
+                        "resume_metadata": {
+                            "n1_pending_dispatch_ids": [item["id"] for item in async_bridge.pending],
+                        },
+                    }
                 if done_reason == "length":
                     evidence.extend(self._verify_pending(job, pending_verification, tools))
                     if content.strip():
@@ -5572,14 +5596,19 @@ class PromptWorker:
                 completed_at=_utc_now(),
             )
             self.durable.checkpoint_step(result)
-        self.queue.yield_job(
-            redis_id,
-            job,
-            checkpoint,
-            reason=reason,
-            step_rounds=step_rounds,
-            task_rounds=task_rounds,
-        )
+        if reason == "n1_async_pending":
+            next_check_at = float(outcome.get("next_check_at") or 0)
+            if next_check_at <= 0:
+                raise RuntimeError("Pending Celery continuation has no due time")
+            self.queue.yield_async_job(
+                redis_id, job, checkpoint, next_check_at=next_check_at,
+                step_rounds=step_rounds, task_rounds=task_rounds,
+            )
+        else:
+            self.queue.yield_job(
+                redis_id, job, checkpoint, reason=reason,
+                step_rounds=step_rounds, task_rounds=task_rounds,
+            )
         logging.info(
             "Prompt yielded task=%s step=%s reason=%s step_rounds=%s task_rounds=%s",
             job.task_id,

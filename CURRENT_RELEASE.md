@@ -1,13 +1,13 @@
-# Norm 0.55.9r7 - discovered-source
+# Norm 0.55.9r8 - release
 
-Original archive SHA-256: f5dad6b704fa34f5fe89bcb639f8ecc00aa17c6a17fb34154105a4376130453e
+Original archive SHA-256: 4d59f2b519dff60c2aa25ade9b00d4c4680e2c8b949e1036de76328cc1a3d78a
 
-Historical assessment: unverified
+Historical assessment: external-sha-verified-internal-inventory-inconsistent
 
 Omitted private paths: config/plugins.ini, config/settings.ini, plugins/rotor5_cipher/README.md, plugins/rotor5_cipher/help.txt, plugins/rotor5_cipher/plugin.json, plugins/rotor5_cipher/src/_rotor5/__init__.py, plugins/rotor5_cipher/src/_rotor5/core.py, plugins/rotor5_cipher/src/main.py, plugins/stegosplit_auth/README.md, plugins/stegosplit_auth/help.txt, plugins/stegosplit_auth/plugin.json, plugins/stegosplit_auth/src/auth_admin_cli.py, plugins/stegosplit_auth/src/auth_admin_core.cp314-win_amd64.pyd, plugins/stegosplit_auth/src/auth_selector.py, plugins/stegosplit_auth/src/auth_selector_core.cp314-win_amd64.pyd, plugins/stegosplit_auth/src/main.py, plugins/stegosplit_auth/src/master_client_auth.cp314-win_amd64.pyd, plugins/stegosplit_key/README.md, plugins/stegosplit_key/help.txt, plugins/stegosplit_key/plugin.json, plugins/stegosplit_key/src/_stegosplit/__init__.py, plugins/stegosplit_key/src/_stegosplit/core.cp314-win_amd64.pyd, plugins/stegosplit_key/src/_stegosplit/mapping.cp314-win_amd64.pyd, plugins/stegosplit_key/src/key_api.cp314-win_amd64.pyd, plugins/stegosplit_key/src/main.py, plugins/stegosplit_message/README.md, plugins/stegosplit_message/help.txt, plugins/stegosplit_message/plugin.json, plugins/stegosplit_message/src/_stegosplit_v3/__init__.py, plugins/stegosplit_message/src/_stegosplit_v3/cipher.cp314-win_amd64.pyd, plugins/stegosplit_message/src/_stegosplit_v3/compression.cp314-win_amd64.pyd, plugins/stegosplit_message/src/_stegosplit_v3/core.cp314-win_amd64.pyd, plugins/stegosplit_message/src/_stegosplit_v3/header.cp314-win_amd64.pyd, plugins/stegosplit_message/src/_stegosplit_v3/kdf.cp314-win_amd64.pyd, plugins/stegosplit_message/src/_stegosplit_v3/mapping.cp314-win_amd64.pyd, plugins/stegosplit_message/src/_stegosplit_v3/vector_codec.cp314-win_amd64.pyd, plugins/stegosplit_message/src/_stegosplit_v3/vector_lut.cp314-win_amd64.pyd, plugins/stegosplit_message/src/main.py, plugins/stegosplit_message/src/message_api.cp314-win_amd64.pyd, plugins/stegosplit_message/src/paired_credential.cp314-win_amd64.pyd, plugins/stegosplit_message/src/paired_identity.cp314-win_amd64.pyd, plugins/stegosplit_message/src/public_identity.cp314-win_amd64.pyd
 
 Sanitized paths: core/norm_main.py, core/norm_runtime/aiohttp_host.py
 
-Historical caveats: Archive and Python syntax validated; actual Redis/N1 recovery workflow still unverified end-to-end.
+Historical caveats: Embedded source-content-hashes.json is stale/inconsistent. External CRC and SHA-256 verified but internal inventory has not been validated.
 
 Public source snapshot is not identical to the original ZIP or guaranteed installable.

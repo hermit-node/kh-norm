@@ -98,6 +98,23 @@ class Broker:
             self.redis.delete(key(jobid))
             raise
         return jobid
+    def inspect(self, jobid):
+        """Non-executing state read for N1 adaptive completion estimates.
+
+        No payload, path, arguments or secret-bearing results are exposed.
+        This never re-dispatches a Celery task.
+        """
+        result = app.AsyncResult(jobid)
+        state = str(result.state or "UNKNOWN")
+        workers = 0
+        try:
+            workers = sum(1 for _ in self.redis.scan_iter(
+                match=CFG["prefix"] + ":worker:*", count=20))
+        except Exception:
+            pass
+        return {"state": state, "worker_heartbeats": workers,
+                "ready": bool(result.ready())}
+
     def poll(self,jobid):
         result=app.AsyncResult(jobid)
         if not result.ready():return None

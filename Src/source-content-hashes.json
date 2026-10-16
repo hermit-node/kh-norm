@@ -18,8 +18,8 @@
       "sha256": "e774f5ea91a76af90b32d07d967a17a1e2741a3e99c67ee944536cb548e6a432"
     },
     "README.md": {
-      "bytes": 22882,
-      "sha256": "0bd1206b6ae4fb7a799048d99194e68260fd39f32536f1451164dd1d3144eee8"
+      "bytes": 23473,
+      "sha256": "85bc301052263529b1d14f37ed6af164b6b313dc978a17f833f33befacd5443c"
     },
     "Run-Norm.bat": {
       "bytes": 4006,
@@ -74,8 +74,8 @@
       "sha256": "bd8fb4e901c458e8b01327f7359d4b0ca32c5f7d358783d001a474f37c45bd9f"
     },
     "core/norm_runtime/async_n1_delivery.py": {
-      "bytes": 5121,
-      "sha256": "fb866a51d45c5dab55cca7a6d1c9851d965a50a2e72b7cb5e2cd56bf21bd860a"
+      "bytes": 10508,
+      "sha256": "faeba95d679d648e38e536f7fd0a3b1f12751bd2c299970db04eaa3fcabb05f2"
     },
     "core/norm_runtime/backup_retention.py": {
       "bytes": 1534,
@@ -86,8 +86,8 @@
       "sha256": "1724e6f5dd41a262ef2d86033c310345e2dddfbf4e041ff938f1956dc919056d"
     },
     "core/norm_runtime/celery_tool_executor.py": {
-      "bytes": 5231,
-      "sha256": "26d1616722d3fbafa60c11baddce911f17089d67b1eaf87e60239336a07d3f62"
+      "bytes": 5865,
+      "sha256": "fdbffa8763325c1a9dd04e8453013f331df1d98380a04dabbdbf1382cfc82902"
     },
     "core/norm_runtime/chunked_evidence.py": {
       "bytes": 17245,
@@ -174,8 +174,8 @@
       "sha256": "5b2ec43398e95b7814453b65330b224b9a2ffd87aa46fc4b1f2b6aee4b48f5e8"
     },
     "core/norm_runtime/n1_gatekeeper.py": {
-      "bytes": 104410,
-      "sha256": "484e722b55ee43c0515092644f458dece91bdc16234eb4ecd837b3a373ca270a"
+      "bytes": 107623,
+      "sha256": "269504c5f2a9cc12ebe36e311fddd8207af4f7a8878b22952940f95c1bc5087f"
     },
     "core/norm_runtime/ollama_client.py": {
       "bytes": 33032,
@@ -210,20 +210,20 @@
       "sha256": "d1dae1c5e8effd069264d611de993b656dc78da190cfa8171949cb29f7284110"
     },
     "core/norm_runtime/prompt_queue.py": {
-      "bytes": 35666,
-      "sha256": "b2c39070add4e948be4998d75a72f4305661c130f6e7ba1b223f30ac7097bd32"
+      "bytes": 39810,
+      "sha256": "fcdeb924f24959bf083200511bbb9c716b309c5f653b4d0de120a48a4bd079fc"
     },
     "core/norm_runtime/prompt_worker.py": {
-      "bytes": 342881,
-      "sha256": "d708e2dad90f10c17edab0c113f701ccad992af2a78c0695198af4f226381af0"
+      "bytes": 344765,
+      "sha256": "020b5e7e6144fb1d7ecc99fcd91ca25670bc302f36f2b824a29162b423ef3279"
     },
     "core/norm_runtime/protocol.py": {
       "bytes": 14182,
       "sha256": "2465cc621ed64ab1974a2e0cf11146c3e296f0d7250b5c214f1124e0d5e4b3af"
     },
     "core/norm_runtime/queue_visibility.py": {
-      "bytes": 4452,
-      "sha256": "7dbfe94823009c40ddb4c16c69b2e56edf83960dc964b870342c742b26b053d3"
+      "bytes": 5484,
+      "sha256": "69165b1266eaf2b4df91a9351afff7e8881cd0abac4f69f91b801bc8b8e59c5d"
     },
     "core/norm_runtime/resource_status.py": {
       "bytes": 1417,
@@ -298,8 +298,8 @@
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
     },
     "docs/RELEASE_NOTES.md": {
-      "bytes": 130908,
-      "sha256": "d96388aa3e872ba86610624820fa1157c92a70c48017db7f7219a480416877ef"
+      "bytes": 132293,
+      "sha256": "55815526c1c9e7fc42665c2156b2ad72126c53413451e773206d29188a17623c"
     },
     "docs/VOICE_OPERATOR_COMMANDS_PATCH.md": {
       "bytes": 1796,
@@ -354,8 +354,8 @@
       "sha256": "814cf6e096ac167f56bbb47c98287818949ec13c65843574b3a733698c91f982"
     },
     "package-manifest.json": {
-      "bytes": 27599,
-      "sha256": "bdfd85e542bab988016b7cf786b3bbe4ab82c45375482288523b482e418465eb"
+      "bytes": 28472,
+      "sha256": "cf669e5c39c51b78a2681468dfe169a4bdedcc01239a4f56045f2194b04a3076"
     },
     "plugins/README.md": {
       "bytes": 721,
@@ -1006,8 +1006,8 @@
       "sha256": "ae42fa605615e78b1bb134bd95e393da951be1bb7113fecdbf1383d2e1890480"
     },
     "tools/test_async_celery_r2.py": {
-      "bytes": 4658,
-      "sha256": "37db4d4eb3afc92b6a2f5ee8ff3c8cd69db3feb32f04484b1989bf5ab7a8432e"
+      "bytes": 4723,
+      "sha256": "05983fc4c1a7d1c8c99812388c6268322b594a8af7cc86086363e077bbda5f0f"
     },
     "tools/test_chunked_evidence.py": {
       "bytes": 11472,

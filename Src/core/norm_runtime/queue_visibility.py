@@ -6,6 +6,7 @@ No status changes, resume operations or queue mutations occur here.
 from __future__ import annotations
 
 from typing import Any
+import json
 
 
 def collect_queue_full(*, prompt_queue=None, durable=None, maintenance: dict | None = None) -> dict[str, Any]:
@@ -48,6 +49,23 @@ def collect_queue_full(*, prompt_queue=None, durable=None, maintenance: dict | N
             except Exception as exc:
                 errors.append(f"{name}: {type(exc).__name__}: {exc}")
 
+        # Read-only inspection of async continuations parked in the Redis due
+        # set. These are not failed tasks and must remain visible to /queue-full.
+        try:
+            if hasattr(prompt_queue, "_async_delayed_key"):
+                key = prompt_queue._async_delayed_key()
+                records = prompt_queue.r.zrange(key, 0, 9999, withscores=True)
+                for raw, due_at in records:
+                    fields = json.loads(raw)
+                    record(str(fields.get("task_id") or ""),
+                           location="worker:celery-delayed", state="waiting-celery",
+                           detail={"step_id": str(fields.get("step_id") or ""),
+                                   "next_check_at": float(due_at)})
+                if len(records) == 10000:
+                    errors.append("worker:celery-delayed: snapshot truncated at 10000")
+        except Exception as exc:
+            errors.append(f"worker:celery-delayed: {type(exc).__name__}: {exc}")
+
     if durable is None:
         errors.append("PostgreSQL durable task state not initialized")
     else:
@@ -78,5 +96,5 @@ def collect_queue_full(*, prompt_queue=None, durable=None, maintenance: dict | N
     return {
         "status": "partial" if errors else "ok", "count": len(rows), "tasks": rows,
         "errors": errors, "maintenance": maintenance or {},
-        "scope": "worker Redis streams + PostgreSQL running/failed/suppressed; GUI ingress and uncertain-delivery are joined by /queue-full",
+        "scope": "worker Redis streams + delayed Celery checks + PostgreSQL running/failed/suppressed; GUI ingress and uncertain-delivery are joined by /queue-full",
     }

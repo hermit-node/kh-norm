@@ -68,7 +68,8 @@ class DeliveryTests(unittest.TestCase):
                 broker.jobs[result["dispatch_id"]]={"ok":True,"rows":[{"one":1}]}
                 messages=[]
                 evidence=[]
-                self.assertEqual(bridge.deliver(messages,evidence),1)
+                self.assertEqual(bridge.deliver(messages,evidence,
+                    now=bridge.next_due()),1)
                 self.assertEqual(len(owner.n1_gatekeeper.records),1)
                 self.assertEqual(owner.n1_gatekeeper.records[0]["task_id"],FakeJob.task_id)
                 self.assertEqual(evidence[0]["result"]["rows"][0]["one"],1)
@@ -95,7 +96,7 @@ class DeliveryTests(unittest.TestCase):
                 result=bridge.receipt("postgres_pool",{},GateOutcome(True,{},target="norm",need="health"))
                 self.assertFalse(owner.n1_gatekeeper.records)
                 broker.jobs[result["dispatch_id"]]={"ok":False,"error":"expected failure"}
-                bridge.deliver([],[])
+                bridge.deliver([],[],now=bridge.next_due())
                 self.assertFalse(owner.n1_gatekeeper.records[0]["result"]["ok"])
 
 if __name__=="__main__":unittest.main(verbosity=2)
