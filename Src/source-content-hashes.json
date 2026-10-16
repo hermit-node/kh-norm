@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "release": "0.55.10r15-celery-orphan-guard",
+  "release": "0.55.10r16-workspace-stability",
   "baseline": "Norm-0.55.10r11r2-Browser-Postgres-Unified-Portable-Source(1).zip",
   "file_count": 440,
   "hash_algorithm": "sha256",
@@ -34,8 +34,8 @@
       "sha256": "b1caace3a4f4db1b3a5b455732dd1f49f89931a8e4da62804f3728968fc539b9"
     },
     "SOURCE_PACKAGE.md": {
-      "bytes": 37016,
-      "sha256": "d714428679170223bb307877714401ff1496e60af7d069c0e5ff6b3596465257"
+      "bytes": 37207,
+      "sha256": "aa8682182bb5c943fcfc40f2103e5d61415bbc130ce7b568375e15b478424be1"
     },
     "Safe-Shutdown-Norm.bat": {
       "bytes": 519,
@@ -63,7 +63,7 @@
     },
     "config/settings.ini": {
       "bytes": 3357,
-      "sha256": "26132bb1484948bae828ae6c6258d10ee6ac73b8e807bebe7e6878c625713e9f"
+      "sha256": "264d8bb37bea567ce3b6725d818503ffcab3eea02547f931b63c01eb3d9c3d14"
     },
     "core/norm_main.py": {
       "bytes": 73014,
@@ -567,7 +567,7 @@
     },
     "package-manifest.json": {
       "bytes": 39801,
-      "sha256": "3a3828463e5673fe415950a0718b1509b6d40cd044d26d1b17666d0e380ef002"
+      "sha256": "6a2a990afa9164e36c9437cfe1d014595f3aa82c8ad01cd3565a986df5feff17"
     },
     "plugins/README.md": {
       "bytes": 903,
@@ -1718,8 +1718,8 @@
       "sha256": "737364cbdc7b3e168328cc89f824492ad6bf685ba71700df5cc553c047d5a2dd"
     },
     "tools/workspace/app.py": {
-      "bytes": 51976,
-      "sha256": "798570178e1a26ff8b6956c77df19f2c145a4fc124982d69c12627360c03c079"
+      "bytes": 56554,
+      "sha256": "1900fc61399abebc15e6856b432491134db0dd6fbc77aafd57c52676140ecd8c"
     },
     "tools/workspace/font_profiles.py": {
       "bytes": 8333,

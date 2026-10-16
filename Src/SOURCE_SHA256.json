@@ -39,8 +39,8 @@
     },
     {
       "file": "SOURCE_PACKAGE.md",
-      "bytes": 37016,
-      "sha256": "d714428679170223bb307877714401ff1496e60af7d069c0e5ff6b3596465257"
+      "bytes": 37207,
+      "sha256": "aa8682182bb5c943fcfc40f2103e5d61415bbc130ce7b568375e15b478424be1"
     },
     {
       "file": "Safe-Shutdown-Norm.bat",
@@ -710,7 +710,7 @@
     {
       "file": "package-manifest.json",
       "bytes": 39801,
-      "sha256": "3a3828463e5673fe415950a0718b1509b6d40cd044d26d1b17666d0e380ef002"
+      "sha256": "6a2a990afa9164e36c9437cfe1d014595f3aa82c8ad01cd3565a986df5feff17"
     },
     {
       "file": "plugins/README.md",
@@ -1350,7 +1350,7 @@
     {
       "file": "source-content-hashes.json",
       "bytes": 69346,
-      "sha256": "21634abc4f7628fb128d1dc61ee91e12a5c4ea20071496e3f0adbf9b2911d3dd"
+      "sha256": "43863983c4123fceaffb568e9fa8911cef17976c2c22b4f427caf7c7f6a9014e"
     },
     {
       "file": "tools/7zip/7z.dll",
@@ -2159,8 +2159,8 @@
     },
     {
       "file": "tools/workspace/app.py",
-      "bytes": 51976,
-      "sha256": "798570178e1a26ff8b6956c77df19f2c145a4fc124982d69c12627360c03c079"
+      "bytes": 56554,
+      "sha256": "1900fc61399abebc15e6856b432491134db0dd6fbc77aafd57c52676140ecd8c"
     },
     {
       "file": "tools/workspace/font_profiles.py",

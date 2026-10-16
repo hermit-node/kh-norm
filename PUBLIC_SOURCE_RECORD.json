@@ -1,14 +1,14 @@
 {
-  "version": "0.55.10r15",
-  "variant": "Celery-Orphan-Guard",
-  "tag": "v0.55.10r15",
-  "source_archive_sha256": "46eb0c060c6157158837093b9e8cabbc28c0114125e5f1817fa8817182bf522b",
-  "source_archive": "0.55.10r15--Celery-Orphan-Guard--46eb0c060c61.zip",
+  "version": "0.55.10r16",
+  "variant": "Workspace-Stability",
+  "tag": "v0.55.10r16",
+  "source_archive_sha256": "031ba65bb2c7468bf14ceb750302a14aabda99b1f09083db95c677bd0caea9ab",
+  "source_archive": "0.55.10r16--Workspace-Stability--031ba65bb2c7.zip",
   "quality": "source-inventory-verified",
   "known_issues": [
-    "Normalized from 0.55.10r11r5-celery-orphan-guard; old ZIP and mapping retained in the installer kit."
+    "Normalized from 0.55.10r11r6-workspace-stability; old ZIP and mapping retained in the installer kit."
   ],
-  "published_source_files": 373,
+  "published_source_files": 375,
   "omitted_paths": [
     "backups/plugins-ini/plugins-20261014-151017-561326+0000-72956dfad8bb.ini",
     "config/plugins.ini",

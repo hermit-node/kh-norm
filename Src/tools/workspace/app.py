@@ -13,7 +13,7 @@ import subprocess
 import sys
 import time
 
-from PySide6.QtCore import QPoint, Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, Qt, QTimer, Signal, QFileSystemWatcher
 from PySide6.QtGui import QColor, QCursor, QFont, QIcon, QPainter, QPen
 from PySide6.QtWidgets import QApplication, QWidget, QPushButton, QLabel, QFontDialog, QInputDialog, QMessageBox
 
@@ -28,6 +28,7 @@ WS_POPUP, WS_CAPTION, WS_THICKFRAME = 0x80000000, 0x00C00000, 0x00040000
 WS_SYSMENU, WS_MINIMIZEBOX, WS_MAXIMIZEBOX = 0x00080000, 0x00020000, 0x00010000
 WS_EX_APPWINDOW, WS_EX_WINDOWEDGE, WS_EX_CLIENTEDGE = 0x00040000, 0x00000100, 0x00000200
 SWP_NOACTIVATE, SWP_FRAMECHANGED, SWP_SHOWWINDOW, SWP_NOMOVE, SWP_NOSIZE = 0x0010, 0x0020, 0x0040, 0x0002, 0x0001
+SWP_NOZORDER = 0x0004
 SW_HIDE, SW_SHOW = 0, 5
 STILL_ACTIVE = 259
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
@@ -241,6 +242,7 @@ class TerminalCard(QWidget):
         self.label = label
         self.z = int(pos.get("z", 1))
         self.console: int | None = None
+        self._last_console_layout = None
         self.original_style = 0
         self.original_exstyle = 0
         self.original_parent = 0
@@ -279,10 +281,20 @@ class TerminalCard(QWidget):
     def sync_console(self) -> None:
         inner_w = max(30, self.width() - 4)
         inner_h = max(30, self.height() - HEADER - GRIP - 2)
-        self.canvas.setGeometry(2, HEADER, inner_w, inner_h)
-        if self.console and user32.IsWindow(self.console):
-            user32.SetWindowPos(self.console, 0, 0, 0, inner_w, inner_h,
-                                SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
+        layout = (2, HEADER, inner_w, inner_h)
+        if self.canvas.geometry().getRect() != layout:
+            self.canvas.setGeometry(*layout)
+        hwnd = self.console
+        if hwnd and user32.IsWindow(hwnd):
+            dimensions = (int(hwnd), inner_w, inner_h)
+            if self._last_console_layout != dimensions:
+                # Resize only when necessary; FRAMECHANGED belongs to style changes
+                # on attach/release, not routine Qt resize events.
+                if user32.SetWindowPos(hwnd, 0, 0, 0, inner_w, inner_h,
+                                       SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW):
+                    self._last_console_layout = dimensions
+        else:
+            self._last_console_layout = None
 
     def attach(self, hwnd: int) -> bool:
         if self.console:
@@ -307,6 +319,7 @@ class TerminalCard(QWidget):
             user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED)
             return False
         self.console = hwnd
+        self._last_console_layout = None
         self.sync_console()
         self.update()
         return True
@@ -314,6 +327,7 @@ class TerminalCard(QWidget):
     def release(self) -> None:
         hwnd = self.console
         self.console = None
+        self._last_console_layout = None
         if hwnd and user32.IsWindow(hwnd):
             user32.ShowWindow(hwnd, SW_HIDE)
             user32.SetParent(hwnd, self.original_parent)
@@ -488,6 +502,13 @@ class Workspace(QWidget):
         self._focus_callback = None
         self.mouse_hook = None
         self._mouse_callback = None
+        self._pending_native_click = None
+        self._native_click_queued = False
+        # Watch the normal service-exit signal without polling once all roles attach.
+        self._shutdown_watcher = QFileSystemWatcher(self)
+        self._shutdown_watcher.directoryChanged.connect(self._on_shutdown_file_event)
+        self._shutdown_watcher.fileChanged.connect(self._on_shutdown_file_event)
+        self._refresh_shutdown_watches()
 
         self.setWindowTitle("NormWorkspace Qt Focus — Native Terminal Container")
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
@@ -559,6 +580,9 @@ class Workspace(QWidget):
         self.poll_timer.setInterval(max(250, int(settings.data["capture"]["poll_interval_ms"])))
         self.poll_timer.timeout.connect(self.poll)
         self.poll_timer.start()
+        self.shutdown_timer = QTimer(self)
+        self.shutdown_timer.setInterval(1000)
+        self.shutdown_timer.timeout.connect(self.poll)
         self.arrange_z()
         if ws.get("maximized", False):
             self.showMaximized()
@@ -672,30 +696,40 @@ class Workspace(QWidget):
             self.set_status("Native click listener unavailable; header still raises panels.")
 
     def _on_native_mouse(self, n_code: int, message: int, data: int) -> int:
-        # This callback runs on the Qt GUI thread; queue Qt work to return
-        # immediately and not hold Windows' low-level mouse hook.
+        # The WH_MOUSE_LL callback must not inspect HWND ancestry, change
+        # focus, raise Qt widgets, or enumerate windows before returning.
         try:
             if (n_code >= 0 and message in
                     (WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN)
                     and not self._closing and self.attached):
                 point = ctypes.cast(data, ctypes.POINTER(MSLLHOOKSTRUCT)).contents.pt
-                target = int(user32.WindowFromPoint(point) or 0)
-                role = self._role_for_native_hwnd(target)
-                if role:
-                    card = self.cards[role]
-                    # WindowFromPoint may resolve Qt's canvas rather than
-                    # the genuine terminal. Never remember a Qt HWND as the
-                    # native terminal's text-focus target.
-                    if (target == card.console or user32.IsChild(card.console, target)):
-                        self.last_focus_hwnd[role] = target
-                    if (role != self.active_role
-                            or card.z != max(c.z for c in self.cards.values())):
-                        QTimer.singleShot(0, lambda chosen=role: self.raise_card(chosen))
+                self._pending_native_click = (int(point.x), int(point.y))
+                if not self._native_click_queued:
+                    self._native_click_queued = True
+                    QTimer.singleShot(0, self._dispatch_native_click)
         except Exception:
-            # The hook must never disrupt normal mouse input.
             pass
-        return int(user32.CallNextHookEx(
-            self.mouse_hook, n_code, message, data))
+        return int(user32.CallNextHookEx(self.mouse_hook, n_code, message, data))
+
+    def _dispatch_native_click(self) -> None:
+        self._native_click_queued = False
+        point = self._pending_native_click
+        self._pending_native_click = None
+        if self._closing or point is None or not self.attached:
+            return
+        try:
+            target = int(user32.WindowFromPoint(POINT(*point)) or 0)
+            role = self._role_for_native_hwnd(target)
+            if role:
+                card = self.cards[role]
+                if target == card.console or user32.IsChild(card.console, target):
+                    self.last_focus_hwnd[role] = target
+                if (role != self.active_role
+                        or card.z != max(c.z for c in self.cards.values())):
+                    self.raise_card(role)
+        except Exception:
+            # Native hook failures must not disrupt normal mouse input.
+            pass
 
     def _restore_active_focus(self) -> None:
         """Resume the last terminal's keyboard focus without moving its caret."""
@@ -775,35 +809,83 @@ class Workspace(QWidget):
             else:
                 self.set_status("An older workspace did not respond to its Release request.")
 
-    def _matching_windows(self, role: str) -> list[int]:
-        wanted = str(self.settings.data["capture"]["windows"][role]).casefold()
+    def _refresh_shutdown_watches(self) -> None:
+        marker = self._external_shutdown_signal
+        watched = set(self._shutdown_watcher.files()) | set(self._shutdown_watcher.directories())
+        desired = {str(marker.parent)} if marker.parent.is_dir() else set()
+        if marker.is_file():
+            desired.add(str(marker))
+        for path in watched - desired:
+            self._shutdown_watcher.removePath(path)
+        for path in desired - watched:
+            self._shutdown_watcher.addPath(path)
+
+    def _on_shutdown_file_event(self, _path: str) -> None:
+        self._refresh_shutdown_watches()
+        QTimer.singleShot(250, self._check_external_shutdown)
+
+    def _check_external_shutdown(self) -> None:
+        if (not self._closing and not self._shutdown_started
+                and not self.demo and not self.attach_only
+                and self._external_normal_exit()):
+            self._shutdown_complete = True
+            self.close()
+
+    def _update_poll_timer(self) -> None:
+        # No 700ms scan after all three terminals attach. No scan after Release.
+        if not hasattr(self, "poll_timer"):
+            return
+        should_poll = (not self._closing and not self._shutdown_started
+                       and self.capture_enabled and len(self.attached) < 3)
+        if should_poll and not self.poll_timer.isActive():
+            self.poll_timer.start()
+        elif not should_poll and self.poll_timer.isActive():
+            self.poll_timer.stop()
+
+    def _windows_by_role(self, roles) -> dict[str, list[int]]:
+        # Collect all missing roles with one EnumWindows pass.
+        wanted = {role: str(self.settings.data["capture"]["windows"][role]).casefold()
+                  for role in roles}
         mode = str(self.settings.data["capture"]["match"]).casefold()
-        available = []
+        used = set(self.attached.values())
+        found = {role: [] for role in roles}
         for hwnd in top_windows():
-            text = wintext(hwnd).casefold()
-            if (text == wanted if mode == "exact" else wanted in text):
-                if hwnd not in self.attached.values():
-                    available.append(hwnd)
-        return available
+            if hwnd in used:
+                continue
+            title = wintext(hwnd).casefold()
+            for role, name in wanted.items():
+                if (title == name if mode == "exact" else name in title):
+                    found[role].append(hwnd)
+        return found
+
+    def _matching_windows(self, role: str) -> list[int]:
+        # Preserve the existing internal method for callers outside the timer.
+        return self._windows_by_role((role,))[role]
 
     def attach_existing(self) -> None:
-        self.capture_enabled = True  # Explicit Attach resumes capture.
+        self.capture_enabled = True
         self._release_older_workspace()
         problems = []
+        missing = []
         for role in ROLES:
             card = self.cards[role]
             if card.console and user32.IsWindow(card.console):
                 continue
-            if card.console and not user32.IsWindow(card.console):
+            if card.console:
                 card.console = None
+                card._last_console_layout = None
                 self.attached.pop(role, None)
-            matches = self._matching_windows(role)
+                self.last_focus_hwnd.pop(role, None)
+            missing.append(role)
+        candidates = self._windows_by_role(missing) if missing else {}
+        for role in missing:
+            matches = candidates[role]
             if len(matches) > 1:
-                problems.append(role+": multiple matching windows")
+                problems.append(role + ": multiple matching windows")
             elif not matches:
-                problems.append(role+": not found")
-            elif not card.attach(matches[0]):
-                problems.append(role+": Windows refused embedding")
+                problems.append(role + ": not found")
+            elif not self.cards[role].attach(matches[0]):
+                problems.append(role + ": Windows refused embedding")
             else:
                 self.attached[role] = matches[0]
         if len(self.attached) == 3:
@@ -811,6 +893,7 @@ class Workspace(QWidget):
         else:
             self.set_status(f"Attached {len(self.attached)}/3. " + "; ".join(problems))
         self.arrange_z()
+        self._update_poll_timer()
 
     def registered_hosts_alive(self) -> int:
         path = self.settings.registry_path()
@@ -919,6 +1002,10 @@ class Workspace(QWidget):
             self._shutdown_proc = None
             self.set_status(f"Could not start verified Norm shutdown: {exc}")
             return
+        if hasattr(self, "shutdown_timer"):
+            self.shutdown_timer.start()
+        if hasattr(self, "_update_poll_timer"):
+            self._update_poll_timer()
         self.set_status("Graceful Norm shutdown in progress. Reversible trash preserved.")
 
     def choose_font(self) -> None:
@@ -958,11 +1045,15 @@ class Workspace(QWidget):
             result = self._shutdown_proc.poll()
             if result is not None:
                 self._shutdown_proc = None
+                if hasattr(self, "shutdown_timer"):
+                    self.shutdown_timer.stop()
                 if result == 0:
                     self._shutdown_complete = True
                     self.close()
                 else:
                     self._shutdown_started = False
+                    if hasattr(self, "_update_poll_timer"):
+                        self._update_poll_timer()
                     self.set_status(
                         f"Norm shutdown incomplete (exit {result}); workspace kept open. "
                         "Check NormWorkspace-Qt-shutdown.log.")
@@ -973,6 +1064,7 @@ class Workspace(QWidget):
             return
         if self.capture_enabled and len(self.attached) < 3:
             self._poll_attach_only()
+        self._update_poll_timer()
         if self.launcher and self.launcher.poll() is not None:
             result = self.launcher.returncode
             self.launcher = None
@@ -982,16 +1074,28 @@ class Workspace(QWidget):
                     "see NormWorkspace-Qt-startup.log.")
 
     def _poll_attach_only(self) -> None:
+        missing = []
         for role in ROLES:
-            card=self.cards[role]
-            if card.console and user32.IsWindow(card.console):
-                continue
-            matches=self._matching_windows(role)
-            if len(matches)==1 and card.attach(matches[0]):
-                self.attached[role]=matches[0]
+            card = self.cards[role]
+            if card.console and not user32.IsWindow(card.console):
+                card.console = None
+                card._last_console_layout = None
+                self.attached.pop(role, None)
+                self.last_focus_hwnd.pop(role, None)
+            if not card.console:
+                missing.append(role)
+        if not missing:
+            self._update_poll_timer()
+            return
+        candidates = self._windows_by_role(missing)
+        for role in missing:
+            matches = candidates[role]
+            if len(matches) == 1 and self.cards[role].attach(matches[0]):
+                self.attached[role] = matches[0]
                 self.set_status(f"Captured {role} ({len(self.attached)}/3).")
-        if len(self.attached)==3:
+        if len(self.attached) == 3:
             self.arrange_z()
+        self._update_poll_timer()
 
     def start_demo(self) -> None:
         self.capture_enabled = True
@@ -1013,6 +1117,7 @@ class Workspace(QWidget):
             card.release()
         self.attached.clear()
         self.last_focus_hwnd.clear()
+        self._update_poll_timer()
         self.set_status("Released real terminals. Norm service and consoles remain running.")
 
     def schedule_save(self) -> None:
@@ -1118,6 +1223,7 @@ class Workspace(QWidget):
         self.persist()
         self._closing=True
         self.poll_timer.stop()
+        self.shutdown_timer.stop()
         self.save_timer.stop()
         if self.mouse_hook:
             user32.UnhookWindowsHookEx(self.mouse_hook)

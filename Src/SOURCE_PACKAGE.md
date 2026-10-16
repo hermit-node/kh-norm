@@ -1,3 +1,6 @@
+## 0.55.10r11r6 - Workspace stability (2026-10-15)
+Source-only follow-up to r11r5, preserving Celery and all other changes. See docs/R11R6_WORKSPACE_VALIDATION.md for tests and limitations.
+
 ## 0.55.10r11r5 — detached Celery orphan watchdog and suppressed receipt durability (2026-10-15)
 
 Built on the user-supplied r11r4 portable source. **Offline source candidate only: no running Norm installation was modified.** Changes are limited to the service heartbeat, solo-worker self-monitor, N1 result interpretation, and the existing suppression snapshot/restore path.
