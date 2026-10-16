@@ -1,3 +1,7 @@
+## StegoSplit in 0.55.2
+
+Bundled `stegosplit_message` plugin 0.4.1 packages the compiled V3 carrier from plugin 0.4.0 unchanged (Windows CPython 3.14 x64); 4-bit color-delta symbols per paired carrier position, excluding the all-zero RGB vector, zlib compression if worthwhile. Added independent single-image **public** SSH key or SHA-256 identifier native tools using RGB LSB (3 bits/pixel) or PNG metadata; these are not authentication protocols. Windows V3 runtime integration is not tested here.
+
 # Norm current status
 
 Current package: **Norm 0.55.1** portable source; source-packaged installer baseline **2.0.0** (not rebuilt).

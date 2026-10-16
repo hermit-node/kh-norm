@@ -1,3 +1,10 @@
+## 0.55.2 — 2026-10-08 — StegoSplit V3 packaged integration and public identifier shortcut
+
+- Replaced bundled StegoSplit V2 `stegosplit_message` v0.3.0 source with the operator-provided native StegoSplit V3 0.4.0 distribution, retaining its Windows CPython 3.14 x64 `.pyd` binaries **exactly** and wrapping it as plugin 0.4.1.
+- V3 encodes each paired-carrier 4-bit nibble using 16 color-zone vectors among 26 nonzero RGB -1/0/+1 combinations; optional zlib level-9 payload compression is independent.
+- Added single-image **public** SSH key / SHA256 digest embed/read/verify native plugin tools. Default is a lossless RGB-LSB PNG carrier at 3 bits/pixel; optional overt PNG tEXt metadata. Neither mode constitutes network authentication on its own.
+- Updated plugin identity hash, help.txt, source manifest, and added regression tests. Retains all 0.55.1 injection/voice/lesson/vision features. Windows-native paired-carrier runtime tests still required.
+
 ## 0.55.1 — 2026-10-08 — Verified context-injection retirement and stronger voice controls
 
 - Added PostgreSQL migration for `task_context_injections` statuses, operator retirement flag, and audit metadata. Existing rows retain legacy behavior; new `/inject-context` entries expose a checked default checkbox or explicit `--once`/`--keep` flags. `/injections`, `/injection-retire` and `/injection-restore` manage current-task lifecycle directly.

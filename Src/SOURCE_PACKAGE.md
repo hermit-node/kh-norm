@@ -1,4 +1,10 @@
-# Norm 0.55.1 portable source package
+# Norm 0.55.2 portable source package
+
+## 0.55.2 StegoSplit integration
+
+Promotes bundled stegosplit_message from 0.3.0 V2 to plugin 0.4.1, retaining the compiled Windows CPython 3.14 V3 carrier from the operator-provided 0.4.0 package bit-for-bit. Its compiled 4-bit-per-paired-position RGB delta encoding is unchanged. Adds independent single-image public SSH key / SHA256 identity embedding (RGB LSB 3 bits/pixel or overt PNG metadata), reading and explicit trusted-expectation comparison. Public identifier storage alone is not authentication. No existing 0.55.1 behavior was removed.
+
+**Compiled-plugin exception**: this portable source includes the explicitly provided StegoSplit V3 .pyd binaries. Those are required to run the V3 paired carrier and work only on Windows x64 / CPython 3.14. Other generated Norm executables remain excluded.
 
 ## 0.55.1 cumulative injection/voice update
 
@@ -14,7 +20,7 @@ Adds verified injection retirement and operator controls, and N2 voice condition
 
 Resource-only busy signals yield for up to 30 seconds; actively tracked Norm work remains a hard gate. Suppressed in-flight ingress is rechecked at HTTP admission, with cancellation tombstones retained through `/flush-suppressed`.
 
-This directory is the portable source payload for **Norm 0.55.1**, derived from the user-supplied 0.54.2i + SSE source ZIP.
+This directory is the portable source payload for **Norm 0.55.2**, derived from the user-supplied 0.54.2i + SSE source ZIP.
 
 The portable source package excludes generated or machine-private material such as .venv, compiled core\norm.exe, build output, Python caches, secrets, and private runtime state.
 
