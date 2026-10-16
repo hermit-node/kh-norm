@@ -1,5 +1,32 @@
 # Norm release notes
 
+## 0.54.0 Beta — 2026-10-05 — Friendly maintenance-model resolution
+
+- Promoted the 0.54 line to Beta and retained the full N1 ingress/tool/final-answer control loop plus subject-bound routing and N1-gated 7-day/21-day maintenance.
+- `memory.condensation_model` and `memory.condensation_backup_model` may now use convenient names such as `granite` or `north-mini-code`; Norm resolves them against Ollama's installed-model inventory at the start of each maintenance pass.
+- Resolution is deterministic: exact full tag → exact base name (preferring a unique `:latest`) → normalized starts-with → normalized substring → bounded fuzzy similarity.
+- Ambiguous matches are never silently selected. An ambiguous/unmatched primary falls through to the one configured backup, then `norm`; blank fields still resolve to `norm`.
+- If Ollama's model inventory cannot be queried, Norm preserves the configured names and lets the existing generation failover path decide availability instead of disabling maintenance.
+
+## 0.54.1 — 2026-10-05 — Configurable maintenance condensation model
+
+- Added runtime-selectable memory-condensation model settings: `memory.condensation_model` and one `memory.condensation_backup_model`.
+- Blank primary or backup values resolve to `norm`; the effective chain is primary → configured backup → `norm`, with duplicates removed.
+- Maintenance model settings are re-read at the start of every manual or scheduled condensation pass, so model changes do not require a rebuild.
+- Model failure falls through to the next configured maintenance model for the remainder of that pass; explicit model-generation cancellation still stops immediately.
+- The selector applies to weekly reductive, 21-day destructive, and manual memory-condensation jobs; N1 remains the independent review/gatekeeper model.
+
+## 0.54.0 — 2026-10-05 — N1 control loop and subject-bound conversation routing
+
+- Promoted N1 from mostly-transparent ingress/egress hooks to the full conversation boundary: N1 reviews the exact user turn before N2, continues to gate/reuse tool evidence, and now accepts/retries N2's final user-facing answer without rewriting it itself.
+- Added configurable ingress/final N1 review budgets and 12-minute default timeouts alongside the existing configurable maintenance review budget. N1 processing failures are distinct from semantic RETRY decisions.
+- Added N2 subject decomposition for mixed turns. N2 ranks/splits materially distinct subjects and proposes existing/new thread placement; N1 reviews that proposal before persistence.
+- Raised the default existing-thread routing threshold from 0.58 to **0.68**. Sub-threshold matches cannot silently contaminate an existing thread; they create a better-named subject thread or require clarification.
+- Added `message_threads.projected_content`: the authoritative user message remains intact in `messages.content` after existing ingress whitespace normalization, while each subject thread sees only the accepted relevant projection.
+- Multi-subject assistant replies are projected back using only verbatim excerpts of the approved final answer; failed projection falls back to the primary thread instead of copying unrelated reply text across subjects.
+- Durable memory extraction and summary refresh are performed per subject thread after mixed turns.
+- Retains the 0.53.22b N1-gated 7-day reductive / 21-day destructive maintenance behavior and configurable maintenance review allowance/timeout.
+
 ## 0.53.22b — 2026-10-05 — Configurable N1 maintenance review budget
 
 - N1 maintenance review output allowance is now runtime-configurable with `agents.n1.maintenance_num_predict`; default is 5,000 tokens instead of the prior hardcoded 500-token limit that frequently caused `ModelOutputTruncated` during maintenance judgments.

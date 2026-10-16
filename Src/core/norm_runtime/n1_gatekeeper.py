@@ -77,6 +77,10 @@ class N1Gatekeeper:
         reasoning_similarity_floor: float = 0.78,
         maintenance_num_predict: int = 5000,
         maintenance_review_timeout_seconds: float = 720.0,
+        ingress_num_predict: int = 3000,
+        ingress_review_timeout_seconds: float = 720.0,
+        final_num_predict: int = 5000,
+        final_review_timeout_seconds: float = 720.0,
         raw_result_cache_entries: int = 128,
         turn_history_entries: int = 256,
         request_state_entries: int = 4096,
@@ -92,6 +96,10 @@ class N1Gatekeeper:
         self.reasoning_similarity_floor = max(0.50, min(0.98, float(reasoning_similarity_floor)))
         self.maintenance_num_predict = max(1, int(maintenance_num_predict))
         self.maintenance_review_timeout_seconds = max(1.0, float(maintenance_review_timeout_seconds))
+        self.ingress_num_predict = max(1, int(ingress_num_predict))
+        self.ingress_review_timeout_seconds = max(1.0, float(ingress_review_timeout_seconds))
+        self.final_num_predict = max(1, int(final_num_predict))
+        self.final_review_timeout_seconds = max(1.0, float(final_review_timeout_seconds))
         self.raw_result_cache_entries = max(8, int(raw_result_cache_entries))
         self.turn_history_entries = max(32, int(turn_history_entries))
         self.request_state_entries = max(256, int(request_state_entries))
@@ -101,7 +109,10 @@ class N1Gatekeeper:
         self._loop_reset_emitted: OrderedDict[str, None] = OrderedDict()
         self._turn_history: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
         self._turn_loop_judgments: OrderedDict[str, None] = OrderedDict()
-        self._maintenance_judgments = {"total": 0, "accept": 0, "retry": 0, "destructive_accept": 0}
+        self._maintenance_judgments = {"total": 0, "accept": 0, "retry": 0, "destructive_accept": 0, "processing_failed": 0, "review_failure_pass": 0}
+        self._ingress_reviews = {"total": 0, "success": 0, "failed": 0}
+        self._routing_reviews = {"total": 0, "accept": 0, "retry": 0, "processing_failed": 0}
+        self._final_reviews = {"total": 0, "accept": 0, "retry": 0, "processing_failed": 0, "review_failure_pass": 0}
 
     @staticmethod
     def information_tool(name: str) -> bool:
@@ -114,12 +125,216 @@ class N1Gatekeeper:
         return False
 
     def forward_user(self, message: str) -> str:
-        """Checkpoint-1 user ingress hook. N1 observes the boundary but does not rewrite text."""
+        """Compatibility hook: the authoritative user text is never rewritten by N1."""
         return message
 
     def forward_to_user(self, message: str) -> str:
-        """Checkpoint-1 egress hook. N1 passes N2's user-facing text through unchanged."""
+        """Compatibility hook: accepted user-facing text is returned byte-for-byte."""
         return message
+
+    def review_user_ingress(self, message: str) -> dict[str, Any]:
+        """Let N1 inspect an exact user turn before N2 sees it.
+
+        N1 never rewrites or blocks the user's text.  It may add a short execution
+        note for N2 when that materially helps preserve explicit constraints or task
+        boundaries.  A failed N1 review is fail-open at ingress: the original user
+        text still proceeds unchanged.
+        """
+        message = str(message or "")
+        with self._lock:
+            self._ingress_reviews["total"] += 1
+        if not self.enabled:
+            return {"reviewed": False, "guidance": "", "reason": "N1 disabled; exact user text forwarded unchanged."}
+        schema = {
+            "type": "object",
+            "properties": {
+                "guidance": {"type": "string"},
+                "reason": {"type": "string"},
+            },
+            "required": ["guidance", "reason"],
+            "additionalProperties": False,
+        }
+        prompt = (
+            "You are N1 at Norm's user-ingress boundary. Read the exact user turn before N2 works on it. "
+            "Do NOT answer the user, do NOT rewrite the user's text, do NOT remove constraints, and do NOT invent intent. "
+            "Return only a short guidance note for N2 when it materially helps preserve explicit task boundaries, named constraints, "
+            "or control intent that N2 could otherwise misread. For a straightforward request, guidance should be blank. "
+            "Return strict JSON only with guidance and reason.\n\nEXACT USER TURN:\n" + message
+        )
+        try:
+            raw = self.client.generate(
+                prompt, think=True, temperature=0.0, num_predict=self.ingress_num_predict,
+                response_format=schema, emit_stream=False,
+                timeout_seconds=self.ingress_review_timeout_seconds,
+            )
+            parsed = OllamaClient.parse_json(raw)
+            guidance = str(parsed.get("guidance") or "").strip()[:2400]
+            reason = str(parsed.get("reason") or "").strip()[:1200]
+            with self._lock:
+                self._ingress_reviews["success"] += 1
+            logging.info("N1 ingress reviewed chars=%s guidance_chars=%s reason=%s", len(message), len(guidance), reason[:300])
+            return {"reviewed": True, "guidance": guidance, "reason": reason}
+        except Exception as exc:
+            with self._lock:
+                self._ingress_reviews["failed"] += 1
+            logging.exception("N1 ingress review failed; forwarding exact user text unchanged")
+            return {"reviewed": False, "guidance": "", "reason": f"N1 ingress review failed: {type(exc).__name__}"}
+
+    def judge_subject_routing(
+        self,
+        *,
+        request: str,
+        proposal: dict[str, Any],
+        routing_context: list[dict[str, Any]],
+        threshold: float,
+    ) -> dict[str, Any]:
+        """Judge N2's subject decomposition/routing proposal without rewriting it."""
+        with self._lock:
+            self._routing_reviews["total"] += 1
+        if not self.enabled:
+            with self._lock:
+                self._routing_reviews["accept"] += 1
+            return {
+                "decision": "accept",
+                "reason": "N1 disabled; routing proposal accepted by operator configuration.",
+                "retry_instruction": "",
+                "processing_failed": False,
+            }
+        schema = {
+            "type": "object",
+            "properties": {
+                "decision": {"type": "string", "enum": ["accept", "retry"]},
+                "reason": {"type": "string"},
+                "retry_instruction": {"type": "string"},
+            },
+            "required": ["decision", "reason", "retry_instruction"],
+            "additionalProperties": False,
+        }
+        prompt = (
+            "You are N1 reviewing N2's subject decomposition before Norm stores a user turn in subject-bound chat threads. "
+            "Do not perform the routing yourself and do not answer the user. Decide ACCEPT or RETRY. ACCEPT only when: "
+            "(1) every materially distinct subject in the exact user turn is represented; (2) each subject projection preserves the user's meaning and constraints without invention; "
+            "(3) unrelated sidenotes are not copied wholesale into other subjects; (4) an existing thread is used only when the proposal's match confidence is at least the configured threshold; "
+            "(5) weak matches below threshold are directed to a sensible new subject thread or explicit clarification instead of contaminating an existing thread; "
+            "and (6) exactly one primary subject is identified when work can proceed. RETRY only for a material routing/decomposition defect. "
+            "Return strict JSON only.\n\n"
+            f"ROUTING CONFIDENCE THRESHOLD: {float(threshold):.2f}\n\n"
+            f"EXACT USER TURN:\n{request}\n\n"
+            f"EXISTING THREAD CONTEXT:\n{json.dumps(routing_context, ensure_ascii=False, default=str)[:48000]}\n\n"
+            f"N2 ROUTING PROPOSAL:\n{json.dumps(proposal, ensure_ascii=False, default=str)[:48000]}"
+        )
+        try:
+            raw = self.client.generate(
+                prompt,
+                think=True,
+                temperature=0.0,
+                num_predict=self.ingress_num_predict,
+                response_format=schema,
+                emit_stream=False,
+                timeout_seconds=self.ingress_review_timeout_seconds,
+            )
+            parsed = OllamaClient.parse_json(raw)
+            decision = str(parsed.get("decision") or "retry").strip().lower()
+            if decision not in {"accept", "retry"}:
+                decision = "retry"
+            reason = str(parsed.get("reason") or "").strip()[:1600]
+            instruction = str(parsed.get("retry_instruction") or "").strip()[:1800] if decision == "retry" else ""
+            with self._lock:
+                self._routing_reviews[decision] += 1
+            logging.info("N1 subject-routing review decision=%s reason=%s", decision, reason[:500])
+            return {
+                "decision": decision,
+                "reason": reason,
+                "retry_instruction": instruction,
+                "processing_failed": False,
+            }
+        except Exception as exc:
+            with self._lock:
+                self._routing_reviews["processing_failed"] += 1
+            logging.exception("N1 subject-routing review failed")
+            return {
+                "decision": "retry",
+                "reason": f"N1 could not process the routing proposal: {type(exc).__name__}",
+                "retry_instruction": "",
+                "processing_failed": True,
+            }
+
+    def judge_final_answer(
+        self, *, request: str, candidate: str, context: str = ""
+    ) -> dict[str, Any]:
+        """N1 acceptance gate for N2's final user-facing candidate.
+
+        A model/transport failure is reported distinctly so the caller can ask N2 to
+        simplify formatting/structure and resubmit once before applying the configured
+        review-failure pass policy.  N1 never rewrites the answer itself.
+        """
+        request = str(request or "").strip()
+        candidate = str(candidate or "").strip()
+        with self._lock:
+            self._final_reviews["total"] += 1
+        if not self.enabled:
+            with self._lock:
+                self._final_reviews["accept"] += 1
+            return {"decision": "accept", "reason": "N1 disabled; final-answer gate bypassed by operator configuration.", "retry_instruction": "", "processing_failed": False}
+        schema = {
+            "type": "object",
+            "properties": {
+                "decision": {"type": "string", "enum": ["accept", "retry"]},
+                "reason": {"type": "string"},
+                "retry_instruction": {"type": "string"},
+            },
+            "required": ["decision", "reason", "retry_instruction"],
+            "additionalProperties": False,
+        }
+        prompt = (
+            "You are N1, Norm's final-answer gatekeeper. N2 has completed a user-facing candidate. "
+            "Do not rewrite it yourself. Decide ACCEPT or RETRY. ACCEPT when it directly answers the authoritative user request, "
+            "respects explicit constraints, does not make unsupported completion/evidence claims, and is coherent enough to deliver. "
+            "RETRY only for a material defect: missing requested work, unsupported claim, contradiction with established evidence, "
+            "or formatting/structure/wording so broken that the user-facing answer is not reliable. Do not demand cosmetic style changes. "
+            "When retrying, give N2 one short concrete repair instruction. Return strict JSON only.\n\n"
+            f"AUTHORITATIVE USER REQUEST:\n{request}\n\nN2 FINAL CANDIDATE:\n{candidate}"
+            + (f"\n\nCOMPLETED TASK CONTEXT/EVIDENCE:\n{str(context)[:36000]}" if context else "")
+        )
+        try:
+            raw = self.client.generate(
+                prompt, think=True, temperature=0.0, num_predict=self.final_num_predict,
+                response_format=schema, emit_stream=False,
+                timeout_seconds=self.final_review_timeout_seconds,
+            )
+            parsed = OllamaClient.parse_json(raw)
+            decision = str(parsed.get("decision") or "retry").strip().lower()
+            if decision not in {"accept", "retry"}:
+                decision = "retry"
+            reason = str(parsed.get("reason") or "").strip()[:1600]
+            instruction = str(parsed.get("retry_instruction") or "").strip()[:1800] if decision == "retry" else ""
+            with self._lock:
+                self._final_reviews[decision] += 1
+            logging.info("N1 final review decision=%s candidate_chars=%s reason=%s", decision, len(candidate), reason[:500])
+            return {"decision": decision, "reason": reason, "retry_instruction": instruction, "processing_failed": False}
+        except Exception as exc:
+            with self._lock:
+                self._final_reviews["processing_failed"] += 1
+            logging.exception("N1 final-answer review failed")
+            return {
+                "decision": "retry",
+                "reason": f"N1 could not process the final candidate: {type(exc).__name__}",
+                "retry_instruction": "",
+                "processing_failed": True,
+            }
+
+    def record_final_review_failure_pass(self) -> None:
+        with self._lock:
+            self._final_reviews["review_failure_pass"] += 1
+
+    def boundary_stats(self) -> dict[str, dict[str, int]]:
+        with self._lock:
+            return {
+                "ingress": dict(self._ingress_reviews),
+                "routing": dict(self._routing_reviews),
+                "final": dict(self._final_reviews),
+                "maintenance": dict(self._maintenance_judgments),
+            }
 
     def instructions(self) -> str:
         return (
@@ -593,6 +808,7 @@ class N1Gatekeeper:
                 "decision": decision,
                 "reason": "N1 disabled; destructive deletion cannot be approved." if destructive_delete else "N1 disabled; deterministic maintenance fallback used.",
                 "retry_instruction": "Preserve this record; N1 is unavailable to authorize destruction." if destructive_delete else ("Compress further without dropping important current state." if decision == "retry" else ""),
+                "processing_failed": False,
             }
 
         policy = (
@@ -664,20 +880,27 @@ class N1Gatekeeper:
                 "decision": decision,
                 "reason": str(parsed.get("reason") or "").strip(),
                 "retry_instruction": str(parsed.get("retry_instruction") or "").strip() if decision == "retry" else "",
+                "processing_failed": False,
             }
         except Exception as exc:
             logging.exception("N1 maintenance judgment failed")
+            with self._lock:
+                self._maintenance_judgments["processing_failed"] += 1
             destructive_delete = mode == "destructive" and proposed_disposition == "destroy"
-            decision = "retry" if destructive_delete else ("accept" if attempt >= max_attempts else "retry")
             return {
-                "decision": decision,
-                "reason": f"N1 judgment failed: {type(exc).__name__}; destructive deletion not authorized." if destructive_delete else f"N1 judgment failed: {type(exc).__name__}; bounded fallback used.",
-                "retry_instruction": "Preserve this record; N1 did not successfully authorize destruction." if destructive_delete else ("Compress further while preserving important current state." if decision == "retry" else ""),
+                "decision": "retry",
+                "reason": f"N1 could not process the maintenance candidate: {type(exc).__name__}; destructive deletion not authorized." if destructive_delete else f"N1 could not process the maintenance candidate: {type(exc).__name__}.",
+                "retry_instruction": "",
+                "processing_failed": True,
             }
 
     def maintenance_judgment_stats(self) -> dict[str, int]:
         with self._lock:
             return dict(self._maintenance_judgments)
+
+    def record_maintenance_review_failure_pass(self) -> None:
+        with self._lock:
+            self._maintenance_judgments["review_failure_pass"] += 1
 
     def before_tool(self, *, task_id: str, step_id: str, name: str, arguments: dict[str, Any]) -> GateOutcome:
         clean, target, need = self._clean_request(name, arguments)

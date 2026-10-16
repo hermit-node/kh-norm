@@ -15,12 +15,16 @@ def metadata() -> dict[str,str]:
     return result
 
 def version_tuple(value: str) -> tuple[int,int,int,int]:
-    match=re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:([a-zA-Z]))?", value.strip())
+    match=re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:(?:-)?(alpha|beta|rc)|([a-zA-Z]))?", value.strip(), re.IGNORECASE)
     if not match:
-        raise ValueError(f"version must look like 0.51.2 or 0.51.2b: {value!r}")
+        raise ValueError(f"version must look like 0.51.2, 0.51.2b, or 0.54.0-beta: {value!r}")
     major,minor,patch=[int(match.group(i)) for i in (1,2,3)]
-    suffix=match.group(4)
-    revision=(ord(suffix.lower())-ord('a')+1) if suffix else 0
+    label=match.group(4)
+    suffix=match.group(5)
+    if label:
+        revision={"alpha":1,"beta":2,"rc":3}[label.lower()]
+    else:
+        revision=(ord(suffix.lower())-ord("a")+1) if suffix else 0
     return (major,minor,patch,revision)
 
 def version_resource(meta: dict[str,str], target: Path) -> None:

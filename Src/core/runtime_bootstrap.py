@@ -298,7 +298,7 @@ def build_conversation_service(
     return ConversationService(
         store,
         client,
-        routing_threshold=float(memory_cfg.get("routing_threshold", 0.58)),
+        routing_threshold=float(memory_cfg.get("routing_threshold", 0.68)),
         candidate_threads=int(memory_cfg.get("candidate_threads", 12)),
         recent_messages=int(memory_cfg.get("recent_messages", 12)),
         file_tools=file_tools,

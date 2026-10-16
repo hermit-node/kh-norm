@@ -2,9 +2,9 @@
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.53.22b / Installer 1.6.10-unified** package only. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.54.0 Beta / Installer 1.6.10-unified** package only. Version history belongs only in RELEASE_NOTES.md.
 
-### N1-gated memory maintenance (0.53.22b)
+### N1-gated memory maintenance (0.54.0 Beta baseline)
 
 Scheduled memory has two independent modes. The weekly 7-day pass is reductive: N2 ranks and rewrites, preserving important/current information and shrinking less-important context. N1 judges each N2 candidate and decides accept/retry. Up to four attempts are allowed; <=1,800 characters is the ideal early-stop size and 3,400 characters is the practical batch ceiling. The 21-day long-cycle pass is destructive: N2 may propose removal of obsolete/useless memory, but N1 must approve destruction before the record is omitted.
 
@@ -31,13 +31,19 @@ Default installation root: C:\Norm.
 
 ## N1 / N2 execution boundary
 
-Norm runs two logical agent roles. **N2** performs normal reasoning and work. **N1** gates model-requested tools, owns verified-result reuse/check-in, and watches for repeated reasoning/tool loops.
+Norm runs two logical agent roles. **N2** performs normal reasoning/work, subject decomposition, and memory rewriting. **N1** is the boundary critic/gatekeeper.
 
-Normal user text and N2 user-facing answers are not rewritten by N1.
+The normal control loop is: **user -> N1 ingress review -> N2 -> N1 tool gate/reuse -> N2 -> N1 final-answer review -> user**. N1 never rewrites the exact user text or accepted final answer. When N1 finds a material defect it sends bounded feedback back to N2 for repair/resubmission. If N1 cannot process a final candidate, N2 gets one formatting/structure/wording cleanup resubmission before the existing safe review-failure policy applies.
 
 For cacheable information requests, N2 proposes the actual tool plus stable need/target metadata. N1 checks the live Redis validation pool first. A sufficiently current verified result can be reused without re-running the tool. A fresh execution result is forwarded to N2 unchanged and checked into the validation pool out-of-band.
 
 Successful known mutations invalidate affected target and parent-directory cache state. Deterministic post-write verification is a core safety check and does not require model approval.
+
+### Subject-bound thread routing
+
+N2 now decomposes a mixed user turn into materially distinct subjects instead of attaching the entire turn wholesale to every semantically related thread. N1 reviews that routing proposal before new threads are created. Existing-thread reuse requires confidence >= **0.68**; weaker matches create a better subject thread or ask for clarification.
+
+The authoritative user turn remains unchanged in the shared `messages` record for provenance after the existing ingress whitespace normalization. Each thread association can carry `projected_content`, so thread history, summaries, and later routing see only the accepted subject-relevant portion. Multi-subject assistant replies are projected back using verified verbatim excerpts from the accepted reply; a projection failure falls back to the primary thread only rather than spraying the whole answer across side threads.
 
 ## Session model switching
 
@@ -251,3 +257,8 @@ Installer 1.6.9 performs managed in-place updates, preserves persistent machine 
 
 Schema-2 plugins declare non-secret defaults in `plugin.json` under `settings`. `PluginManager.refresh()` materializes/reconciles `config/plugins.ini` on startup and hot-rescan: declared operator values are preserved, missing/invalid values get defaults, and dangling keys/sections are removed after a rotating backup. Secrets stay in the configured external `.env`. Plugin/config/file/SQL/archive backup classes retain at most 12 newest backup sets.
 
+
+
+## Maintenance condensation model
+
+Memory maintenance can use a model independent of N2. Configure `memory.condensation_model` and `memory.condensation_backup_model` in `config/runtime.json`. Each setting is optional; a blank value resolves to `norm`. Friendly names are resolved against Ollama's installed-model inventory at maintenance start using deterministic exact/base/starts-with/substring/fuzzy matching; ambiguous names are never guessed and fall through to the backup. The effective failover order is primary → one backup → `norm`. Settings are re-read when a maintenance pass begins.

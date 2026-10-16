@@ -25,12 +25,34 @@ from .voice_profile_context import load_active_voice_context
 
 
 @dataclass(frozen=True)
+class SubjectAssignment:
+    thread_id: str
+    label: str
+    content: str
+    confidence: float
+    primary: bool = False
+
+
+@dataclass(frozen=True)
 class RouteDecision:
     thread_ids: tuple[str, ...]
     primary_thread_id: str | None
     confidence: float
     clarification_question: str | None = None
     created_thread: bool = False
+    subjects: tuple[SubjectAssignment, ...] = ()
+
+    def thread_projections(self) -> dict[str, str]:
+        projections: dict[str, list[str]] = {}
+        for subject in self.subjects:
+            text = str(subject.content or "").strip()
+            if not text:
+                continue
+            projections.setdefault(subject.thread_id, []).append(text)
+        return {
+            thread_id: "\n\n".join(dict.fromkeys(parts))
+            for thread_id, parts in projections.items()
+        }
 
 
 class ConversationService:
@@ -39,7 +61,7 @@ class ConversationService:
         store: ConversationStore,
         ollama: OllamaClient,
         *,
-        routing_threshold: float = 0.58,
+        routing_threshold: float = 0.68,
         candidate_threads: int = 12,
         recent_messages: int = 12,
         file_tools: FileToolExecutor | None = None,
@@ -404,9 +426,13 @@ class ConversationService:
         self, message: str, *, project_id: str = "default", thread_id: str | None = None,
         source_prompt_id: str | None = None,
     ) -> dict:
+        n1_ingress = {"reviewed": False, "guidance": "", "reason": ""}
         if self.n1_gatekeeper is not None:
-            # Checkpoint 1: N1 is physically on the ingress path but intentionally
-            # does not rewrite user text before N2/current Norm routing sees it.
+            # 0.54 boundary: N1 reads the exact user turn first, but the authoritative
+            # user text itself remains immutable.  N1 may attach bounded guidance for
+            # N2; an N1 ingress failure never blocks or rewrites the user's request.
+            if hasattr(self.n1_gatekeeper, "review_user_ingress"):
+                n1_ingress = self.n1_gatekeeper.review_user_ingress(message)
             message = self.n1_gatekeeper.forward_user(message)
         message = message.strip()
         if not message:
@@ -451,7 +477,11 @@ class ConversationService:
             if route.primary_thread_id not in thread_ids:
                 thread_ids.insert(0, route.primary_thread_id)
 
-            user_id = self.store.add_message("user", message, thread_ids, route.primary_thread_id)
+            user_projections = route.thread_projections()
+            user_id = self.store.add_message(
+                "user", message, thread_ids, route.primary_thread_id,
+                thread_projections=user_projections,
+            )
             special = self._suppressed_resume_flow(
                 message, primary_thread_id=route.primary_thread_id,
                 thread_ids=thread_ids, user_message_id=user_id,
@@ -465,8 +495,13 @@ class ConversationService:
                     message, project_id=project_id, thread_ids=thread_ids, related_running_work=related_running_work
                 )
                 try:
+                    ingrained_threads = (
+                        [route.primary_thread_id]
+                        if route.subjects and len(thread_ids) > 1 and route.primary_thread_id
+                        else thread_ids
+                    )
                     ingrained_state = self._apply_ingrained_details(
-                        project_id=project_id, thread_ids=thread_ids, source_message_id=user_id,
+                        project_id=project_id, thread_ids=ingrained_threads, source_message_id=user_id,
                         details=list(turn_interpretation.get("ingrained_details") or []),
                     )
                 except Exception:
@@ -477,6 +512,7 @@ class ConversationService:
                     project_id, thread_ids, primary_request,
                     original_user_message=message,
                     current_task_context=list(ingrained_state.get("current_task_context") or []),
+                    n1_ingress_guidance=str(n1_ingress.get("guidance") or ""),
                 )
             else:
                 prompt = ""
@@ -484,7 +520,9 @@ class ConversationService:
         except psycopg.Error as exc:
             if source_prompt_id:
                 raise
-            return self._degraded_postgres_chat(message, project_id, exc)
+            return self._degraded_postgres_chat(
+                message, project_id, exc, n1_ingress_guidance=str(n1_ingress.get("guidance") or "")
+            )
 
         if special is None:
             primary_request = str(turn_interpretation.get("primary_request") or message).strip() or message
@@ -514,8 +552,17 @@ class ConversationService:
             # runtime safety boundary outside the agent split.
             reply = self.n1_gatekeeper.forward_to_user(reply)
         assistant_id = None
+        assistant_projections: dict[str, str] = {}
         try:
-            assistant_id = self.store.add_message("assistant", reply, thread_ids, route.primary_thread_id)
+            assistant_projections = self._project_assistant_reply(reply, route)
+            assistant_thread_ids = list(assistant_projections)
+            if route.primary_thread_id and route.primary_thread_id not in assistant_thread_ids:
+                assistant_thread_ids.insert(0, route.primary_thread_id)
+                assistant_projections[route.primary_thread_id] = reply
+            assistant_id = self.store.add_message(
+                "assistant", reply, assistant_thread_ids, route.primary_thread_id,
+                thread_projections=assistant_projections,
+            )
         except psycopg.Error as exc:
             resource_status = merge_resource_status(
                 resource_status,
@@ -527,14 +574,27 @@ class ConversationService:
             # Update durable memories first so the runtime-state projection sees the newest
             # supersession decisions from this completed task.
             try:
-                self._extract_memories(project_id, thread_ids, user_id, message, reply)
+                if route.subjects:
+                    for tid in thread_ids:
+                        subject_user = user_projections.get(tid, "").strip()
+                        subject_reply = assistant_projections.get(tid, "").strip()
+                        if subject_user or subject_reply:
+                            self._extract_memories(
+                                project_id, [tid], user_id,
+                                subject_user or message,
+                                subject_reply,
+                            )
+                else:
+                    self._extract_memories(project_id, thread_ids, user_id, message, reply)
             except Exception:
                 logging.exception("Memory extraction failed")
 
             try:
-                durable_summary = self._refresh_summary(
-                    project_id, thread_ids, route.primary_thread_id, assistant_id
-                )
+                durable_summary = ""
+                for tid in thread_ids:
+                    refreshed = self._refresh_summary(project_id, [tid], tid, assistant_id)
+                    if tid == route.primary_thread_id:
+                        durable_summary = refreshed
                 if durable_summary:
                     self.ollama.publish_durable_summary(durable_summary)
             except Exception:
@@ -553,20 +613,32 @@ class ConversationService:
             "resource_status": resource_status,
         }
 
-    def _degraded_postgres_chat(self, message: str, project_id: str, exc: Exception) -> dict:
+    def _degraded_postgres_chat(
+        self, message: str, project_id: str, exc: Exception, *, n1_ingress_guidance: str = ""
+    ) -> dict:
         resource_status = impaired_context_status("postgres", f"{type(exc).__name__}: {exc}")
+        ingress = str(n1_ingress_guidance or "").strip()
         prompt = (
             f"PERSISTENT OPERATING PRINCIPLES:\n{self._persistent_instruction_text()}\n\n"
             "PostgreSQL conversation/context storage is unavailable. Answer the current user request using only the current request and any explicitly needed available tools. "
             "Do not invent missing conversation history or durable memory. If a required tool/resource is also unavailable, say so in the result rather than pretending it was used.\n\n"
-            f"RESOURCE STATUS JSON:\n{json.dumps(resource_status, ensure_ascii=False)}\n\n"
-            f"CURRENT USER REQUEST:\n{message}"
+            + (f"N1 INGRESS GUIDANCE (does not replace the user's text):\n{ingress}\n\n" if ingress else "")
+            + f"RESOURCE STATUS JSON:\n{json.dumps(resource_status, ensure_ascii=False)}\n\n"
+            + f"CURRENT USER REQUEST:\n{message}"
         )
         if self.file_tools is not None:
             prompt = self.file_tools.instructions() + "\n\n" + prompt
-            reply = self._answer_with_tools(prompt)
+            reply = self._answer_with_tools(prompt, authoritative_request=message)
         else:
             reply = self.ollama.generate(prompt, think=False, temperature=0.2)
+            if self.n1_gatekeeper is not None and hasattr(self.n1_gatekeeper, "judge_final_answer"):
+                judgment = self.n1_gatekeeper.judge_final_answer(request=message, candidate=reply, context=json.dumps(resource_status, ensure_ascii=False))
+                if not judgment.get("processing_failed") and str(judgment.get("decision") or "").lower() == "retry":
+                    repair = str(judgment.get("retry_instruction") or "Repair the material defect N1 identified.")
+                    reply = self.ollama.generate(
+                        prompt + "\n\nN1 FINAL REVIEW:\n" + repair + "\n\nPRIOR CANDIDATE:\n" + reply + "\nReturn a revised user-facing answer only.",
+                        think=False, temperature=0.1,
+                    )
         if self.n1_gatekeeper is not None:
             reply = self.n1_gatekeeper.forward_to_user(reply)
         return {
@@ -1810,72 +1882,274 @@ class ConversationService:
         return {"thread_id": thread_id, "title": clean_title, "project_id": project_id}
 
     def _route(self, project_id: str, message: str, explicit_thread_id: str | None = None) -> RouteDecision:
+        """Decompose a mixed user turn into subject-bound thread projections.
+
+        N2 proposes the semantic split and thread placement. N1 reviews the proposal.
+        The original user text remains intact in messages.content; each thread receives
+        only its accepted projected_content through message_threads.
+        """
         candidates = self.store.list_threads(project_id, limit=self.candidate_threads)
+        candidate_by_id = {str(c["thread_id"]): c for c in candidates}
         if explicit_thread_id is not None:
             if not self.store.thread_exists(project_id, explicit_thread_id):
-                raise ValueError(f'Unknown thread_id: {explicit_thread_id}')
-            return RouteDecision((explicit_thread_id,), explicit_thread_id, 1.0)
-        if not candidates:
-            title = message.strip()[:80] or 'New thread'
-            new_id = self.store.create_thread(project_id, title)
-            return RouteDecision((new_id,), new_id, 1.0, created_thread=True)
-        routing_context = []
+                raise ValueError(f"Unknown thread_id: {explicit_thread_id}")
+            title = str(candidate_by_id.get(explicit_thread_id, {}).get("title") or "Explicit thread")
+            subject = SubjectAssignment(explicit_thread_id, title, message, 1.0, True)
+            return RouteDecision((explicit_thread_id,), explicit_thread_id, 1.0, subjects=(subject,))
+
+        routing_context: list[dict] = []
         for c in candidates:
-            recent = self.store.recent_messages(c['thread_id'], limit=4)
+            recent = self.store.recent_messages(c["thread_id"], limit=4)
             routing_context.append({
-                'thread_id': c['thread_id'],
-                'title': c['title'],
-                'summary': c['summary'],
-                'recent': [{'role': m['role'], 'content': m['content'][:800]} for m in recent]
+                "thread_id": c["thread_id"],
+                "title": c["title"],
+                "summary": c["summary"],
+                "recent": [{"role": m["role"], "content": m["content"][:800]} for m in recent],
             })
-        prompt = (
-            "Choose thread membership based on semantic relevance of title, summary, and recent content. "
-            "Do not use memory types. Return STRICT JSON object: "
-            '{"thread_ids":["..."],"primary_thread_id":"..."|null,"confidence":0.0,"clarification_question":"..."|null,"create_thread_title":"..."|null}\n'
-            f"Current message: {message}\n"
-            f"Context: {json.dumps(routing_context, ensure_ascii=False)}"
+
+        schema = {
+            "type": "object",
+            "properties": {
+                "subjects": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 12,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string", "maxLength": 120},
+                            "content": {"type": "string", "maxLength": 12000},
+                            "thread_id": {"type": ["string", "null"]},
+                            "match_confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                            "create_thread_title": {"type": ["string", "null"], "maxLength": 120},
+                            "primary": {"type": "boolean"},
+                        },
+                        "required": ["label", "content", "thread_id", "match_confidence", "create_thread_title", "primary"],
+                        "additionalProperties": False,
+                    },
+                },
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "clarification_question": {"type": ["string", "null"], "maxLength": 400},
+            },
+            "required": ["subjects", "confidence", "clarification_question"],
+            "additionalProperties": False,
+        }
+        base_prompt = (
+            "You are N2 performing subject decomposition for Norm's conversation router. Split the exact user turn only when it contains materially distinct subjects. "
+            "Do not split greetings, formatting requests, qualifiers, examples, or details that belong to the same subject. For every real subject, produce a self-contained projection containing only the user's material relevant to that subject. "
+            "Preserve the user's meaning, constraints, names, numbers, and requested actions; do not invent facts. Some necessary shared context may appear in more than one projection, but do not duplicate unrelated sidenotes. "
+            "Choose an existing thread only when its title/summary/recent content is genuinely the same subject. The configured existing-thread match threshold is "
+            f"{self.routing_threshold:.2f}. If the best existing match is below that threshold, set thread_id=null and provide a concise create_thread_title instead of contaminating a weakly related thread. "
+            "Mark exactly one subject primary: the subject that best represents the user's immediate main request. If the turn is genuinely ambiguous and cannot be safely separated or titled, provide a clarification_question. Return strict JSON only.\n\n"
+            f"EXACT USER TURN:\n{message}\n\n"
+            f"EXISTING THREAD CONTEXT:\n{json.dumps(routing_context, ensure_ascii=False)}"
         )
-        raw = self.ollama.generate(prompt, think=False, temperature=0.0)
-        parsed = self.ollama.parse_json(raw)
-        valid_ids = {c['thread_id'] for c in candidates}
-        selected = []
-        for tid in parsed.get('thread_ids', []):
-            if isinstance(tid, str) and tid in valid_ids and tid not in selected:
-                selected.append(tid)
-        primary = parsed.get('primary_thread_id')
-        if primary not in valid_ids:
-            primary = None
+        retry_feedback = ""
+        last_proposal: dict = {}
+        for attempt in range(2):
+            prompt = base_prompt
+            if retry_feedback:
+                prompt += "\n\nN1 ROUTING REVIEW FEEDBACK:\n" + retry_feedback + "\nReturn a corrected routing proposal only."
+            try:
+                parsed = self._structured_generate(
+                    prompt, schema, num_predict=3200, think=False, max_chars=48_000, emit_stream=False
+                )
+            except Exception as exc:
+                logging.exception("Subject routing proposal failed")
+                if attempt == 0:
+                    retry_feedback = f"The first proposal could not be parsed ({type(exc).__name__}). Use simpler valid JSON and preserve the exact user meaning."
+                    continue
+                return RouteDecision((), None, 0.0, clarification_question="I couldn't confidently separate this turn into subject threads. Should I keep it together or split it into separate subjects?")
+
+            raw_subjects = parsed.get("subjects") if isinstance(parsed, dict) else None
+            normalized: list[dict] = []
+            if isinstance(raw_subjects, list):
+                for item in raw_subjects:
+                    if not isinstance(item, dict):
+                        continue
+                    content = str(item.get("content") or "").strip()
+                    if not content:
+                        continue
+                    label = str(item.get("label") or "").strip()[:120] or content[:80]
+                    tid = str(item.get("thread_id") or "").strip() or None
+                    if tid not in candidate_by_id:
+                        tid = None
+                    try:
+                        confidence = max(0.0, min(1.0, float(item.get("match_confidence", 0.0))))
+                    except (TypeError, ValueError):
+                        confidence = 0.0
+                    create_title = str(item.get("create_thread_title") or "").strip()[:120] or None
+                    if tid is not None and confidence < self.routing_threshold:
+                        # Deterministic guard: a weak existing-thread match can never survive
+                        # N2's proposal, even if the model accidentally supplied one.
+                        tid = None
+                        create_title = create_title or label
+                    if tid is None and not create_title:
+                        create_title = label
+                    normalized.append({
+                        "label": label,
+                        "content": content,
+                        "thread_id": tid,
+                        "match_confidence": confidence,
+                        "create_thread_title": create_title,
+                        "primary": bool(item.get("primary")),
+                    })
+            if not normalized:
+                if parsed.get("clarification_question"):
+                    return RouteDecision((), None, 0.0, clarification_question=str(parsed.get("clarification_question"))[:400])
+                normalized = [{
+                    "label": message.strip()[:80] or "New subject",
+                    "content": message,
+                    "thread_id": None,
+                    "match_confidence": 0.0,
+                    "create_thread_title": message.strip()[:80] or "New subject",
+                    "primary": True,
+                }]
+            primary_indexes = [i for i, item in enumerate(normalized) if item["primary"]]
+            if len(primary_indexes) != 1:
+                for i, item in enumerate(normalized):
+                    item["primary"] = i == 0
+            try:
+                overall_confidence = max(0.0, min(1.0, float(parsed.get("confidence", 0.0))))
+            except (TypeError, ValueError):
+                overall_confidence = 0.0
+            proposal = {
+                "subjects": normalized,
+                "confidence": overall_confidence,
+                "clarification_question": parsed.get("clarification_question"),
+            }
+            last_proposal = proposal
+
+            if self.n1_gatekeeper is not None and hasattr(self.n1_gatekeeper, "judge_subject_routing"):
+                judgment = self.n1_gatekeeper.judge_subject_routing(
+                    request=message,
+                    proposal=proposal,
+                    routing_context=routing_context,
+                    threshold=self.routing_threshold,
+                )
+                if bool(judgment.get("processing_failed")):
+                    if attempt == 0:
+                        retry_feedback = (
+                            "N1 could not process the routing proposal. Simplify the JSON structure and wording without changing the semantic split or inventing content."
+                        )
+                        continue
+                    return RouteDecision((), None, overall_confidence, clarification_question="I couldn't confidently validate the subject split. Should I keep this turn together or split it into separate subjects?")
+                if str(judgment.get("decision") or "retry").lower() == "retry":
+                    if attempt == 0:
+                        retry_feedback = str(judgment.get("retry_instruction") or judgment.get("reason") or "Repair the subject split and thread placement.")
+                        continue
+                    return RouteDecision((), None, overall_confidence, clarification_question="I couldn't confidently place every part of this mixed turn. Should I keep it together or split it into separate subjects?")
+
+            # N1 accepted the proposal. Create new subject threads only now, so rejected
+            # routing attempts never leave orphan threads behind.
+            assignments: list[SubjectAssignment] = []
+            created_any = False
+            created_by_title: dict[str, str] = {}
+            for item in normalized:
+                tid = item["thread_id"]
+                confidence = float(item["match_confidence"])
+                if tid is None:
+                    title = str(item.get("create_thread_title") or item["label"] or "New subject").strip()[:120] or "New subject"
+                    title_key = title.casefold()
+                    tid = created_by_title.get(title_key)
+                    if tid is None:
+                        tid = self.store.create_thread(project_id, title)
+                        created_by_title[title_key] = tid
+                        created_any = True
+                    # Placement in a newly-created subject thread is not a weak reuse of an
+                    # old thread; it is the safe outcome for a sub-threshold existing match.
+                    confidence = max(confidence, self.routing_threshold)
+                assignments.append(SubjectAssignment(
+                    str(tid), str(item["label"]), str(item["content"]), confidence, bool(item["primary"])
+                ))
+
+            # If multiple subject projections intentionally land on the same thread, keep
+            # one thread membership while preserving both projections in RouteDecision.
+            thread_ids = tuple(dict.fromkeys(a.thread_id for a in assignments))
+            primary_assignment = next((a for a in assignments if a.primary), assignments[0])
+            return RouteDecision(
+                thread_ids,
+                primary_assignment.thread_id,
+                max(overall_confidence, self.routing_threshold if created_any else 0.0),
+                created_thread=created_any,
+                subjects=tuple(assignments),
+            )
+
+        # Defensive fallback; normal flow returns from the bounded loop above.
+        logging.warning("Subject routing exhausted without return proposal=%s", redact(last_proposal))
+        return RouteDecision((), None, 0.0, clarification_question="Which subject thread should I use for this request?")
+
+    def _project_assistant_reply(self, reply: str, route: RouteDecision) -> dict[str, str]:
+        """Project an accepted assistant reply back into the same subject threads.
+
+        The model may select only verbatim excerpts from the final reply. This makes
+        projection fail-closed against invented thread history. If projection fails,
+        only the primary thread receives the full reply; side threads keep their user
+        projection rather than being contaminated by unrelated answer text.
+        """
+        if not route.subjects or len(route.thread_ids) <= 1:
+            return {str(route.primary_thread_id): reply} if route.primary_thread_id else {}
+        schema = {
+            "type": "object",
+            "properties": {
+                "projections": {
+                    "type": "array",
+                    "maxItems": len(route.thread_ids),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "thread_id": {"type": "string"},
+                            "excerpts": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 8000}},
+                        },
+                        "required": ["thread_id", "excerpts"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["projections"],
+            "additionalProperties": False,
+        }
+        subject_view = [
+            {"thread_id": a.thread_id, "label": a.label, "user_projection": a.content}
+            for a in route.subjects
+        ]
+        prompt = (
+            "Project the already-approved assistant reply into its subject threads. For each thread, select only exact verbatim excerpts from the assistant reply that materially belong to that thread's subject. "
+            "Do not paraphrase, summarize, invent, or copy unrelated answer material. It is valid to return an empty excerpts array when the assistant did not address that subject. Return strict JSON only.\n\n"
+            f"SUBJECT THREADS:\n{json.dumps(subject_view, ensure_ascii=False)}\n\n"
+            f"APPROVED ASSISTANT REPLY:\n{reply}"
+        )
         try:
-            confidence = float(parsed.get('confidence', 0.0))
-        except (ValueError, TypeError):
-            confidence = 0.0
-        confidence = max(0.0, min(1.0, confidence))
-        create_title = parsed.get('create_thread_title')
-        if isinstance(create_title, str) and create_title.strip():
-            new_id = self.store.create_thread(project_id, create_title.strip()[:120])
-            if new_id not in selected:
-                selected.insert(0, new_id)
-            primary = new_id
-            return RouteDecision(tuple(selected), primary, max(confidence, 0.75), created_thread=True)
-        if primary is None and selected:
-            primary = selected[0]
-        if not selected and confidence >= self.routing_threshold:
-            primary = candidates[0]['thread_id']
-            selected = [primary]
-        if confidence < self.routing_threshold:
-            q = parsed.get('clarification_question')
-            if not q or not str(q).strip():
-                q = 'Which existing thread should I attach this to, or should I start a new one?'
-            return RouteDecision(tuple(selected), primary, confidence, clarification_question=q)
-        if not primary:
-            title = message.strip()[:80] or 'New thread'
-            new_id = self.store.create_thread(project_id, title)
-            return RouteDecision((new_id,), new_id, 1.0, created_thread=True)
-        return RouteDecision(tuple(selected or [primary]), primary, confidence)
+            parsed = self._structured_generate(
+                prompt, schema, num_predict=2600, think=False, max_chars=48_000, emit_stream=False
+            )
+            valid = set(route.thread_ids)
+            projections: dict[str, list[str]] = {}
+            for item in list(parsed.get("projections") or []):
+                if not isinstance(item, dict):
+                    continue
+                tid = str(item.get("thread_id") or "")
+                if tid not in valid:
+                    continue
+                for excerpt in list(item.get("excerpts") or []):
+                    text = str(excerpt or "").strip()
+                    if text and text in reply:
+                        projections.setdefault(tid, []).append(text)
+            out = {
+                tid: "\n\n".join(dict.fromkeys(parts))
+                for tid, parts in projections.items() if parts
+            }
+            if route.primary_thread_id and route.primary_thread_id not in out:
+                out[route.primary_thread_id] = reply
+            return out
+        except Exception:
+            logging.exception("Assistant subject projection failed; preserving full reply only in primary thread")
+            return {str(route.primary_thread_id): reply} if route.primary_thread_id else {}
 
     def _answer_prompt(
         self, project_id: str, thread_ids: list[str], message: str, *,
         original_user_message: str | None = None, current_task_context: list[str] | None = None,
+        n1_ingress_guidance: str = "",
     ) -> tuple[str, dict]:
         resource_status = full_context_status()
         branches = []
@@ -1929,6 +2203,7 @@ class ConversationService:
         parts = [
             f"Persistent operating principles:\n{self._persistent_instruction_text()}",
             "Answer the user directly. Use the supplied branch context and durable memory only when relevant. Use stable user-language memory to interpret recurring shorthand, terminology, intended meanings, tone, and prose preferences, and match those preferences naturally when appropriate without copying obvious typos or one-off emotional spikes. Do not mention routing, memory machinery, database storage, or hidden context. If stored context conflicts with the current user message, prefer the current user message.",
+            ("N1 ingress guidance (advisory; never replaces or weakens the exact user request): " + str(n1_ingress_guidance).strip()) if str(n1_ingress_guidance).strip() else "N1 ingress guidance: none; follow the exact user request.",
             f"Resource status JSON: {json.dumps(resource_status, ensure_ascii=False)}",
             f"Project: {project_id}",
             f"Selected branches: {json.dumps(branches, ensure_ascii=False)}",
@@ -1947,11 +2222,14 @@ class ConversationService:
             parts.insert(1, self.file_tools.instructions())
         return "\n".join(parts), resource_status
 
-    def _answer_with_tools(self, prompt: str) -> str:
+    def _answer_with_tools(self, prompt: str, *, authoritative_request: str = "") -> str:
         if self.file_tools is None:
             return self.ollama.generate(prompt, think=False, temperature=0.35)
         history: list[dict] = []
         gate_task_id = f"direct-{uuid.uuid4()}"
+        n1_final_feedback = ""
+        n1_prior_candidate = ""
+        n1_processing_failures = 0
         for round_index in range(self.max_tool_rounds):
             working_prompt = prompt
             if self.n1_gatekeeper is not None:
@@ -1962,6 +2240,12 @@ class ConversationService:
                     + json.dumps(history, ensure_ascii=False)
                     + "\nContinue the task. Call more tools with strict JSON or answer the user normally."
                 )
+            if n1_final_feedback:
+                working_prompt += (
+                    "\n\nN1 FINAL REVIEW FEEDBACK:\n" + n1_final_feedback
+                    + "\n\nPRIOR USER-FACING CANDIDATE:\n" + n1_prior_candidate
+                    + "\nReturn a revised candidate. Preserve completed evidence; use tools only if the review identifies a genuine unresolved material need."
+                )
             raw = self.ollama.generate(working_prompt, think=False, temperature=0.2)
             calls = self._parse_tool_calls(raw)
             if calls is None:
@@ -1969,6 +2253,29 @@ class ConversationService:
                     self.n1_gatekeeper.observe_n2_turn(
                         task_id=gate_task_id, step_id="direct", content=raw, thinking="", calls=[]
                     )
+                if self.n1_gatekeeper is not None and authoritative_request and hasattr(self.n1_gatekeeper, "judge_final_answer"):
+                    judgment = self.n1_gatekeeper.judge_final_answer(
+                        request=authoritative_request, candidate=raw, context=json.dumps(history, ensure_ascii=False, default=str)[:36000]
+                    )
+                    if bool(judgment.get("processing_failed")):
+                        n1_processing_failures += 1
+                        if n1_processing_failures >= 2:
+                            if hasattr(self.n1_gatekeeper, "record_final_review_failure_pass"):
+                                self.n1_gatekeeper.record_final_review_failure_pass()
+                            logging.warning("N1 direct final review failed twice; passing N2 candidate gate_task=%s", gate_task_id)
+                            return raw
+                        n1_final_feedback = (
+                            "N1 could not process your submission. Check the formatting, structure, wording, nesting, and unnecessary complexity. "
+                            "Repair anything that may make the result difficult to review, preserve the same semantic work, and resubmit. "
+                            "Do not add new research or hunt for omissions merely because N1 failed to process it."
+                        )
+                        n1_prior_candidate = raw
+                        continue
+                    n1_processing_failures = 0
+                    if str(judgment.get("decision") or "").lower() == "retry":
+                        n1_final_feedback = str(judgment.get("retry_instruction") or judgment.get("reason") or "Repair the material defect N1 identified.")
+                        n1_prior_candidate = raw
+                        continue
                 return raw
             turn_reset = ""
             if self.n1_gatekeeper is not None:

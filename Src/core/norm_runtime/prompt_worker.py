@@ -16,6 +16,7 @@ import psycopg
 import redis
 
 from .history_maintenance import DeepHistoryMaintainer
+from .maintenance_model_client import MaintenanceModelClient
 from .temp_cleanup import cleanup_task_temp, cleanup_temp_root
 from .models import StepResult, StepStatus, TaskPlan, TaskStep
 from .ollama_client import ModelGenerationCancelled, ModelOutputTruncated, OllamaClient
@@ -526,8 +527,9 @@ class PromptWorker:
         deep = mode == "deep"
         recent_only = mode == "regular"
         try:
+            condense_client = self._maintenance_condense_client(memory_cfg)
             maintainer = DeepHistoryMaintainer(
-                self.durable, self.client, runtime_root=self._runtime_root(), config=memory_cfg,
+                self.durable, condense_client, runtime_root=self._runtime_root(), config=memory_cfg,
                 queue=self.queue, drain_event=self._drain, n1_gatekeeper=self.n1_gatekeeper,
             )
             recovery_cleanup = (
@@ -1175,15 +1177,148 @@ class PromptWorker:
             raise VerifierProtocolError("final candidate repair returned blank user_reply")
         return corrected.strip()
 
+    def _repair_final_reviewability(self, job: PromptJob, candidate: dict) -> str:
+        """Ask N2 to make the same answer easier for N1 to process after a review failure."""
+        prompt = (
+            "N1 could not process your final submission. Check the formatting, structure, wording, nesting, and unnecessary complexity. "
+            "Repair anything that may make the result difficult to review, then resubmit the SAME semantic work. "
+            "Do not add new research, do not rerun tools, do not hunt for omissions merely because N1 failed to process it, and do not invent actions. "
+            "Return only the replacement user-facing reply.\n\n"
+            f"AUTHORITATIVE PRIMARY TASK REQUEST (for semantic fidelity only):\n{(job.metadata or {}).get('task_user_prompt') or (job.metadata or {}).get('original_user_prompt','')}\n\n"
+            f"SUBMISSION N1 COULD NOT PROCESS:\n{candidate.get('user_reply','')}"
+        )
+        corrected = self._generate_complete_text(prompt, think=False, num_predict=16000, temperature=0.0)
+        if not corrected.strip():
+            raise VerifierProtocolError("N1-processing-failure repair returned blank user_reply")
+        return corrected.strip()
+
+    def _n1_final_verification(self, job: PromptJob, candidate: dict, artifact_state: bool) -> tuple[dict | None, bool]:
+        gate = self.n1_gatekeeper
+        if gate is None or not hasattr(gate, "judge_final_answer"):
+            return None, False
+        prior = ""
+        if self.durable and hasattr(self.durable, "completed_step_context"):
+            prior = self.durable.completed_step_context(job.task_id, job.step_id, max_chars=36000)
+        envelope_context = {
+            "command": candidate.get("command"),
+            "requirements": candidate.get("requirements"),
+            "artifacts": candidate.get("artifacts"),
+            "evidence_count": candidate.get("evidence_count"),
+            "resource_status": candidate.get("resource_status"),
+        }
+        judgment = gate.judge_final_answer(
+            request=str((job.metadata or {}).get("task_user_prompt") or (job.metadata or {}).get("original_user_prompt") or ""),
+            candidate=str(candidate.get("user_reply") or ""),
+            context=(prior + "\n\nFINAL ENVELOPE METADATA:\n" + json.dumps(envelope_context, ensure_ascii=False, default=str)).strip(),
+        )
+        if bool(judgment.get("processing_failed")):
+            return judgment, True
+        decision = str(judgment.get("decision") or "retry").strip().lower()
+        if decision == "accept":
+            if not artifact_state:
+                return {
+                    "schema_version": PROTOCOL_VERSION, "kind": "final_verification", "verdict": "revise",
+                    "schema_complete": True, "requirements_complete": True, "artifact_verified": False,
+                    "issues": ["Required artifact is missing deterministic write/read verification."],
+                    "repair_scope": "artifact",
+                    "n1_reason": str(judgment.get("reason") or ""),
+                }, False
+            return {
+                "schema_version": PROTOCOL_VERSION, "kind": "final_verification", "verdict": "accept",
+                "schema_complete": True, "requirements_complete": True, "artifact_verified": True,
+                "issues": [], "repair_scope": "none",
+                "n1_reason": str(judgment.get("reason") or ""),
+            }, False
+        issue = str(judgment.get("retry_instruction") or judgment.get("reason") or "N1 requested a revised final answer.").strip()
+        return {
+            "schema_version": PROTOCOL_VERSION, "kind": "final_verification", "verdict": "revise",
+            "schema_complete": True, "requirements_complete": False, "artifact_verified": bool(artifact_state),
+            "issues": [issue[:600]], "repair_scope": "response",
+            "n1_reason": str(judgment.get("reason") or ""),
+        }, False
+
     def _process_final_verification(self, redis_id: str, job: PromptJob, name: str, started) -> None:
         try:
             candidate = validate_final_candidate(json.loads(job.prompt))
         except (json.JSONDecodeError, ValueError) as exc:
             raise VerifierProtocolError(f"queued final candidate failed deterministic schema validation: {exc}") from exc
         artifact_state = self._final_artifact_state(candidate)
-        verification = self._structured_verifier_result(
-            self._final_verification_prompt(job, candidate, artifact_state)
-        )
+        n1_result, n1_processing_failed = self._n1_final_verification(job, candidate, artifact_state)
+        if n1_result is None:
+            verification = self._structured_verifier_result(
+                self._final_verification_prompt(job, candidate, artifact_state)
+            )
+            n1_processing_failed = False
+        elif n1_processing_failed:
+            verification = None
+        else:
+            # Remove N1-only explanatory metadata before strict protocol validation/checkpointing.
+            verification = validate_final_verification({
+                k: v for k, v in n1_result.items() if k in {
+                    "schema_version", "kind", "verdict", "schema_complete",
+                    "requirements_complete", "artifact_verified", "issues", "repair_scope",
+                }
+            })
+
+        metadata = dict(job.metadata or {})
+        if n1_processing_failed:
+            failures = max(0, int(metadata.get("n1_processing_failures", 0))) + 1
+            if failures >= 2:
+                if not artifact_state:
+                    raise VerifierProtocolError("N1 final review failed twice and required artifact verification is not satisfied; review-failure pass cannot override deterministic artifact safety.")
+                gate = self.n1_gatekeeper
+                if gate is not None and hasattr(gate, "record_final_review_failure_pass"):
+                    gate.record_final_review_failure_pass()
+                summary = json.dumps({
+                    "schema_version": PROTOCOL_VERSION, "kind": "final_verification", "verdict": "accept",
+                    "schema_complete": True, "requirements_complete": True, "artifact_verified": True,
+                    "issues": [], "repair_scope": "none",
+                    "n1_review_status": "unavailable_after_2_processing_attempts",
+                }, ensure_ascii=False)
+                result = StepResult(
+                    task_id=job.task_id, step_id=job.step_id, name=name, status=StepStatus.COMPLETED,
+                    summary=summary, verification="n1-final-review:failure-pass",
+                    started_at=started, completed_at=_utc_now(),
+                )
+                if self.durable:
+                    self.durable.checkpoint_step(result)
+                    if not self.durable.all_steps_completed(job.task_id):
+                        raise RuntimeError("N1 review-failure pass reached before all planned steps completed")
+                    self.durable.finalize_task(job.task_id, candidate["user_reply"], "completed")
+                    if not self.durable.terminal_summary_verified(job.task_id):
+                        raise RuntimeError("durable terminal summary verification failed")
+                self.live.step_completed(job.task_id, job.step_id, summary, result.verification)
+                self.live.finish(job.task_id, candidate["user_reply"])
+                self._clear_terminal_redis(job.task_id)
+                logging.warning("N1 final review failed twice; passed structurally valid N2 candidate task=%s", job.task_id)
+                return
+
+            candidate["user_reply"] = self._repair_final_reviewability(job, candidate)
+            candidate = validate_final_candidate(candidate)
+            metadata["n1_processing_failures"] = failures
+            metadata["last_n1_processing_failure"] = str((n1_result or {}).get("reason") or "N1 could not process final candidate")
+            job.metadata = metadata
+            job.prompt = json.dumps(candidate, ensure_ascii=False)
+            job.created_at = __import__("time").time()
+            retry_summary = json.dumps({
+                "schema_version": PROTOCOL_VERSION, "kind": "n1_final_review_processing_retry",
+                "processing_failure": failures, "next_review_try": failures + 1,
+                "instruction": "Check formatting, structure, wording, nesting, and unnecessary complexity; preserve the same semantic work.",
+            }, ensure_ascii=False)
+            if self.durable:
+                self.durable.checkpoint_step(StepResult(
+                    task_id=job.task_id, step_id=job.step_id, name=name, status=StepStatus.RUNNING,
+                    summary=retry_summary, verification="n1-final-review:processing-retry",
+                    started_at=started, completed_at=_utc_now(),
+                ))
+            self.queue.ack(redis_id)
+            self.queue.enqueue(job)
+            logging.warning("N1 final review processing failure; N2 reviewability repair queued task=%s failure=%s/2", job.task_id, failures)
+            return
+
+        # A successful N1 review resets the processing-failure streak for this candidate cycle.
+        metadata["n1_processing_failures"] = 0
+        job.metadata = metadata
         if verification["verdict"] == "accept" and not artifact_state:
             verification = {
                 "schema_version": PROTOCOL_VERSION, "kind": "final_verification", "verdict": "revise",
@@ -1196,7 +1331,7 @@ class PromptWorker:
             summary = json.dumps(verification, ensure_ascii=False)
             result = StepResult(
                 task_id=job.task_id, step_id=job.step_id, name=name, status=StepStatus.COMPLETED,
-                summary=summary, verification="structured-final-verification:accepted",
+                summary=summary, verification="n1-final-review:accepted" if self.n1_gatekeeper is not None else "structured-final-verification:accepted",
                 started_at=started, completed_at=_utc_now(),
             )
             if self.durable:
@@ -1209,10 +1344,10 @@ class PromptWorker:
             self.live.step_completed(job.task_id, job.step_id, summary, result.verification)
             self.live.finish(job.task_id, candidate["user_reply"])
             self._clear_terminal_redis(job.task_id)
-            logging.info("Structured final verification accepted task=%s cycle=%s", job.task_id, cycle)
+            logging.info("N1 final verification accepted task=%s cycle=%s", job.task_id, cycle)
             return
         if cycle >= 3:
-            raise VerifierProtocolError("final candidate remained rejected after three structured verification cycles: " + "; ".join(verification["issues"]))
+            raise VerifierProtocolError("final candidate remained rejected after three N1 verification cycles: " + "; ".join(verification["issues"]))
         if verification["repair_scope"] not in {"response", "requirements"}:
             raise VerifierProtocolError("final verification found a non-text repair requirement: " + "; ".join(verification["issues"]))
         candidate["user_reply"] = self._repair_final_reply(job, candidate, verification)
@@ -1230,12 +1365,12 @@ class PromptWorker:
         if self.durable:
             self.durable.checkpoint_step(StepResult(
                 task_id=job.task_id, step_id=job.step_id, name=name, status=StepStatus.RUNNING,
-                summary=retry_summary, verification="structured-final-verification:revise",
+                summary=retry_summary, verification="n1-final-review:revise" if self.n1_gatekeeper is not None else "structured-final-verification:revise",
                 started_at=started, completed_at=_utc_now(),
             ))
         self.queue.ack(redis_id)
         self.queue.enqueue(job)
-        logging.info("Requeued repaired final candidate task=%s cycle=%s", job.task_id, cycle + 1)
+        logging.info("Requeued N1-rejected final candidate task=%s cycle=%s", job.task_id, cycle + 1)
 
     @staticmethod
     def _is_literal_request(text: str) -> bool:
@@ -1561,6 +1696,23 @@ class PromptWorker:
         from runtime_bootstrap import load_config
 
         return dict(load_config(self._runtime_root()).get("memory", {}) or {})
+
+    def _maintenance_condense_client(self, memory_cfg: dict) -> MaintenanceModelClient:
+        """Build the per-pass condensation client from freshly loaded settings.
+
+        Blank model fields intentionally resolve to Norm. The wrapper permits one
+        configured backup model and always retains Norm as the final fallback.
+        """
+        primary = str(memory_cfg.get("condensation_model") or "").strip()
+        backup = str(memory_cfg.get("condensation_backup_model") or "").strip()
+        client = MaintenanceModelClient(
+            self.client, primary_model=primary, backup_model=backup, norm_model="norm"
+        )
+        logging.info(
+            "Maintenance condensation model chain=%s configured_primary=%r configured_backup=%r",
+            " -> ".join(client.model_chain), primary, backup,
+        )
+        return client
 
     def _runtime_config(self) -> dict:
         cached = getattr(self, "_slice_config", None)
@@ -3658,8 +3810,9 @@ class PromptWorker:
             purge = {"files_removed": 0, "bytes_removed": 0, "skipped": "disabled"}
             if bool(maint_cfg.get("weekly_cleanup_purge_image_analysis", True)):
                 purge = self._purge_image_analysis_outputs()
+            condense_client = self._maintenance_condense_client(memory_cfg)
             maintainer = DeepHistoryMaintainer(
-                self.durable, self.client, runtime_root=self._runtime_root(), config=memory_cfg,
+                self.durable, condense_client, runtime_root=self._runtime_root(), config=memory_cfg,
                 queue=self.queue, drain_event=self._drain, n1_gatekeeper=self.n1_gatekeeper,
             )
             marker["phase"] = "recovery_state_cleanup"

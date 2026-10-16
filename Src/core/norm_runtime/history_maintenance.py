@@ -77,6 +77,11 @@ class DeepHistoryMaintainer:
         judgments: list[dict] = []
         current_prompt = prompt
         resume = response_so_far
+        reviewability_instruction = (
+            "N1 could not process your submission. Check the formatting, structure, wording, nesting, and unnecessary complexity. "
+            "Repair anything that may make the result difficult to review, preserve the same semantic work, and resubmit plain text only. "
+            "Do not add new research or hunt for omissions merely because N1 failed to process it."
+        )
         for attempt in range(1, max_attempts + 1):
             candidate = self.client.generate_complete_text(
                 current_prompt, think=False, temperature=0.0, num_predict=num_predict, max_segments=2,
@@ -89,7 +94,35 @@ class DeepHistoryMaintainer:
                 mode=mode, source_text=source_text, candidate=candidate, attempt=attempt,
                 max_attempts=max_attempts, ideal_chars=ideal_chars, acceptable_chars=acceptable_chars,
             )
-            judgments.append({"attempt": attempt, "chars": len(candidate), **judgment})
+            judgments.append({"attempt": attempt, "review_try": 1, "chars": len(candidate), **judgment})
+            if bool(judgment.get("processing_failed")):
+                cleanup_prompt = (
+                    reviewability_instruction
+                    + f"\n\nIDEAL SIZE <= {ideal_chars} characters; practical ceiling <= {acceptable_chars}."
+                    + "\n\nSOURCE EXCERPT (for semantic fidelity only):\n" + source_text[:18000]
+                    + "\n\nSUBMISSION N1 COULD NOT PROCESS:\n" + candidate
+                )
+                repaired = self.client.generate_complete_text(
+                    cleanup_prompt, think=False, temperature=0.0, num_predict=num_predict, max_segments=2
+                ).strip()
+                if repaired:
+                    candidate = repaired
+                    candidates.append(candidate)
+                judgment = self._n1_judge(
+                    mode=mode, source_text=source_text, candidate=candidate, attempt=attempt,
+                    max_attempts=max_attempts, ideal_chars=ideal_chars, acceptable_chars=acceptable_chars,
+                )
+                judgments.append({"attempt": attempt, "review_try": 2, "chars": len(candidate), **judgment})
+                if bool(judgment.get("processing_failed")):
+                    gate = self.n1_gatekeeper
+                    if gate is not None and hasattr(gate, "record_maintenance_review_failure_pass"):
+                        gate.record_maintenance_review_failure_pass()
+                    judgments[-1]["review_failure_pass"] = True
+                    logging.warning(
+                        "N1 could not process maintenance candidate twice; accepting reductive N2 candidate by review-failure pass attempt=%s chars=%s",
+                        attempt, len(candidate),
+                    )
+                    return candidate, judgments
             if str(judgment.get("decision") or "").lower() == "accept":
                 return candidate, judgments
             instruction = str(judgment.get("retry_instruction") or "Compress further while preserving important state.").strip()
@@ -487,6 +520,12 @@ class DeepHistoryMaintainer:
         best_safe_keep: tuple[int, dict] | None = None
         accepted = False
         current_prompt = prompt
+        source_for_judge = json.dumps({"attempts": payload, "newer": newer}, ensure_ascii=False, default=str)
+        reviewability_instruction = (
+            "N1 could not process your submission. Check the formatting, structure, wording, nesting, and unnecessary complexity. "
+            "Repair anything that may make the record difficult to review, preserve the same semantic work, and resubmit structured JSON only. "
+            "Do not add new research or hunt for omissions merely because N1 failed to process it."
+        )
         for attempt in range(1, max_attempts + 1):
             try:
                 raw = self.client.generate(current_prompt, think=False, temperature=0.0, num_predict=1800, response_format=schema)
@@ -504,11 +543,65 @@ class DeepHistoryMaintainer:
                     best_safe_keep = (score, parsed)
                 judgment = self._n1_judge(
                     mode="destructive" if destructive else "reductive",
-                    source_text=json.dumps({"attempts": payload, "newer": newer}, ensure_ascii=False, default=str),
-                    candidate=candidate_text, attempt=attempt, max_attempts=max_attempts,
-                    ideal_chars=ideal_chars, acceptable_chars=acceptable_chars,
-                    proposed_disposition=disposition,
+                    source_text=source_for_judge, candidate=candidate_text, attempt=attempt, max_attempts=max_attempts,
+                    ideal_chars=ideal_chars, acceptable_chars=acceptable_chars, proposed_disposition=disposition,
                 )
+                if bool(judgment.get("processing_failed")):
+                    repair_prompt = (
+                        prompt
+                        + "\n\nN1 PROCESSING FAILURE - REVIEWABILITY REPAIR ONLY:\n"
+                        + reviewability_instruction
+                        + "\n\nSUBMISSION N1 COULD NOT PROCESS:\n"
+                        + candidate_text
+                    )
+                    repaired_raw = self.client.generate(
+                        repair_prompt, think=False, temperature=0.0, num_predict=1800, response_format=schema
+                    )
+                    repaired = self.client.parse_json(repaired_raw)
+                    repaired_disposition = str(repaired.get("disposition") or "keep").strip().lower() if destructive else "keep"
+                    if repaired_disposition not in {"keep", "destroy"}:
+                        raise ValueError("invalid destructive disposition after reviewability repair")
+                    if repaired_disposition == "keep" and not all(str(repaired.get(k) or "").strip() for k in ("outcome", "lessons", "future_note")):
+                        raise ValueError("reviewability repair contained blank required fields")
+                    parsed = repaired
+                    disposition = repaired_disposition
+                    candidate_text = json.dumps(parsed, ensure_ascii=False, sort_keys=True)
+                    score = len(candidate_text)
+                    if best is None or score < best[0]:
+                        best = (score, parsed)
+                    if disposition == "keep" and (best_safe_keep is None or score < best_safe_keep[0]):
+                        best_safe_keep = (score, parsed)
+                    judgment = self._n1_judge(
+                        mode="destructive" if destructive else "reductive",
+                        source_text=source_for_judge, candidate=candidate_text, attempt=attempt, max_attempts=max_attempts,
+                        ideal_chars=ideal_chars, acceptable_chars=acceptable_chars, proposed_disposition=disposition,
+                    )
+                    if bool(judgment.get("processing_failed")):
+                        gate = self.n1_gatekeeper
+                        if gate is not None and hasattr(gate, "record_maintenance_review_failure_pass"):
+                            gate.record_maintenance_review_failure_pass()
+                        if destructive and disposition == "destroy":
+                            logging.warning(
+                                "N1 could not process destructive discard twice; destruction not authorized primary_task_id=%s",
+                                primary["task_id"],
+                            )
+                            if best_safe_keep is not None:
+                                best = best_safe_keep
+                                break
+                            current_prompt = (
+                                prompt
+                                + "\n\nN1 could not review the proposed destruction twice, so destruction is not authorized. "
+                                "Return disposition='keep' and preserve/reduce this material into a reviewable durable record.\n\n"
+                                + candidate_text
+                            )
+                            continue
+                        logging.warning(
+                            "N1 could not process compact-history candidate twice; accepting safe keep candidate by review-failure pass primary_task_id=%s",
+                            primary["task_id"],
+                        )
+                        best = (score, parsed)
+                        accepted = True
+                        break
                 if str(judgment.get("decision") or "").lower() == "accept":
                     best = (score, parsed)
                     accepted = True

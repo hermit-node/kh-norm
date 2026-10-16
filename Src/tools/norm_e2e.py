@@ -171,7 +171,7 @@ def runtime_config() -> dict:
         "postgres": {"schema": "norm_runtime"},
         "heartbeat_seconds": 5,
         "memory": {
-            "routing_threshold": 0.58,
+            "routing_threshold": 0.68,
             "candidate_threads": 4,
             "recent_messages": 4,
             "background_context_chars": 4000,

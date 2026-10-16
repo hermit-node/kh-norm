@@ -50,8 +50,12 @@ class ConversationStore:
                 message_id text NOT NULL REFERENCES {}.messages(message_id) ON DELETE CASCADE,
                 thread_id text NOT NULL REFERENCES {}.threads(thread_id) ON DELETE CASCADE,
                 is_primary boolean NOT NULL DEFAULT false, relevance double precision NOT NULL DEFAULT 1.0,
+                projected_content text,
                 PRIMARY KEY (message_id, thread_id)
             )""").format(s, s, s))
+            cur.execute(sql.SQL(
+                "ALTER TABLE {}.message_threads ADD COLUMN IF NOT EXISTS projected_content text"
+            ).format(s))
             cur.execute(sql.SQL("""CREATE TABLE IF NOT EXISTS {}.thread_summaries (
                 summary_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 thread_id text NOT NULL REFERENCES {}.threads(thread_id) ON DELETE CASCADE,
@@ -144,20 +148,31 @@ class ConversationStore:
                 sql.Identifier(self.schema), sql.Identifier(self.schema)), (project_id, limit))
             return [{"thread_id":r[0],"title":r[1],"parent_thread_id":r[2],"updated_at":r[3].isoformat(),"summary":r[4] or ""} for r in cur.fetchall()]
 
-    def add_message(self, role: str, content: str, thread_ids: list[str], primary_thread_id: str) -> str:
+    def add_message(
+        self,
+        role: str,
+        content: str,
+        thread_ids: list[str],
+        primary_thread_id: str,
+        *,
+        thread_projections: dict[str, str] | None = None,
+    ) -> str:
         message_id = str(uuid.uuid4())
+        projections = {str(k): str(v) for k, v in dict(thread_projections or {}).items() if str(v).strip()}
         with self._connect() as conn, conn.cursor() as cur:
             s = sql.Identifier(self.schema)
             cur.execute(sql.SQL("INSERT INTO {}.messages(message_id,role,content) VALUES (%s,%s,%s)").format(s), (message_id, role, content))
             for thread_id in dict.fromkeys(thread_ids):
-                cur.execute(sql.SQL("INSERT INTO {}.message_threads(message_id,thread_id,is_primary) VALUES (%s,%s,%s)").format(s),
-                    (message_id, thread_id, thread_id == primary_thread_id))
+                projected = projections.get(thread_id)
+                cur.execute(sql.SQL(
+                    "INSERT INTO {}.message_threads(message_id,thread_id,is_primary,projected_content) VALUES (%s,%s,%s,%s)"
+                ).format(s), (message_id, thread_id, thread_id == primary_thread_id, projected))
                 cur.execute(sql.SQL("UPDATE {}.threads SET updated_at=now() WHERE thread_id=%s").format(s), (thread_id,))
         return message_id
 
     def recent_messages(self, thread_id: str, limit: int = 12) -> list[dict]:
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(sql.SQL("""SELECT m.message_id,m.role,m.content,m.created_at FROM {}.messages m
+            cur.execute(sql.SQL("""SELECT m.message_id,m.role,COALESCE(mt.projected_content,m.content),m.created_at FROM {}.messages m
                 JOIN {}.message_threads mt ON mt.message_id=m.message_id WHERE mt.thread_id=%s
                 ORDER BY m.created_at DESC LIMIT %s""").format(sql.Identifier(self.schema), sql.Identifier(self.schema)), (thread_id, limit))
             rows = cur.fetchall()[::-1]
@@ -214,9 +229,8 @@ class ConversationStore:
             if through_message_id:
                 cur.execute(sql.SQL(
                     "SELECT m.created_at,m.message_id FROM {}.messages m "
-                    "JOIN {}.message_threads mt ON mt.message_id=m.message_id "
-                    "WHERE mt.thread_id=%s AND m.message_id=%s LIMIT 1"
-                ).format(s, s), (thread_id, through_message_id))
+                    "WHERE m.message_id=%s LIMIT 1"
+                ).format(s), (through_message_id,))
                 upper = cur.fetchone()
 
             clauses = [sql.SQL("mt.thread_id=%s")]
@@ -228,7 +242,7 @@ class ConversationStore:
                 clauses.append(sql.SQL("(m.created_at,m.message_id) <= (%s,%s)"))
                 params.extend([upper[0], upper[1]])
             statement = sql.SQL(
-                "SELECT m.message_id,m.role,m.content,m.created_at FROM {}.messages m "
+                "SELECT m.message_id,m.role,COALESCE(mt.projected_content,m.content),m.created_at FROM {}.messages m "
                 "JOIN {}.message_threads mt ON mt.message_id=m.message_id WHERE "
             ).format(s, s) + sql.SQL(" AND ").join(clauses) + sql.SQL(
                 " ORDER BY m.created_at,m.message_id"

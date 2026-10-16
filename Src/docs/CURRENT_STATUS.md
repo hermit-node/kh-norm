@@ -1,6 +1,6 @@
 # Norm current status
 
-Current package: **Norm 0.53.22b** with **Installer 1.6.10-unified**.
+Current package: **Norm 0.54.0 Beta** with **Installer 1.6.10-unified**.
 
 This file is a current-state snapshot only.
 
@@ -19,13 +19,20 @@ This file is a current-state snapshot only.
 
 ## Agent boundary
 
-- N2 is the reasoning/execution worker and the semantic editor/ranker for memory condensation.
-- N1 is the model-tool gatekeeper, loop supervisor, and maintenance critic. N1 judges N2 maintenance candidates and owns accept/retry; it does not rewrite the summary itself.
-- User ingress and N2 user-facing output are passed through unchanged.
-- N1 owns verified-result reuse/check-in for model-requested information tools.
-- Exact same-step repeat requests can reuse raw results.
-- Successful mutations invalidate affected validation/cache targets.
-- Deterministic post-write verification remains a runtime safety invariant outside model approval.
+- N2 is the reasoning/execution worker, subject router, and semantic editor/ranker for memory condensation.
+- N1 is the boundary critic/gatekeeper. N1 reviews the exact user turn before N2, judges N2's subject-routing proposal, gates/reuses model-requested tool evidence, watches repeated reasoning/tool loops, judges maintenance candidates, and accepts/retries the final user-facing answer.
+- N1 does not rewrite the authoritative user text or final answer itself. A retry sends bounded review feedback back to N2 for repair/resubmission.
+- User-ingress, routing, final-answer, and maintenance N1 reviews use operator-configurable model budgets/timeouts from `agents.n1`; maintenance defaults remain 5000 tokens / 720 seconds.
+- N1 owns verified-result reuse/check-in for model-requested information tools. Exact same-step requests can reuse the raw prior executor result rather than calling the tool again.
+- Successful mutations invalidate affected validation/cache targets. Deterministic post-write verification remains a runtime safety invariant outside model approval.
+
+## Subject-bound conversation routing
+
+- N2 decomposes mixed user turns into materially distinct subjects and proposes thread placement; N1 reviews the proposal before any new thread is created.
+- Existing-thread reuse requires confidence >= **0.68**. A weaker match is not attached to the existing thread; N2 must create a better-named subject thread or request clarification.
+- The authoritative user turn remains intact in `messages.content` after the existing ingress whitespace normalization. `message_threads.projected_content` stores only the accepted subject-relevant projection seen by each thread, preventing a mixed turn from copying unrelated sidenotes into every matched thread.
+- Assistant replies are projected back into the accepted subject threads using only verbatim excerpts from the approved reply. If projection fails, only the primary thread receives the full answer rather than contaminating side threads.
+- Durable memory extraction and runtime-summary refresh run per subject thread after a mixed turn so side-topic state remains subject-local.
 
 ## Scheduled memory maintenance
 
@@ -135,3 +142,8 @@ This 0.53.20 package includes `plugins\web_browser` v1.0.0. It exposes real-brow
 
 Schema-2 plugins declare non-secret defaults in `plugin.json` under `settings`. `PluginManager.refresh()` materializes/reconciles `config/plugins.ini` on startup and hot-rescan: declared operator values are preserved, missing/invalid values get defaults, and dangling keys/sections are removed after a rotating backup. Secrets stay in the configured external `.env`. Plugin/config/file/SQL/archive backup classes retain at most 12 newest backup sets.
 
+
+
+## Maintenance condensation model
+
+Memory maintenance can use a model independent of N2. Configure `memory.condensation_model` and `memory.condensation_backup_model` in `config/runtime.json`. Each setting is optional; a blank value resolves to `norm`. Friendly names are resolved against Ollama's installed-model inventory at maintenance start using deterministic exact/base/starts-with/substring/fuzzy matching; ambiguous names are never guessed and fall through to the backup. The effective failover order is primary → one backup → `norm`. Settings are re-read when a maintenance pass begins.

@@ -18,10 +18,31 @@ class FakeClient:
         self.calls = []
         self.call_kwargs = []
         self.reuse_record_id = ""
+        self.fail_ingress = False
+        self.fail_routing = False
+        self.fail_final = False
+        self.final_decision = "accept"
+        self.routing_decision = "accept"
 
     def generate(self, prompt, **kwargs):
         self.calls.append(prompt)
         self.call_kwargs.append(dict(kwargs))
+        if "user-ingress boundary" in prompt:
+            if self.fail_ingress:
+                raise RuntimeError("ingress boom")
+            return json.dumps({"guidance": "Preserve the exact named constraint.", "reason": "constraint is easy to lose"})
+        if "final-answer gatekeeper" in prompt:
+            if self.fail_final:
+                raise RuntimeError("final boom")
+            if self.final_decision == "retry":
+                return json.dumps({"decision": "retry", "reason": "material defect", "retry_instruction": "Fix the unsupported completion claim."})
+            return json.dumps({"decision": "accept", "reason": "complete and supported", "retry_instruction": ""})
+        if "subject decomposition before Norm stores" in prompt:
+            if self.fail_routing:
+                raise RuntimeError("routing boom")
+            if self.routing_decision == "retry":
+                return json.dumps({"decision": "retry", "reason": "weak thread placement", "retry_instruction": "Create a new subject thread instead of using the weak match."})
+            return json.dumps({"decision": "accept", "reason": "subjects and placements are clean", "retry_instruction": ""})
         if "Decide whether the existing LIVE Redis verification record" in prompt:
             if self.reuse_record_id:
                 return json.dumps({"decision": "reuse", "record_id": self.reuse_record_id, "reason": "already established"})
@@ -91,6 +112,27 @@ def test_schema_instrumentation():
     write = gate.instrument_schemas(_write_schema())[0]["function"]["parameters"]
     assert "n1_need" not in write["properties"]
     assert "n1_target" not in write["properties"]
+
+
+def test_subject_routing_review_uses_ingress_budget_and_can_retry():
+    client = FakeClient()
+    client.routing_decision = "retry"
+    gate = N1Gatekeeper(
+        client, FakeLive(), ingress_num_predict=4321, ingress_review_timeout_seconds=654,
+    )
+    result = gate.judge_subject_routing(
+        request="Fix Norm. Also my RAID controller is weird.",
+        proposal={"subjects": [{"label": "Norm", "content": "Fix Norm", "thread_id": "a", "match_confidence": 0.9, "create_thread_title": None, "primary": True}]},
+        routing_context=[{"thread_id": "a", "title": "Norm"}],
+        threshold=0.68,
+    )
+    assert result["decision"] == "retry"
+    assert "new subject thread" in result["retry_instruction"]
+    assert client.call_kwargs[-1]["num_predict"] == 4321
+    assert client.call_kwargs[-1]["timeout_seconds"] == 654
+    stats = gate.boundary_stats()
+    assert stats["routing"]["total"] == 1
+    assert stats["routing"]["retry"] == 1
 
 
 def test_redis_reuse_skips_execution():
@@ -249,6 +291,61 @@ def test_memory_condensation_uses_configurable_budget_and_timeout():
     assert kwargs["timeout_seconds"] == 654.0
 
 
+def test_ingress_review_is_real_and_configurable_without_rewriting_user_text():
+    client = FakeClient()
+    gate = N1Gatekeeper(
+        client, FakeLive(), ingress_num_predict=3456, ingress_review_timeout_seconds=654,
+    )
+    user = "  Keep this exact request.  "
+    review = gate.review_user_ingress(user)
+    assert review["reviewed"] is True
+    assert "constraint" in review["guidance"].lower()
+    assert gate.forward_user(user) == user
+    kwargs = client.call_kwargs[-1]
+    assert kwargs["num_predict"] == 3456
+    assert kwargs["timeout_seconds"] == 654.0
+
+
+def test_final_answer_review_accept_retry_and_processing_failure_are_distinct():
+    client = FakeClient()
+    gate = N1Gatekeeper(
+        client, FakeLive(), final_num_predict=4567, final_review_timeout_seconds=765,
+    )
+    accepted = gate.judge_final_answer(request="do it", candidate="done")
+    assert accepted["decision"] == "accept"
+    assert accepted["processing_failed"] is False
+    kwargs = client.call_kwargs[-1]
+    assert kwargs["num_predict"] == 4567
+    assert kwargs["timeout_seconds"] == 765.0
+
+    client.final_decision = "retry"
+    retry = gate.judge_final_answer(request="do it", candidate="maybe done")
+    assert retry["decision"] == "retry"
+    assert "unsupported" in retry["retry_instruction"].lower()
+    assert retry["processing_failed"] is False
+
+    client.fail_final = True
+    failed = gate.judge_final_answer(request="do it", candidate="odd structure")
+    assert failed["processing_failed"] is True
+    gate.record_final_review_failure_pass()
+    stats = gate.boundary_stats()
+    assert stats["ingress"]["total"] == 0
+    assert stats["final"]["processing_failed"] == 1
+    assert stats["final"]["review_failure_pass"] == 1
+
+
+def test_ingress_failure_forwards_exact_text_fail_open():
+    client = FakeClient()
+    client.fail_ingress = True
+    gate = N1Gatekeeper(client, FakeLive())
+    text = "User request must survive."
+    review = gate.review_user_ingress(text)
+    assert review["reviewed"] is False
+    assert review["guidance"] == ""
+    assert gate.forward_user(text) == text
+    assert gate.boundary_stats()["ingress"]["failed"] == 1
+
+
 def test_third_repeated_noncacheable_call_is_blocked():
     gate = N1Gatekeeper(FakeClient(), FakeLive(), loop_repeat_threshold=3)
     args = {"command": "echo hi"}
@@ -271,6 +368,9 @@ if __name__ == "__main__":
         test_file_mutation_invalidates_parent_directory_cache,
         test_memory_condensation_judgment_and_final_bound,
         test_memory_condensation_uses_configurable_budget_and_timeout,
+        test_ingress_review_is_real_and_configurable_without_rewriting_user_text,
+        test_final_answer_review_accept_retry_and_processing_failure_are_distinct,
+        test_ingress_failure_forwards_exact_text_fail_open,
         test_third_repeated_noncacheable_call_is_blocked,
     ):
         fn()

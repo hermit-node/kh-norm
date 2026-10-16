@@ -1029,13 +1029,19 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             reasoning_similarity_floor=float(n1_cfg.get("reasoning_similarity_floor", 0.78)),
             maintenance_num_predict=int(n1_cfg.get("maintenance_num_predict", 5000)),
             maintenance_review_timeout_seconds=float(n1_cfg.get("maintenance_review_timeout_seconds", 720)),
+            ingress_num_predict=int(n1_cfg.get("ingress_num_predict", 3000)),
+            ingress_review_timeout_seconds=float(n1_cfg.get("ingress_review_timeout_seconds", 720)),
+            final_num_predict=int(n1_cfg.get("final_num_predict", 5000)),
+            final_review_timeout_seconds=float(n1_cfg.get("final_review_timeout_seconds", 720)),
         )
         resources["n1_client"] = n1_client
         resources["n1_gatekeeper"] = n1_gatekeeper
         logging.info(
-            "N1 gatekeeper started model=%s endpoint=http://%s:%s maintenance_num_predict=%s maintenance_review_timeout_seconds=%s",
-            n1_model, n1_host, n1_port, n1_gatekeeper.maintenance_num_predict,
-            n1_gatekeeper.maintenance_review_timeout_seconds,
+            "N1 gatekeeper started model=%s endpoint=http://%s:%s ingress=%s/%ss final=%s/%ss maintenance=%s/%ss",
+            n1_model, n1_host, n1_port,
+            n1_gatekeeper.ingress_num_predict, n1_gatekeeper.ingress_review_timeout_seconds,
+            n1_gatekeeper.final_num_predict, n1_gatekeeper.final_review_timeout_seconds,
+            n1_gatekeeper.maintenance_num_predict, n1_gatekeeper.maintenance_review_timeout_seconds,
         )
 
         resources["startup_phase"] = "conversation-store-initialization"

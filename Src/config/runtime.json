@@ -33,7 +33,11 @@
       "reasoning_loop_threshold": 3,
       "reasoning_similarity_floor": 0.78,
       "maintenance_num_predict": 5000,
-      "maintenance_review_timeout_seconds": 720
+      "maintenance_review_timeout_seconds": 720,
+      "ingress_num_predict": 3000,
+      "ingress_review_timeout_seconds": 720,
+      "final_num_predict": 5000,
+      "final_review_timeout_seconds": 720
     },
     "n2": {}
   },
@@ -89,12 +93,14 @@
   },
   "heartbeat_seconds": 300,
   "memory": {
-    "routing_threshold": 0.58,
+    "routing_threshold": 0.68,
     "candidate_threads": 12,
     "recent_messages": 12,
     "background_context_chars": 32000,
     "scheduled_memory_interval_days": 7,
     "consolidation_check_seconds": 3600,
+    "condensation_model": "",
+    "condensation_backup_model": "",
     "consolidation_batch_chars": 14000,
     "consolidation_batch_target_chars": 1800,
     "consolidation_snapshot_target_chars": 6000,
