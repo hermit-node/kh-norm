@@ -1,3 +1,8 @@
+0.54.0 Beta 2 ? 2026-10-05 ? Installer staging + control-order correction
+- Moved N1 ingress review after the existing deterministic Python/control special-command path; handled slash/control work does not enter N1 ingress.
+- Normal conversational work still receives N1 ingress review immediately before N2 classification/execution.
+- Package version normalized to 0.54.0-beta2.
+
 # Norm release notes
 
 ## 0.54.0 Beta — 2026-10-05 — Friendly maintenance-model resolution

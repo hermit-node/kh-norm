@@ -426,14 +426,9 @@ class ConversationService:
         self, message: str, *, project_id: str = "default", thread_id: str | None = None,
         source_prompt_id: str | None = None,
     ) -> dict:
+        # Python/control handling gets first refusal. N1 ingress review is deliberately
+        # deferred until after the existing deterministic special-command path.
         n1_ingress = {"reviewed": False, "guidance": "", "reason": ""}
-        if self.n1_gatekeeper is not None:
-            # 0.54 boundary: N1 reads the exact user turn first, but the authoritative
-            # user text itself remains immutable.  N1 may attach bounded guidance for
-            # N2; an N1 ingress failure never blocks or rewrites the user's request.
-            if hasattr(self.n1_gatekeeper, "review_user_ingress"):
-                n1_ingress = self.n1_gatekeeper.review_user_ingress(message)
-            message = self.n1_gatekeeper.forward_user(message)
         message = message.strip()
         if not message:
             raise ValueError("message cannot be empty")
@@ -490,6 +485,13 @@ class ConversationService:
             ingrained_state = {"captured": 0, "resolved": 0, "unresolved": 0, "current_task_context": [], "records": []}
             related_running_work: list[dict] = []
             if special is None:
+                # N1 belongs at the end of ingress processing: Python/control paths
+                # have already had a chance to handle the turn. Only normal model work
+                # is reviewed here immediately before N2 classification/execution.
+                if self.n1_gatekeeper is not None:
+                    if hasattr(self.n1_gatekeeper, "review_user_ingress"):
+                        n1_ingress = self.n1_gatekeeper.review_user_ingress(message)
+                    message = self.n1_gatekeeper.forward_user(message)
                 related_running_work = self._related_running_work(project_id, route.primary_thread_id)
                 turn_interpretation = self._classify_turn(
                     message, project_id=project_id, thread_ids=thread_ids, related_running_work=related_running_work
