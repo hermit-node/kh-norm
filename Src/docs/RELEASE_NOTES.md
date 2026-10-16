@@ -1,3 +1,14 @@
+0.54.2b — 2026-10-06 — Redis verification-pool evidence replay
+
+- Made the existing Redis live verification pool the sole hot reusable-evidence cache; removed the redundant process-local raw-result cache.
+- N1 now judges evidence sufficiency rather than using age/duplicate-call rules: source volatility, requested freshness, known mutations, scope, contradictions, and completeness determine whether prior observations are sufficient.
+- A reuse decision now returns the actual selected Redis replay payload to N2. N2 is no longer told to "use prior evidence" that may have been evicted from its active context.
+- Information-only repeats bypass the generic loop-reset blocker. Repeated non-information/reasoning paths retain the existing loop protections.
+- Added private, bounded replay payloads in a companion Redis hash plus scoped observation IDs in the verification metadata. N1 sees only bounded metadata/canonical values during its decision; payloads are fetched afterward.
+- Preserved the one-large-chunk-per-N2-turn rule. Chunk reads may replay exactly one previously observed raw chunk when N1 judges it sufficient; otherwise the source is read fresh.
+- Kept PostgreSQL as durable validation/history/checkpoint storage; Redis replay payloads remain hot evidence and are not copied into long-term validation history.
+- Added regression coverage for Redis replay semantics, same-value refresh/change invalidation, multi-observation sufficiency, mutation invalidation, and chunk replay after a same-step requeue.
+
 0.54.2a — 2026-10-06 — Adaptive single-chunk evidence context
 
 - Added runtime-owned context budgeting for large default text `read_file` results. Before the read executes, Norm estimates current N2 system/message/tool-schema usage, reserves the current N2 output allowance plus a safety margin, and targets 20% of the remaining usable input budget for one raw evidence chunk.

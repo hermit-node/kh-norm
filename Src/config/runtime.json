@@ -251,7 +251,9 @@
     "history_retention_seconds": 1209600,
     "context_token_budget": 2500,
     "context_char_budget": 10000,
-    "emergency_row_cap": 512
+    "emergency_row_cap": 512,
+    "replay_payload_max_bytes": 393216,
+    "max_replay_records": 3
   },
   "model_runtime": {
     "default_context_length": 65536,

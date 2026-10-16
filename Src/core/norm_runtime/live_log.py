@@ -49,9 +49,14 @@ class RedisTaskLog:
         return f"{self.prefix}:{task_id}:events"
 
     def _global_validation_key(self) -> str:
-        # The validation pool is intentionally one Redis hash.  Individual facts are
-        # hash fields, never top-level Redis keys.
+        # Verification metadata stays compact in one hash so candidate scans never
+        # deserialize hot raw replay payloads. Individual facts are hash fields.
         return f"{self.validation_prefix}:pool"
+
+    def _global_validation_replay_key(self) -> str:
+        # Raw hot responses are the payload side of the same verification pool, keyed
+        # by the exact metadata record_id and fetched only after N1 selects evidence.
+        return f"{self.validation_prefix}:pool:replay"
 
     def _legacy_validation_facts_key(self) -> str:
         return f"{self.validation_prefix}:facts"
@@ -252,21 +257,32 @@ class RedisTaskLog:
         return max(seq, jac)
 
     @classmethod
-    def _validation_record_id(cls, target: object, description: object) -> str:
-        basis = cls._normalize_validation_target(target) + "\n" + cls._normalize_validation_description(description)
+    def _validation_record_id(cls, target: object, description: object, scope: object = "") -> str:
+        basis = (
+            cls._normalize_validation_target(target)
+            + "\n"
+            + cls._normalize_validation_description(description)
+            + "\n"
+            + " ".join(str(scope or "").strip().split())
+        )
         return hashlib.sha256(basis.encode("utf-8", errors="replace")).hexdigest()[:32]
 
     @staticmethod
     def _public_validation_record(record: dict, record_id: str = "") -> dict:
+        replay_bytes = int(record.get("_replay_bytes") or 0)
         row = {
             "record_id": str(record_id or record.get("record_id") or ""),
             "tool": str(record.get("tool") or ""),
             "target": str(record.get("target") or ""),
             "description": str(record.get("description") or ""),
+            "scope": str(record.get("scope") or ""),
             "value": str(record.get("value") or ""),
             "num_checks": int(record.get("num_checks") or 0),
             "previous_value": str(record.get("previous_value") or ""),
             "changed_at": str(record.get("changed_at") or ""),
+            "last_verified_at": str(record.get("_last_verified_at") or ""),
+            "replay_available": replay_bytes > 0,
+            "replay_bytes": max(0, replay_bytes),
             "storage": "redis_live",
         }
         return row
@@ -285,6 +301,25 @@ class RedisTaskLog:
         if not isinstance(record, dict):
             return None
         return self._public_validation_record(record, record_id)
+
+    def validation_replay(self, record_id: str) -> dict | None:
+        """Return one hot raw response only after N1 has selected its validation record.
+
+        Candidate lookup intentionally omits payloads so N1's reuse-decision prompt stays
+        small. The selected response is fetched from Redis only after the sufficiency
+        judgment has been made.
+        """
+        record_id = str(record_id or "").strip()
+        if not record_id:
+            return None
+        raw = self.client.hget(self._global_validation_replay_key(), record_id)
+        if not raw:
+            return None
+        try:
+            replay = json.loads(raw)
+        except Exception:
+            return None
+        return replay if isinstance(replay, dict) else None
 
     def validation_candidates(self, *, tool: str = "", target: str, description: str, limit: int = 12) -> list[dict]:
         """Return likely Redis records for one stable target without creating anything.
@@ -312,6 +347,14 @@ class RedisTaskLog:
                 score = min(1.0, score + 0.03)
             row = self._public_validation_record(record, str(record_id))
             row["description_match"] = round(score, 4)
+            last_verified = str(record.get("_last_verified_at") or "")
+            try:
+                observed = datetime.fromisoformat(last_verified)
+                if observed.tzinfo is None:
+                    observed = observed.replace(tzinfo=timezone.utc)
+                row["age_seconds"] = max(0, int((datetime.now(timezone.utc) - observed).total_seconds()))
+            except Exception:
+                row["age_seconds"] = None
             rows.append(row)
         rows.sort(key=lambda item: (-float(item.get("description_match") or 0.0), str(item.get("description") or "")))
         return rows[:max(1, int(limit))]
@@ -337,7 +380,9 @@ class RedisTaskLog:
                 doomed.append(str(record_id))
         if not doomed:
             return 0
-        return int(self.client.hdel(self._global_validation_key(), *doomed) or 0)
+        removed = int(self.client.hdel(self._global_validation_key(), *doomed) or 0)
+        self.client.hdel(self._global_validation_replay_key(), *doomed)
+        return removed
 
     def recent_global_validations(self, *, limit: int = 64, **_kwargs) -> list[dict]:
         rows: list[tuple[str, dict]] = []
@@ -354,7 +399,7 @@ class RedisTaskLog:
         return [self._public_validation_record(record, record_id) for record_id, record in rows[:max(1, int(limit))]]
 
     def record_global_validations(self, task_id: str, step_id: str, items: list[dict], **_kwargs) -> list[dict]:
-        """Check information-tool results into the one shared Redis validation hash."""
+        """Check information-tool results into the shared Redis verification pool."""
         saved: list[dict] = []
         pool_key = self._global_validation_key()
         for item in items or []:
@@ -363,11 +408,16 @@ class RedisTaskLog:
             tool = str(item.get("tool") or item.get("source") or "unspecified").strip()[:500] or "unspecified"
             target = " ".join(str(item.get("target") or "").strip().split())[:2000]
             description = " ".join(str(item.get("description") or "").strip().split())[:2000]
+            scope = " ".join(str(item.get("scope") or "").strip().split())[:4000]
             value = _canonical_validation_value(item.get("value"))[:12000]
+            replay_result = item.get("replay_result")
+            if not isinstance(replay_result, dict):
+                replay_result = None
+            replay_bytes = int(item.get("replay_bytes") or 0) if replay_result is not None else 0
             requested_id = str(item.get("record_id") or "").strip()
             if not target or not description or not value:
                 continue
-            record_id = requested_id if requested_id and requested_id != "new" else self._validation_record_id(target, description)
+            record_id = requested_id if requested_id and requested_id != "new" else self._validation_record_id(target, description, scope)
             for attempt in range(32):
                 try:
                     with self.client.pipeline(transaction=True) as pipe:
@@ -390,6 +440,9 @@ class RedisTaskLog:
                             pool_started_at = str(prior.get("_pool_started_at") or now_iso)
                             canonical_description = str(prior.get("description") or description)
                             canonical_target = str(prior.get("target") or target)
+                            canonical_scope = str(prior.get("scope") or scope)
+                            effective_replay_bytes = replay_bytes if replay_result is not None else int(prior.get("_replay_bytes") or 0)
+                            replay_action = "set" if replay_result is not None else "keep"
                         elif changed:
                             num_checks = 1
                             previous_value = str(prior.get("value") or "")
@@ -398,6 +451,10 @@ class RedisTaskLog:
                             pool_started_at = now_iso
                             canonical_description = str(prior.get("description") or description)
                             canonical_target = str(prior.get("target") or target)
+                            canonical_scope = str(prior.get("scope") or scope)
+                            # Never carry an old raw response across a verified value change.
+                            effective_replay_bytes = replay_bytes if replay_result is not None else 0
+                            replay_action = "set" if replay_result is not None else "delete"
                         else:
                             num_checks = 1
                             previous_hint = str(item.get("previous_value_hint") or "")
@@ -410,11 +467,15 @@ class RedisTaskLog:
                             pool_started_at = now_iso
                             canonical_description = description
                             canonical_target = target
+                            canonical_scope = scope
+                            effective_replay_bytes = replay_bytes if replay_result is not None else 0
+                            replay_action = "set" if replay_result is not None else "delete"
                         record = {
                             "record_id": record_id,
                             "tool": tool,
                             "target": canonical_target,
                             "description": canonical_description,
+                            "scope": canonical_scope,
                             "value": value,
                             "num_checks": num_checks,
                             "previous_value": previous_value,
@@ -422,8 +483,18 @@ class RedisTaskLog:
                             "_pool_started_at": pool_started_at,
                             "_last_verified_at": now_iso,
                         }
+                        if effective_replay_bytes > 0:
+                            record["_replay_bytes"] = max(0, int(effective_replay_bytes))
                         pipe.multi()
                         pipe.hset(pool_key, record_id, json.dumps(record, ensure_ascii=False, sort_keys=True))
+                        if replay_action == "set" and replay_result is not None:
+                            pipe.hset(
+                                self._global_validation_replay_key(),
+                                record_id,
+                                json.dumps(replay_result, ensure_ascii=False, sort_keys=True, default=str),
+                            )
+                        elif replay_action == "delete":
+                            pipe.hdel(self._global_validation_replay_key(), record_id)
                         pipe.execute()
                         public = self._public_validation_record(record, record_id)
                         public["value_changed"] = changed
@@ -466,7 +537,9 @@ class RedisTaskLog:
         cleaned = [str(item).strip() for item in (record_ids or []) if str(item).strip()]
         if not cleaned:
             return 0
-        return int(self.client.hdel(self._global_validation_key(), *cleaned) or 0)
+        removed = int(self.client.hdel(self._global_validation_key(), *cleaned) or 0)
+        self.client.hdel(self._global_validation_replay_key(), *cleaned)
+        return removed
 
     def migrate_legacy_validation_layout(self) -> dict:
         """Collapse pre-0.53.13 exploded validation keys into norm:validation:pool.

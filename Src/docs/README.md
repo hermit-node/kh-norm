@@ -2,7 +2,13 @@
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.54.2a / Installer 1.6.12-unified** package only. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.54.2b / Installer 1.6.12-unified** package only. Version history belongs only in RELEASE_NOTES.md.
+
+### Redis verification-pool evidence replay (0.54.2b)
+
+Redis's existing live verification pool is the sole hot reusable-evidence cache. For each information request, N1 receives only bounded candidate metadata/canonical values and decides whether the relevant previous observation or observations are sufficiently applicable/current for N2's present need. Age is evidence, not a TTL: static documents may remain sufficient while live chat/process/latest-state requests may justify a refresh even when recent; known mutations invalidate affected targets immediately.
+
+When N1 judges prior evidence sufficient, Norm fetches the selected private replay payload from the companion Redis replay hash only after that decision and supplies the actual evidence to N2. N2 is not told to "use prior evidence" and does not need to know whether the source was replayed or queried again. If evidence is incomplete, stale, contradictory, structurally mismatched, unavailable, or otherwise insufficient, the source executes fresh and the verification pool is refreshed. The former separate in-process raw-result cache was removed. Large `read_file` evidence still obeys the one-raw-chunk-per-N2-turn invariant. PostgreSQL remains the durable history/checkpoint layer; Redis replay payloads are hot evidence only.
 
 ### Adaptive chunked evidence context (0.54.2a)
 

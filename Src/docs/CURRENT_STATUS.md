@@ -1,6 +1,10 @@
 # Norm current status
 
-Current package: **Norm 0.54.2a** with **Installer 1.6.12-unified**.
+Current package: **Norm 0.54.2b** with **Installer 1.6.12-unified**.
+
+### Redis verification-pool replay (0.54.2b)
+
+The live Redis verification pool is the only hot evidence-reuse cache. N1 judges whether relevant prior observation(s) are sufficiently applicable/current for the present N2 information request; age alone is not a staleness rule. If sufficient, Norm fetches the exact bounded replay payload from the companion Redis replay hash after N1's decision and returns that evidence to N2. If insufficient or unavailable, the source executes fresh and Redis is refreshed. Information-only repeats are not blocked by the generic loop-reset path. The former process-local raw-result cache has been removed. PostgreSQL remains the durable history/checkpoint authority.
 
 ### Adaptive chunked evidence context (0.54.2a)
 
@@ -31,7 +35,7 @@ This file is a current-state snapshot only.
 - N1 is the boundary critic/gatekeeper. N1 reviews the exact user turn before N2, judges N2's subject-routing proposal, gates/reuses model-requested tool evidence, watches repeated reasoning/tool loops, judges maintenance candidates, and accepts/retries the final user-facing answer.
 - N1 does not rewrite the authoritative user text or final answer itself. A retry sends bounded review feedback back to N2 for repair/resubmission.
 - User-ingress, routing, final-answer, and maintenance N1 reviews use operator-configurable model budgets/timeouts from `agents.n1`; maintenance defaults remain 5000 tokens / 720 seconds.
-- N1 owns verified-result reuse/check-in for model-requested information tools. Exact same-step requests can reuse the raw prior executor result rather than calling the tool again.
+- N1 owns verified-result reuse/check-in for model-requested information tools. Relevant prior Redis observations may be replayed when N1 judges them sufficient; otherwise the source is queried fresh.
 - Successful mutations invalidate affected validation/cache targets. Deterministic post-write verification remains a runtime safety invariant outside model approval.
 
 ## Subject-bound conversation routing

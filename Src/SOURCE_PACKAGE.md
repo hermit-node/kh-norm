@@ -1,6 +1,6 @@
-# Norm 0.54.2a portable source package
+# Norm 0.54.2b portable source package
 
-This directory is the portable source payload for **Norm 0.54.2a**.
+This directory is the portable source payload for **Norm 0.54.2b**.
 
 The portable source package excludes generated or machine-private material such as .venv, compiled core\norm.exe, build output, Python caches, secrets, and private runtime state.
 
@@ -61,6 +61,10 @@ Installer 1.6.9 binds the portable-source ZIP by exact filename and SHA-256, mig
 ## 0.53.20 optional web plugin
 
 This package includes schema-2 `plugins\web_browser` v1.0.0 and exact direct pins for Playwright 1.63.0, Beautiful Soup 4.15.0, Soup Sieve 2.10, and Trafilatura 2.3.0. The plugin delegates its third-party web runtime to the installed `.venv`, so the portable plugin remains independently removable and does not require those libraries to be frozen into `norm.exe`.
+
+## 0.54.2b Redis verification-pool replay
+
+Redis's existing validation pool is the sole hot reusable-evidence cache. N1 decides whether relevant cached observations are sufficiently applicable/current for N2's request; when they are, the selected exact replay payload is fetched from the companion Redis replay hash and delivered to N2. Otherwise the source runs again and the pool is refreshed. Information-only repeats are not blocked by the generic loop reset, the redundant process-local raw-result cache is removed, and large reads still permit only one raw chunk in an N2 turn. PostgreSQL remains the durable history/checkpoint layer.
 
 ## 0.54.2a continuation context
 
