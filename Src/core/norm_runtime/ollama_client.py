@@ -404,6 +404,7 @@ class OllamaClient:
         response_format: str | dict | None = None,
         emit_stream: bool = True,
         timeout_seconds: float | None = None,
+        system_context: str | None = None,
     ) -> str:
         options: dict[str, object] = {"temperature": temperature}
         if num_predict is not None:
@@ -419,8 +420,11 @@ class OllamaClient:
             "keep_alive": -1,
             "options": options,
         }
-        if self.system_instructions:
-            body["system"] = self.system_instructions
+        request_system = "\n\n".join(
+            item for item in (self.system_instructions, str(system_context or "").strip()) if item
+        )
+        if request_system:
+            body["system"] = request_system
         if response_format is not None:
             body["format"] = response_format
         req = request.Request(

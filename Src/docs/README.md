@@ -1,15 +1,27 @@
-## Norm 0.55.3 — validated compiled StegoSplit edition
+## Norm 0.55.4 — provenance/voice fix rebased on CLEAN compiled release (2026-10-08)
 
-Norm retains portable core Python source and a standard build script. StegoSplit Message 0.4.3, Auth 0.1.0, and Key 0.2.0a1 ship compiled algorithms and thin public tool adapters. The plugin READMEs describe their endpoints; the plugin help.txt files describe user actions. No private StegoSplit algorithm Python code is included. Full installer validation and compiled smoke tests passed; no full live install or SSH integration was performed.
+- **Base:** operator-supplied Norm 0.55.3 CLEAN compiled portable-source and Installer 1.6.12 kit, **not** the earlier uncompiled StegoSplit source.
+- **Reinstated prior 0.55.3 N2 fixes removed from CLEAN:** the active voice profile is a dedicated per-request system instruction (including thinking/review/tool rounds), and internal planning, N1 interventions, retries, and completion reviews are not misidentified as new user-role prompts. The separate original user request retains its user-role provenance.
+- **Preserved:** Message 0.4.3, Auth 0.1.0, Key 0.2.0a1 compiled binaries and their exact plugin SHA identities, the help structure, the context-injection lifecycle and all other clean-release code/plugins.
+- **Packaging:** release 0.55.4, source ZIP and checksum, Installer 1.6.12 builder kit updated to embed this source. The previously compiled Windows Installer 1.6.12 executable is not rebuilt in this environment; if supplied as a companion, its embedded fallback remains 0.55.3. When using that EXE, the adjacent 0.55.4 portable-source ZIP must be selected/verified.
+- **Verification boundary:** source/code regression testing is not an end-to-end Windows/Ollama/Redis/PostgreSQL install. Optional image-based Auth is not an SSH/PAM/TLS authentication integration.
 
-# Norm 0.55.3 — Windows compiled distribution
+## Norm 0.55.4 clean compiled portable source
+
+Compatible with Norm Installer 1.6.12, Windows Python 3.14 x64. Norm core is portable Python source that the installer compiles into norm.exe. Proprietary StegoSplit internals are precompiled native .pyd modules, accessed through readable plugin src/main.py adapters. StegoSplit Auth reuses Message's native V3 modules instead of duplicating them. Each plugin includes a developer README.md and a user-facing help.txt available with /help stegosplit-message, /help stegosplit-auth or /help stegosplit-key. Master and credential images are NEVER distributed in this package. Filename-derived passwords and hidden PNG file selection are convenience/obscurity only. Native SSH or a network-facing authentication endpoint are NOT provided.
+
+## Compiled StegoSplit distribution retained from 0.55.3 CLEAN
+
+Norm retains portable core Python source and an installer-owned executable build. StegoSplit Message 0.4.3, Auth 0.1.0, and Key 0.2.0a1 ship compiled algorithms and thin public tool adapters. The plugin READMEs describe their endpoints; the plugin help.txt files describe user actions. No private StegoSplit algorithm Python code is included. Full installer validation and compiled smoke tests passed; no full live install or SSH integration was performed.
+
+# Norm 0.55.4 — Windows compiled distribution
 
 StegoSplit Message 0.4.3, Auth 0.1.0 and Key ship compiled Windows CPython 3.14 x64 implementations with readable `src/main.py` entrypoint adapters. Plugin SHA-256 values are over shipped compiled src bytes. No proprietary StegoSplit Python implementation is included.
 
 The separate Auth master/server enrollment is local-only and optional. Native OpenSSH authentication is not yet implemented. Use lossless PNG. Never commit generated master/client credential images or runtime auth database.
 
 
-## StegoSplit Auth 0.1.0 — compiled side-plugin (Norm 0.55.3)
+## StegoSplit Auth 0.1.0 — compiled side-plugin (retained in Norm 0.55.4)
 
 Separate from StegoSplit Message 0.4.3. One server master PNG issues independently revocable signed differential client PNG credentials. Uses the same 4-bit differential vector/scatter primitives but its anchored format is separate from the V3 two-share message format. This is bearer-token application authentication, **not SSH authentication**. The private issuer seed is plainly stored in protected master.png metadata; NEVER include the generated master PNG, SQLite database, or issued login PNGs in GitHub.
 
@@ -19,7 +31,7 @@ Windows CPython 3.14 compiled auth binary was built and exercised on KHzz in a s
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.55.3 portable-source package**, validated with **Installer 1.6.12**. Its three StegoSplit engines are compiled Windows CPython 3.14 x64 modules. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.55.4 portable-source package**, validated with **Installer 1.6.12**. Its three StegoSplit engines are compiled Windows CPython 3.14 x64 modules. Version history belongs only in RELEASE_NOTES.md.
 
 ### Lesson/code memory and executable topology
 

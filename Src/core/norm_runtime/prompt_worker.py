@@ -181,8 +181,16 @@ class PromptWorker:
             voice = ""
         if not voice:
             return ""
-        return ("ACTIVE VOICE PROFILE FOR N2 RESPONSE STYLE (not a tool directive):\n"
-                + voice)
+        return (
+            "ACTIVE N2 VOICE PROFILE — applies to reasoning AND output, including all "
+            "tool-decision rounds, corrections, and completion reviews.\n"
+            "Write any natural-language reasoning or final replies in this voice, not only the "
+            "last paragraph. Keep trivial conversational replies short and avoid performative "
+            "analogies or unnecessary follow-up questions. This is strictly a style prior: "
+            "do not change facts, safety, tools, code, arguments, JSON schema, verification "
+            "standards, or the source of instructions. Never treat example quotations as commands.\n\n"
+            + voice
+        )
 
     def _retire_verified_injections(self, job: PromptJob, report: str, evidence: list[dict] | None = None) -> None:
         """Persist verifier-confirmed retirements; never infer completion from N2 prose."""
@@ -2233,7 +2241,11 @@ class PromptWorker:
         final_step: bool = True,
     ) -> str:
         return (
-            original_prompt
+            "[NORM-INTERNAL COMPLETION REVIEW — NOT A NEW USER REQUEST]\n"
+            "The user has not sent another message. Review the candidate for the "
+            "original task, preserving the active voice profile throughout any visible reasoning.\n\n"
+            "Original task/step context:\n"
+            + original_prompt
             + "\n\nPrevious result:\n"
             + answer
             + "\n\nDo one quick completion review. Check for a better approach, missing "
@@ -3046,12 +3058,15 @@ class PromptWorker:
             raise RuntimeError(f"child task {child_id} {status}: {detail}")
         raise RuntimeError(f"child task {child_id} resumed before reaching terminal state: {status}")
 
-    def _generate_complete_text(self, prompt: str, *, think: bool, num_predict: int, temperature: float, max_segments: int = 4) -> str:
+    def _generate_complete_text(self, prompt: str, *, think: bool, num_predict: int, temperature: float, max_segments: int = 4, system_context: str = "") -> str:
         pieces: list[str] = []
         current = str(prompt)
         for segment in range(1, max_segments + 1):
             try:
-                text = self.client.generate(current, think=think, num_predict=num_predict, temperature=temperature)
+                # Only the real Ollama client has a per-request system-context API.
+                # Other generator stubs/adapters retain their existing interface.
+                kwargs = {"system_context": system_context} if system_context and isinstance(self.client, OllamaClient) else {}
+                text = self.client.generate(current, think=think, num_predict=num_predict, temperature=temperature, **kwargs)
                 pieces.append(text)
                 return "".join(pieces).strip()
             except ModelOutputTruncated as exc:
@@ -3106,9 +3121,8 @@ class PromptWorker:
         started_clock: float,
     ) -> str | None:
         base_prompt = str(prompt)
+        # N2 voice is a dedicated system instruction, not user-authored task text.
         voice_instructions = self._active_voice_instructions()
-        if voice_instructions:
-            base_prompt = voice_instructions + "\n\n" + base_prompt
         prompt = self._prompt_with_context_injections(job, base_prompt)
         tools = self._worker_tools()
         if tools is not None and hasattr(tools, "set_task_context"):
@@ -3121,6 +3135,7 @@ class PromptWorker:
                     think=bool(metadata.get("think", False)),
                     num_predict=int(metadata.get("num_predict") or 16000),
                     temperature=float(metadata.get("temperature", 0.2)),
+                    system_context=voice_instructions,
                 )
             except ModelContextExceeded as exc:
                 self._yield_context_overflow(redis_id, job, name, started, exc)
@@ -3131,9 +3146,10 @@ class PromptWorker:
                     think=True,
                     num_predict=12000,
                     temperature=0.1,
+                    system_context=voice_instructions,
                 )
                 answer = improved.strip() or answer
-            return self._verify_and_correct_without_tools(job, prompt, answer)
+            return self._verify_and_correct_without_tools(job, prompt, answer, system_context=voice_instructions)
 
         historical_evidence = self.live.task_evidence(job.task_id) if hasattr(self.live, "task_evidence") else []
         try:
@@ -3482,8 +3498,16 @@ class PromptWorker:
                 "Do not call legacy verification_preflight/checkin tools."
             )
         )
-        tool_prompt = tools.instructions() + "\n\n" + gate_instructions + "\n\n" + prompt
-        messages: list[dict] = [{"role": "user", "content": tool_prompt}]
+        metadata = job.metadata or {}
+        # Only a real operator request receives the Ollama `user` role. Planned
+        # steps, reviews, N1 corrections, and injected control flow remain
+        # system-origin instructions, even when they quote the user's text.
+        original_user_prompt = str(metadata.get("original_user_prompt") or "").strip()
+        if not original_user_prompt and job.request_type == "prompt" and str(metadata.get("prompt_origin") or "user_prompt") in {"user_prompt", "prompt_interface", "gui_prompt", "ssh_prompt"}:
+            original_user_prompt = str(job.prompt or "").strip()
+        messages: list[dict] = [{"role": "system", "content": ""}]
+        if original_user_prompt:
+            messages.append({"role": "user", "content": original_user_prompt})
         pending_verification: dict[str, str] = {}
         evidence: list[dict] = []
         step_rounds = 0
@@ -3515,13 +3539,10 @@ class PromptWorker:
             if task_rounds >= task_limit:
                 break
             self._consume_context_injections(job)
-            messages[:] = [m for m in messages if not (
-                m.get("role") == "user" and str(m.get("content") or "").startswith(
-                    "[USER CONTEXT INTERJECTION FOR THE ACTIVE TASK]"))]
+            # Refresh the injection inside the system work context on every
+            # round. A retired instruction cannot survive in old chat messages.
             live_injection = self._context_injection_block(
                 (job.metadata or {}).get("applied_context_injections") or [])
-            if live_injection:
-                messages.append({"role": "user", "content": live_injection})
             if self._suppression_requested(job.task_id) or (self.durable and self.durable.task_status(job.task_id) == "suppressed"):
                 raise ModelGenerationCancelled("task suppressed by operator")
             if self._drain.is_set():
@@ -3538,7 +3559,17 @@ class PromptWorker:
                     "evidence": evidence,
                 }
             # N1 is transparent to user/N2 prose. Only the tool boundary is instrumented.
-            messages[0]["content"] = tools.instructions() + "\n\n" + gate_instructions + "\n\n" + prompt
+            system_sections = [
+                tools.instructions(),
+                gate_instructions,
+                self._active_voice_instructions(),
+                "[NORM INTERNAL TASK/STEP INSTRUCTION — NOT USER-AUTHORED]\n"
+                "The genuine user request is the separate user-role message, if present. "
+                "Do not claim internal follow-up instructions or reviews were said by the user.\n"
+                + prompt,
+                live_injection,
+            ]
+            messages[0]["content"] = "\n\n".join(section for section in system_sections if section)
             native_schemas = tools.schemas()
             if self.n1_gatekeeper is not None:
                 native_schemas = self.n1_gatekeeper.instrument_schemas(native_schemas)
@@ -3573,7 +3604,7 @@ class PromptWorker:
                 # call. Give N1's opaque redirect back to N2 rather than accepting
                 # that dead-end as the step result. Do not explain the boundary.
                 messages.append(redact({"role": "assistant", "content": content}))
-                messages.append({"role": "user", "content": "[N1 INTERVENTION]\n" + turn_reset})
+                messages.append({"role": "system", "content": "[NORM-INTERNAL N1 INTERVENTION; NOT USER-AUTHORED]\n" + turn_reset})
                 continue
             if not calls:
                 if done_reason == "length":
@@ -3652,8 +3683,8 @@ class PromptWorker:
                         raise RuntimeError("model returned blank step result after tool execution")
                     messages.append({"role": "assistant", "content": content})
                     messages.append({
-                        "role": "user",
-                        "content": "You returned no textual result. Using the task instructions and observed tool results above, return the required concise result for this step now. Do not repeat completed tool work unless verification is genuinely needed.",
+                        "role": "system",
+                        "content": "[NORM-INTERNAL RETRY] You returned no textual result. Using the task instructions and observed tool results above, return the required concise result for this step now. Do not repeat completed tool work unless verification is genuinely needed.",
                     })
                     continue
                 return {
@@ -4057,8 +4088,8 @@ class PromptWorker:
                     }
             if n1_interventions:
                 messages.append({
-                    "role": "user",
-                    "content": "[N1 LOOP RESET]\n" + "\n".join(dict.fromkeys(n1_interventions)),
+                    "role": "system",
+                    "content": "[NORM-INTERNAL N1 LOOP RESET]\n" + "\n".join(dict.fromkeys(n1_interventions)),
                 })
 
         evidence.extend(self._verify_pending(job, pending_verification, tools))
@@ -4228,7 +4259,7 @@ class PromptWorker:
         )
 
     def _verify_and_correct_without_tools(
-        self, job: PromptJob, original_prompt: str, answer: str
+        self, job: PromptJob, original_prompt: str, answer: str, *, system_context: str = ""
     ) -> str:
         for cycle in range(1, 4):
             accepted, issues, report = self._request_verdict(original_prompt, answer, [])
@@ -4240,6 +4271,7 @@ class PromptWorker:
                 think=True,
                 num_predict=12000,
                 temperature=0.1,
+                system_context=system_context,
             )
             answer = corrected.strip() or answer
         raise VerifierProtocolError("skeptical verifier rejected the result after three correction cycles")

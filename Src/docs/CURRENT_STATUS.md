@@ -1,10 +1,22 @@
-## Current compiled StegoSplit release (0.55.3)
+## Norm 0.55.4 — provenance/voice fix rebased on CLEAN compiled release (2026-10-08)
+
+- **Base:** operator-supplied Norm 0.55.3 CLEAN compiled portable-source and Installer 1.6.12 kit, **not** the earlier uncompiled StegoSplit source.
+- **Reinstated prior 0.55.3 N2 fixes removed from CLEAN:** the active voice profile is a dedicated per-request system instruction (including thinking/review/tool rounds), and internal planning, N1 interventions, retries, and completion reviews are not misidentified as new user-role prompts. The separate original user request retains its user-role provenance.
+- **Preserved:** Message 0.4.3, Auth 0.1.0, Key 0.2.0a1 compiled binaries and their exact plugin SHA identities, the help structure, the context-injection lifecycle and all other clean-release code/plugins.
+- **Packaging:** release 0.55.4, source ZIP and checksum, Installer 1.6.12 builder kit updated to embed this source. The previously compiled Windows Installer 1.6.12 executable is not rebuilt in this environment; if supplied as a companion, its embedded fallback remains 0.55.3. When using that EXE, the adjacent 0.55.4 portable-source ZIP must be selected/verified.
+- **Verification boundary:** source/code regression testing is not an end-to-end Windows/Ollama/Redis/PostgreSQL install. Optional image-based Auth is not an SSH/PAM/TLS authentication integration.
+
+## Norm 0.55.4 clean compiled portable source
+
+Compatible with Norm Installer 1.6.12, Windows Python 3.14 x64. Norm core is portable Python source that the installer compiles into norm.exe. Proprietary StegoSplit internals are precompiled native .pyd modules, accessed through readable plugin src/main.py adapters. StegoSplit Auth reuses Message's native V3 modules instead of duplicating them. Each plugin includes a developer README.md and a user-facing help.txt available with /help stegosplit-message, /help stegosplit-auth or /help stegosplit-key. Master and credential images are NEVER distributed in this package. Filename-derived passwords and hidden PNG file selection are convenience/obscurity only. Native SSH or a network-facing authentication endpoint are NOT provided.
+
+## Compiled StegoSplit engines inherited from the 0.55.3 CLEAN release
 
 StegoSplit Message 0.4.3, Auth 0.1.0, and Key 0.2.0a1 now carry CPython 3.14 native binaries with public tool adapters. Installer 1.6.12 validation, compiled functional smoke tests, and 18 plugin identity checks passed. No full installation has been attempted; image-auth is not natively wired to SSH. Auth is disabled until configured.
 
 # Norm current status
 
-Current package: **Norm 0.55.3** portable source with compiled StegoSplit internals; verified external installer: **1.6.12-unified**.
+Current package: **Norm 0.55.4** portable source with compiled StegoSplit internals; verified external installer: **1.6.12-unified**.
 
 ### Changes added in 0.55.1
 

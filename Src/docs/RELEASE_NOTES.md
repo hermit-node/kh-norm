@@ -1,3 +1,19 @@
+## Norm 0.55.4 — provenance/voice fix rebased on CLEAN compiled release (2026-10-08)
+
+- **Base:** operator-supplied Norm 0.55.3 CLEAN compiled portable-source and Installer 1.6.12 kit, **not** the earlier uncompiled StegoSplit source.
+- **Reinstated prior 0.55.3 N2 fixes removed from CLEAN:** the active voice profile is a dedicated per-request system instruction (including thinking/review/tool rounds), and internal planning, N1 interventions, retries, and completion reviews are not misidentified as new user-role prompts. The separate original user request retains its user-role provenance.
+- **Preserved:** Message 0.4.3, Auth 0.1.0, Key 0.2.0a1 compiled binaries and their exact plugin SHA identities, the help structure, the context-injection lifecycle and all other clean-release code/plugins.
+- **Packaging:** release 0.55.4, source ZIP and checksum, Installer 1.6.12 builder kit updated to embed this source. The previously compiled Windows Installer 1.6.12 executable is not rebuilt in this environment; if supplied as a companion, its embedded fallback remains 0.55.3. When using that EXE, the adjacent 0.55.4 portable-source ZIP must be selected/verified.
+- **Verification boundary:** source/code regression testing is not an end-to-end Windows/Ollama/Redis/PostgreSQL install. Optional image-based Auth is not an SSH/PAM/TLS authentication integration.
+
+## 0.55.3 clean compiled release - October 8, 2026
+
+- StegoSplit Message 0.4.3, Auth 0.1.0 and Key 0.2.0a1 algorithms compiled as CPython 3.14 Windows x64 native .pyd modules; entrypoint adapters remain readable.
+- Shared V3 backend stored only in stegosplit_message; stegosplit_auth explicitly imports that plugin. No duplicated V3 engine.
+- Recomputed exact plugin content SHA-256 values; restored installer 1.6.12-compatible manifest/build script and updated per-plugin Norm README and user-facing /help text.
+- No private implementation Python, build object files, generated code, runtime secrets, master/issued credential PNGs, database, logs or state in distribution.
+- Custom image authorization is NOT an OpenSSH integration; no network upload handler is bundled.
+
 ## 0.55.3 compiled portable-source packaging — 2026-10-08
 
 - Installer 1.6.12-compatible portable-source manifest and build script retained.

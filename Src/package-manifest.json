@@ -1,7 +1,7 @@
 {
   "package_schema": 1,
   "name": "Norm",
-  "version": "0.55.3",
+  "version": "0.55.4",
   "package_type": "portable-source",
   "source_dir": "core",
   "entrypoint": "core/norm_main.py",
@@ -469,7 +469,7 @@
     "pair_carrier": "RGB +/-1 color-delta nibble (4 bits per pixel; zlib on payload when useful)",
     "public_carrier": "independent single-PNG RGB LSB (3 bits per pixel) or overt tEXt metadata",
     "security_boundary": "public identifiers are NOT authentication credentials; no private keys embedded",
-    "compiled_implementation": "plugins/stegosplit_message/src/message_api.cp314-win_amd64.pyd; all engine modules compiled"
+    "compiled_implementation": "Windows CPython 3.14 x64 .pyd modules"
   },
   "stegosplit_auth": {
     "plugin": "plugins/stegosplit_auth",
@@ -477,12 +477,13 @@
     "format": "anchored SSMC/v1",
     "master": "private master.png with unencrypted issuer-seed metadata",
     "native_windows_module": "plugins/stegosplit_auth/src/master_client_auth.cp314-win_amd64.pyd",
-    "github_source": "private implementation source excluded from this compiled distribution",
+    "github_source": "private implementation source excluded",
     "security": "bearer credentials; revocation/expiration/failed-password lockouts",
-    "integration": "standalone only, no OpenSSH/TLS listener"
+    "integration": "standalone only, no OpenSSH/TLS listener",
+    "shared_v3_engine": "plugins/stegosplit_message/src/_stegosplit_v3"
   },
-  "build_script": "tools/build_norm.py",
   "stegosplit_key": {
-    "compiled_implementation": "plugins/stegosplit_key/src/key_api.cp314-win_amd64.pyd; internal mapping/core compiled"
+    "version": "0.2.0a1",
+    "compiled_implementation": "Windows CPython 3.14 x64 .pyd modules"
   }
 }

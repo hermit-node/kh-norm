@@ -50,7 +50,7 @@ def test_autoretire_only_verified_active_eligible():
     job = SimpleNamespace(task_id='job-1', step_id='step-02', metadata={})
     assert len(obj._consume_context_injections(job)) == 2
     assert 'Injection 54 [retire_when_satisfied]' in obj._prompt_with_context_injections(job, 'prompt')
-    assert obj._active_voice_instructions().startswith('ACTIVE VOICE PROFILE FOR N2')
+    assert obj._active_voice_instructions().startswith('ACTIVE N2 VOICE PROFILE')
     assert len(obj._consume_context_injections(job)) == 0  # no duplicate delivery
     report = json.dumps({'verdict': 'accept', 'fulfilled_injection_ids': [54, 55, 9999]})
     obj._retire_verified_injections(job, report, evidence=[{'result': {'ok': True}}])
