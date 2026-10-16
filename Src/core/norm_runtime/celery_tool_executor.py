@@ -28,6 +28,10 @@ def config(base=None):
             "port":int(load_ports(base)["redis"]),
             "queue":str(val("queue","norm-async-tools")),
             "count":min(8,max(1,int(val("worker_count","4")))),
+            # A detached solo worker must fail closed if Norm disappears.
+            "orphan_grace_seconds":min(900,max(30,int(val("orphan_grace_seconds","180")))),
+            "startup_grace_seconds":min(1800,max(60,int(val("startup_grace_seconds","300")))),
+            "max_job_age_seconds":min(3600,max(900,int(val("max_job_age_seconds","3600")))),
             "prefix":"norm:async:v1"}
 
 CFG=config()
@@ -48,6 +52,19 @@ def key(jobid):
 
 def cancellation_key(jobid):
     return CFG["prefix"]+":cancelled:"+str(uuid.UUID(jobid))
+
+def supervisor_key():
+    return CFG["prefix"] + ":supervisor-heartbeat"
+
+def expiry_reason(started, last_heartbeat, now, *, startup_grace, orphan_grace):
+    """Pure elapsed-time watchdog decision (monotonic seconds)."""
+    if last_heartbeat is None:
+        return "supervisor_never_started" if now-started >= startup_grace else None
+    return "supervisor_lost" if now-last_heartbeat >= orphan_grace else None
+
+def dispatch_started_at(approved):
+    """Legacy sealed approvals only had a 24h expiry, not a start time."""
+    return float(approved.get("submitted_at", float(approved["expires"]) - 86400))
 def signature(payload):
     path=root()/"state"/"n1-celery-seal.key"
     path.parent.mkdir(parents=True,exist_ok=True)
@@ -98,6 +115,17 @@ def execute_approved_tool(jobid):
         raise PermissionError("N1 approval not authentic")
     if approved["id"]!=jobid or time.time()>approved["expires"]:
         raise PermissionError("N1 approval stale")
+    current_supervisor = r.get(supervisor_key())
+    if not current_supervisor or (approved.get("supervisor_token") and
+                                  current_supervisor.decode("utf-8") != approved["supervisor_token"]):
+        _execution_marker(jobid, "orphaned", reason="supervisor_unavailable_or_replaced")
+        return {"ok":False,"status":"orphaned", "async_unresolved":True,
+                "dispatch_id":jobid,
+                "error":"Norm supervisor absent; Celery refused to execute an old dispatch."}
+    if time.time() - dispatch_started_at(approved) >= CFG["max_job_age_seconds"]:
+        _execution_marker(jobid, "timed_out", reason="expired_before_execution")
+        return {"ok":False,"status":"timed_out", "dispatch_id":jobid,
+                "error":"Celery dispatch expired before execution; no tool ran."}
     claimed=r.set(CFG["prefix"]+":claimed:"+jobid,os.getpid(),ex=172800,nx=True)
     if not claimed:raise RuntimeError("duplicate execution blocked")
     started = time.monotonic()
@@ -141,8 +169,13 @@ class Broker:
     def submit(self,task_id,step_id,name,arguments):
         if not self.available():raise RuntimeError("no Celery worker available")
         jobid=str(uuid.uuid4())
+        token = self.redis.get(supervisor_key())
+        if not token:
+            raise RuntimeError("Norm supervisor heartbeat absent; Celery dispatch refused")
+        now = time.time()
         approved={"id":jobid,"task_id":task_id,"step_id":step_id,
-                  "name":name,"arguments":arguments,"expires":time.time()+86400}
+                  "name":name,"arguments":arguments,"submitted_at":now,
+                  "supervisor_token":token.decode("utf-8"),"expires":now+86400}
         payload={"approved":approved,"seal":signature(approved)}
         if not self.redis.set(key(jobid),json.dumps(payload,ensure_ascii=False),ex=172800,nx=True):
             raise RuntimeError("dispatch collision")
@@ -193,7 +226,20 @@ class Broker:
             return {"ok":False,"status":"cancelled", "dispatch_id":jobid,
                     "error":"Celery dispatch cancelled by operator task suppression; re-evaluate before retrying."}
         result=app.AsyncResult(jobid)
-        if not result.ready():return None
+        if not result.ready():
+            # A force-exited solo worker may never publish a Celery result.
+            # Preserve the actual reason rather than leaving N1 waiting an hour.
+            raw = self.redis.get(CFG["prefix"] + ":execution:" + jobid)
+            if raw:
+                try:
+                    marker = json.loads(raw)
+                    if marker.get("state") in {"orphaned", "timed_out"}:
+                        return {"ok": False, "status": marker["state"],
+                                "dispatch_id":jobid, "async_unresolved": True,
+                                "error": "Celery worker was stopped by its safety watchdog; execution outcome unknown."}
+                except (ValueError, TypeError):
+                    pass
+            return None
         if result.successful() and isinstance(result.result,dict):return result.result
         return {"ok":False,"error":"Async tool failed: "+str(result.result)[:500]}
 

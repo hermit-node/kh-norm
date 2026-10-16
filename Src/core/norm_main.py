@@ -1058,6 +1058,9 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
     live = None
     startup_completed = False
     graceful_exit = False
+    celery_supervisor = None
+    celery_supervisor_token = f"{os.getpid()}:{os.urandom(8).hex()}"
+    celery_heartbeat_at = 0.0
 
     try:
         resources["startup_phase"] = "activity-api-initialization"
@@ -1238,10 +1241,27 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         startup_completed = True
         logging.info("Conversation persistence ready")
 
+        # Detached Celery workers have a bounded startup grace; renew only while
+        # this Norm service is actually alive. Their own watchdog handles crashes.
+        try:
+            from norm_runtime.celery_tool_executor import CFG as celery_cfg, redis as celery_redis, supervisor_key
+            if celery_cfg["enabled"]:
+                celery_supervisor = celery_redis()
+                celery_supervisor.set(supervisor_key(), celery_supervisor_token, ex=75)
+                celery_heartbeat_at = time.monotonic()
+        except Exception:
+            logging.exception("Celery supervisor heartbeat unavailable; workers will fail closed")
+
         # Do not remain alive-but-unreachable if a dedicated HTTP transport
         # thread exits unexpectedly.  SelectorEventLoop prevents the observed
         # Windows AcceptEx failure; this watchdog is the second line of defense.
         while not shutdown_requested.wait(timeout=1.0):
+            if celery_supervisor is not None and time.monotonic()-celery_heartbeat_at >= 10:
+                try:
+                    celery_supervisor.set(supervisor_key(), celery_supervisor_token, ex=75)
+                except Exception:
+                    logging.exception("Celery supervisor heartbeat renewal failed")
+                celery_heartbeat_at = time.monotonic()
             if chat_thread is not None and not chat_thread.is_alive():
                 raise RuntimeTransportFailure("chat HTTP server thread exited unexpectedly")
             if activity_thread is not None and not activity_thread.is_alive():
@@ -1284,6 +1304,11 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             OllamaClient.cancel_active()
             worker.wait_idle(timeout=10)
     finally:
+        if celery_supervisor is not None:
+            try:
+                celery_supervisor.close()
+            except Exception:
+                logging.exception("Celery supervisor Redis connection close failed")
         cleanup_origin_phase = str(resources.get("startup_phase") or "unknown")
         resources["startup_ready"] = False
         resources["startup_phase"] = "stopping"

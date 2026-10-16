@@ -1,6 +1,6 @@
-# Norm 0.55.10r14 - N1-Celery-Suppression
+# Norm 0.55.10r15 - Celery-Orphan-Guard
 
-Original archive SHA-256: 24c9e24f3d2ae98a36038ecabf839b9b04f5a0ef65c135d1c3ee0e2eb1f55b65
+Original archive SHA-256: 46eb0c060c6157158837093b9e8cabbc28c0114125e5f1817fa8817182bf522b
 
 Historical assessment: source-inventory-verified
 
@@ -8,6 +8,6 @@ Omitted private paths: backups/plugins-ini/plugins-20261014-151017-561326+0000-7
 
 Sanitized paths: core/norm_main.py, core/norm_runtime/aiohttp_host.py
 
-Historical caveats: Source notes refer to an r11r3 patch, but no standalone r11r3 source ZIP is in the active install kit.; Normalized from 0.55.10r11r4-n1-celery-suppression; old ZIP and mapping retained in the installer kit.
+Historical caveats: Normalized from 0.55.10r11r5-celery-orphan-guard; old ZIP and mapping retained in the installer kit.
 
 Public source snapshot is not identical to the original ZIP or guaranteed installable.

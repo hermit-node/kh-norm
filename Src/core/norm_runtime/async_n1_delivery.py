@@ -181,6 +181,23 @@ class N1AsyncBridge:
         completed = 0
         modified = False
         for item in list(self.pending):
+            if item.get("suppressed_while_pending"):
+                # Long-paused tasks may have lost both the Celery result and the
+                # 48h cancellation marker. Deliver the known suppression event
+                # rather than silently submitting the tool again.
+                try:
+                    observed = self.broker.poll(item["id"]) if self.broker is not None else None
+                except Exception:
+                    observed = None
+                result = observed if observed is not None else {
+                    "ok": False, "status": "cancelled", "async_unresolved": True,
+                    "dispatch_id": item["id"],
+                    "error": "Pending Celery work was suppressed; final execution outcome is unconfirmed."
+                }
+                self._complete(item, result, messages, evidence,
+                               unresolved=bool(isinstance(result, dict) and result.get("async_unresolved")))
+                completed += 1
+                continue
             if now < float(item.get("next_check_at") or 0):
                 continue
             item["poll_count"] = int(item.get("poll_count") or 0) + 1
@@ -192,7 +209,8 @@ class N1AsyncBridge:
                 logging.exception("Celery result lookup failed dispatch=%s", item["id"])
                 result = None
             if result is not None:
-                self._complete(item, result, messages, evidence)
+                self._complete(item, result, messages, evidence,
+                               unresolved=bool(isinstance(result, dict) and result.get("async_unresolved")))
                 completed += 1
                 continue
             if now >= deadline:

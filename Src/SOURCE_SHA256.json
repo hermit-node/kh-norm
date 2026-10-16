@@ -1,5 +1,5 @@
 {
-  "package": "Norm-0.55.10r11r4-N1-Celery-Suppression-Portable-Source",
+  "package": "Norm-0.55.10r11r5-Celery-Orphan-Guard-Portable-Source",
   "source_baseline": "Norm-0.55.10r11r2-Browser-Postgres-Unified-Portable-Source(1).zip",
   "files": [
     {
@@ -39,8 +39,8 @@
     },
     {
       "file": "SOURCE_PACKAGE.md",
-      "bytes": 35557,
-      "sha256": "408f4045eb6c958691294caaa4955533e44a02cd1c6dc20a4c265e6dc1e94c38"
+      "bytes": 37016,
+      "sha256": "d714428679170223bb307877714401ff1496e60af7d069c0e5ff6b3596465257"
     },
     {
       "file": "Safe-Shutdown-Norm.bat",
@@ -74,13 +74,13 @@
     },
     {
       "file": "config/settings.ini",
-      "bytes": 3230,
-      "sha256": "9eac7103f6b72b4cff3deb4fb40def0641323d1a148c304e26c0c7740cdd71de"
+      "bytes": 3334,
+      "sha256": "83682b10dd79ddd38f0e03f08207d0644f09da2c3807568feadb6afb85f88c85"
     },
     {
       "file": "core/norm_main.py",
-      "bytes": 71641,
-      "sha256": "6fde6eb1e6878bfcbb13ada012e04789937599d5c4d8fbb597629c3cb3f518aa"
+      "bytes": 73014,
+      "sha256": "2c3307dc201b5720b9c9846476a23e70f991ef30c833a8e33fc1f132b8642eab"
     },
     {
       "file": "core/norm_runtime/__init__.py",
@@ -114,8 +114,8 @@
     },
     {
       "file": "core/norm_runtime/async_n1_delivery.py",
-      "bytes": 12235,
-      "sha256": "3030966c2b3bf5e35a2530b2386504e82acfe6c22f192eb727dded0abc21480f"
+      "bytes": 13360,
+      "sha256": "bc1d32f4ace0cce01e879ede2962220b0533ca5d0ce05d73c2633ceb77624728"
     },
     {
       "file": "core/norm_runtime/backup_retention.py",
@@ -134,8 +134,8 @@
     },
     {
       "file": "core/norm_runtime/celery_tool_executor.py",
-      "bytes": 15045,
-      "sha256": "c0938ca771796f9dff97c194b6d7c582cd9ccae424569ed3c1a0419ec44fe068"
+      "bytes": 17846,
+      "sha256": "2f6b3f270f88c658d7be1df09d3a749ad450ccad8b08a5f7bfc16470d0741953"
     },
     {
       "file": "core/norm_runtime/chunked_evidence.py",
@@ -299,8 +299,8 @@
     },
     {
       "file": "core/norm_runtime/prompt_queue.py",
-      "bytes": 46167,
-      "sha256": "176bc31e7e61ead594a9a241a6181b4b221b66d305da52fdf6fd04b2a729983e"
+      "bytes": 48392,
+      "sha256": "a4945e1cd89f31d223af18445690b5266022c0ba8ce776966cd5a62d3ca0e647"
     },
     {
       "file": "core/norm_runtime/prompt_worker.py",
@@ -436,6 +436,11 @@
       "file": "docs/R11R4_VALIDATION.md",
       "bytes": 1758,
       "sha256": "8252202f5e9f5dd42fd5a300e74e6a17b6b730cb71ebf9281d0675b0e4c60d82"
+    },
+    {
+      "file": "docs/R11R5_VALIDATION.md",
+      "bytes": 4894,
+      "sha256": "2320f97dcd0379818c8fa1e8ca2966becd4468bd11257509204c90bf4e07d472"
     },
     {
       "file": "docs/README.md",
@@ -704,8 +709,8 @@
     },
     {
       "file": "package-manifest.json",
-      "bytes": 39805,
-      "sha256": "406397c251060a9e659687b76e52e2ed1aeb9169ebecca2bd51ce10297bc344c"
+      "bytes": 39801,
+      "sha256": "3a3828463e5673fe415950a0718b1509b6d40cd044d26d1b17666d0e380ef002"
     },
     {
       "file": "plugins/README.md",
@@ -1344,8 +1349,8 @@
     },
     {
       "file": "source-content-hashes.json",
-      "bytes": 69348,
-      "sha256": "3ea1d2f024d9742c69b2c5f79032ddf0aae2f1df6d49cef9623e144e12866b16"
+      "bytes": 69346,
+      "sha256": "21634abc4f7628fb128d1dc61ee91e12a5c4ea20071496e3f0adbf9b2911d3dd"
     },
     {
       "file": "tools/7zip/7z.dll",
@@ -1384,8 +1389,8 @@
     },
     {
       "file": "tools/celery_tool_worker.py",
-      "bytes": 2624,
-      "sha256": "8504480f2be43f72e0b41db3d033c8c6897d848787c05bd64aa6fd9e819e3348"
+      "bytes": 5799,
+      "sha256": "ab289b5f859d534be74f171492745690f5d902a216b2d1b0aa05873d6bb41ced"
     },
     {
       "file": "tools/desktop_gui_bridge.py",
@@ -1696,6 +1701,11 @@
       "file": "tools/test_celery_suppress_n1_r11r3.py",
       "bytes": 5646,
       "sha256": "58aa1de1b094870fcf43a9ab71ece70c41c37c7c4d09f71ad4dc0bfc3cbe5d80"
+    },
+    {
+      "file": "tools/test_celery_watchdog_r11r5.py",
+      "bytes": 7114,
+      "sha256": "b41868a56551eff30fe8a385d4d86f427bf189a51ad5bd511d585891bbf1993e"
     },
     {
       "file": "tools/test_chunked_evidence.py",

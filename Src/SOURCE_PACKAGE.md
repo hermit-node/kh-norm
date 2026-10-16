@@ -1,3 +1,11 @@
+## 0.55.10r11r5 — detached Celery orphan watchdog and suppressed receipt durability (2026-10-15)
+
+Built on the user-supplied r11r4 portable source. **Offline source candidate only: no running Norm installation was modified.** Changes are limited to the service heartbeat, solo-worker self-monitor, N1 result interpretation, and the existing suppression snapshot/restore path.
+
+- Existing idempotent pool remains four workers by default. A solo worker exits when Norm has been absent long enough (75-second expiring service lease plus 180-second grace), or a dispatch reaches its one-hour ceiling. Worker processes also fence old service generations. An early startup allowance is 300 seconds. A completed Celery result stays available; a watchdog-stopped dispatch is reported to N1 as unresolved, not assumed to have failed harmlessly.
+- Suppression snapshots now retain outstanding Celery receipt identity across Redis TTL expiration. Resumption restores those receipts with the waiting jobs; N1 evaluates the actual result or suppression cancellation and does not silently re-dispatch the previous operation.
+- The original task-parking infrastructure, user permissions, N1/N2 division, Redis DB allocation, PostgreSQL pool design, and `read_file`/mutation synchronous paths are unchanged. **No live Windows integration test yet.** See `docs/R11R5_VALIDATION.md` for 27 passing focused tests and remaining limits (including a GIL-held native execution).
+
 ## 0.55.10r11r4 — N1 Celery wait decisions and task-scoped suppression (2026-10-15)
 
 Incremental changes on the supplied r11r2 baseline plus r11r3 recovery/resume patch. This is a **source-only offline candidate**, not a change deployed to KHzz.

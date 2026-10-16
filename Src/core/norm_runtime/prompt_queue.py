@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional, Tuple
@@ -817,7 +818,30 @@ class RedisPromptQueue:
                                  asdict(self._fields_to_job("approval-wait", fields))})
             except (ValueError, TypeError, KeyError):
                 continue
-        return {"jobs": jobs, "captured_at": time.time()}
+        # Keep pending N1 dispatch evidence with the PostgreSQL-bound suppression
+        # snapshot. Redis async-link receipts normally expire after two hours;
+        # an operator may resume the task days later. Do not rerun such calls.
+        celery_receipts = []
+        for raw_key in (self.r.scan_iter(match=f"norm:async-link:{task_id}:*", count=50)
+                        if hasattr(self.r, "scan_iter") else ()):
+            try:
+                saved = self.r.get(raw_key)
+                pending = json.loads(saved) if saved else []
+                if not isinstance(pending, list) or not pending:
+                    continue
+                marked = []
+                for item in pending:
+                    if isinstance(item, dict):
+                        receipt = dict(item)
+                        receipt["suppressed_while_pending"] = True
+                        marked.append(receipt)
+                if marked:
+                    key = raw_key.decode("utf-8") if isinstance(raw_key, bytes) else str(raw_key)
+                    celery_receipts.append({"key": key, "pending": marked})
+            except (ValueError, TypeError, UnicodeDecodeError):
+                logging.exception("Skipping unreadable Celery suppression receipt task=%s", task_id)
+        return {"jobs": jobs, "celery_receipts": celery_receipts,
+                "captured_at": time.time()}
 
     def restore_task_jobs(self, payload: dict) -> list[str]:
         """Restore a captured suppression snapshot without changing stream semantics.
@@ -828,6 +852,7 @@ class RedisPromptQueue:
         """
         payload = dict(payload or {})
         raw: list[dict] = []
+        celery_receipts = []
         task_items = payload.get("tasks")
         if isinstance(task_items, list):
             # Deepest tasks first. If both a child and its waiting parent were parked
@@ -840,8 +865,10 @@ class RedisPromptQueue:
             for task_item in ordered:
                 queue_payload = task_item.get("queue") if isinstance(task_item.get("queue"), dict) else {}
                 raw.extend(item for item in list(queue_payload.get("jobs") or []) if isinstance(item, dict))
+                celery_receipts.extend(item for item in list(queue_payload.get("celery_receipts") or []) if isinstance(item, dict))
         else:
             raw = [item for item in list(payload.get("jobs") or []) if isinstance(item, dict)]
+            celery_receipts = [item for item in list(payload.get("celery_receipts") or []) if isinstance(item, dict)]
 
         destinations = {
             "work": self.stream,
@@ -871,6 +898,16 @@ class RedisPromptQueue:
         if not restored:
             return []
         pipe = self.r.pipeline(transaction=True)
+        # The restored receipt is an N1 observation, not an authorization to
+        # execute. Status distinguishes a suppressed in-flight call from one
+        # that actually completed. Pair Redis receipt recovery with queue restore.
+        receipt_writes = 0
+        for receipt in celery_receipts:
+            key = str(receipt.get("key") or "")
+            rows = receipt.get("pending")
+            if key.startswith("norm:async-link:") and isinstance(rows, list):
+                pipe.set(key, json.dumps(rows, ensure_ascii=False), ex=7200)
+                receipt_writes += 1
         for label, job, due_at in restored:
             if label == "approval-wait":
                 pipe.zadd(destinations[label], {
@@ -885,7 +922,7 @@ class RedisPromptQueue:
             else:
                 pipe.xadd(destinations[label], self._job_to_fields(job))
         result = pipe.execute()
-        return [str(value) for value in result]
+        return [str(value) for value in result[receipt_writes:]]
 
     def requeue_pending_on_startup(self) -> int:
         pending = self.r.xpending_range(self.stream, self.group, min="-", max="+", count=1000)
