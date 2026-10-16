@@ -1,6 +1,11 @@
 # Norm current status
 
-Current package: **Norm 0.54.2g** with **Installer 2.0.0**.
+Current package: **Norm 0.54.2h** with **Installer 2.0.0**.
+
+### Single-primary-file planner discipline (0.54.2h)
+
+- Planning now prefers one primary mutated output file per executable file-creation/file-editing step. Reads remain unrestricted, related target files become separate executable steps, and one complete file may still be emitted through the guarded verbatim writer. This is planner guidance only: no runtime guard, verifier rule, or plugin behavior changed.
+- Managed-plugin fallback intentionally remains pinned to the known-good 0.54.2g package because 0.54.2h does not alter plugin payloads.
 
 ### Package completeness + console/byte-cursor fixes (0.54.2g)
 

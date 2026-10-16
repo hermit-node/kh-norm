@@ -1,8 +1,14 @@
-# Norm 0.54.2g portable source package
+# Norm 0.54.2h portable source package
 
-This directory is the portable source payload for **Norm 0.54.2g**.
+This directory is the portable source payload for **Norm 0.54.2h**.
 
 The portable source package excludes generated or machine-private material such as .venv, compiled core\norm.exe, build output, Python caches, secrets, and private runtime state.
+
+## 0.54.2h planner-only file mutation discipline
+
+- File-creation/file-editing plans should use one primary output file per executable step while allowing unrestricted source/context reads.
+- This patch does not add runtime enforcement and does not modify the verbatim-lines plugin or plan verifier.
+- Managed-plugin fallback remains pinned to the known-good 0.54.2g package because plugin payloads are unchanged.
 
 ## 0.54.2g packaged-plugin repair + 0.54.2f runtime fixes
 

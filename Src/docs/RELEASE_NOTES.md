@@ -1,3 +1,10 @@
+0.54.2h — 2026-10-07 — Single-primary-file planner discipline
+
+- Planner guidance now tells Norm that each executable file-creation/file-editing step should mutate one primary output file, while allowing unlimited read-only source/context inspection.
+- Semantically related target files should be planned as separate executable steps; a complete primary file may still be emitted in one guarded verbatim write.
+- No runtime mutation guard, plan-verifier rule, or plugin behavior was changed in this patch.
+- Retains the 0.54.2g managed-plugin payload repair and SSE/runtime fixes unchanged; managed-plugin fallback remains pinned to the known-good 0.54.2g package because plugin payloads are unchanged.
+
 0.54.2g — 2026-10-07 — Restore managed plugin payloads
 
 - Restored `plugins/vision_parse`, `plugins/web_browser`, `plugins/jan`, `plugins/vane`, and `plugins/opencode`, which were present in the known-installing 0.54.2c package but accidentally omitted from both 0.54.2 and 0.54.2f.

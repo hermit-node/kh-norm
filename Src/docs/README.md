@@ -2,7 +2,11 @@
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.54.2g / Installer 2.0.0** package only. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.54.2h / Installer 2.0.0** package only. Version history belongs only in RELEASE_NOTES.md.
+
+### Single-primary-file planner discipline (0.54.2h)
+
+Norm 0.54.2h adds a planner-only execution guideline: file-creation/file-editing steps should mutate one primary output file per executable step, while remaining free to inspect any number of source/context files. Related target files are planned separately, and a complete primary file may still be emitted in one guarded verbatim write. No runtime guard, verifier rule, or plugin behavior changed. Managed-plugin fallback remains on the known-good 0.54.2g package because plugin payloads are unchanged.
 
 ### Package completeness + console/byte-cursor fixes (0.54.2g)
 
