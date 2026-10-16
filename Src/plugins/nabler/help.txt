@@ -1,0 +1,7 @@
+Nabler — plugin help
+
+Single-call verified-result tables and checklists; trusted local Python callback and multiline script rows.
+
+No dedicated operator slash commands are registered for this plugin.
+The plugin provides its tools to Norm through the plugin manager.
+See plugins/nabler/README.md for tool usage.

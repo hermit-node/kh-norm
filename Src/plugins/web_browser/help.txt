@@ -1,0 +1,7 @@
+Norm Web Browser — plugin help
+
+Optional Playwright browser, Beautiful Soup/Soup Sieve parser, bounded crawler/search, Trafilatura text extraction, and workspace-confined file downloader.
+
+No dedicated operator slash commands are registered for this plugin.
+The plugin provides its tools to Norm through the plugin manager.
+See plugins/web_browser/README.md for tool usage.

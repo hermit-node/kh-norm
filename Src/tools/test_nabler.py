@@ -96,7 +96,7 @@ def test_manifest_plugin_manager():
 
 def test_release_wiring():
     manifest = json.loads((ROOT / "package-manifest.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == "0.54.3"
+    assert manifest["version"] == "0.55.0"
     assert manifest["built_in_plugins"]["nabler"] == "plugins/nabler"
     assert "plugins/nabler" in manifest["managed_persistent_subtrees"]
     assert "nabler_inline" not in manifest["built_in_plugins"]

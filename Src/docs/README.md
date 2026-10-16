@@ -2,7 +2,13 @@
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.54.3 portable-source / Installer 2.0.0 baseline** package only. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.55.0 portable-source / Installer 2.0.0 baseline** package only. Version history belongs only in RELEASE_NOTES.md.
+
+### Lesson/code memory and executable topology
+
+- `plugins/lesson_model` v0.3.0a1 adds operator-reviewed reusable lessons plus durable versioned source-code memory. Lesson candidates require explicit approval; the current skeleton does not train weights or auto-promote `norm:latest`.
+- Code-memory scans retain a SHA-verified wholesale copy of the input ZIP while leaving the original untouched, then walk bounded source chunks in runtime-priority order. Dense structured analysis is intended for PostgreSQL; a human README remains a separate output.
+- The same scan can emit a canonical CodeGraph plus standalone interactive topology HTML covering structural/call relationships, parameter/argument evidence, expected return contracts where statically observable, semantic capability clusters, and upstream/downstream focused views. Runtime execution overlays are reserved but disabled until instrumentation is added.
 
 ### Nabler unified table/checklist rendering (0.54.3)
 
@@ -246,6 +252,7 @@ Package-managed first-party plugins:
 
 - backup
 - file_read
+- lesson_model
 - postgres_pool
 - rotor5_cipher
 - soft_delete

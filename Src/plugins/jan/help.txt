@@ -1,0 +1,7 @@
+jan — plugin help
+
+Remote Jan adapter for model/chat delegation over an operator-configured Tailscale endpoint.
+
+No dedicated operator slash commands are registered for this plugin.
+The plugin provides its tools to Norm through the plugin manager.
+See plugins/jan/README.md for tool usage.

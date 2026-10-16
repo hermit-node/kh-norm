@@ -1,7 +1,7 @@
 {
   "package_schema": 1,
   "name": "Norm",
-  "version": "0.54.3",
+  "version": "0.55.0",
   "package_type": "portable-source",
   "source_dir": "core",
   "entrypoint": "core/norm_main.py",
@@ -83,7 +83,8 @@
     "plugins/postgres_pool",
     "plugins/voice_profile",
     "plugins/codex_reasoner",
-    "plugins/nabler"
+    "plugins/nabler",
+    "plugins/lesson_model"
   ],
   "built_in_plugins": {
     "backup": "plugins/backup",
@@ -96,7 +97,8 @@
     "postgres_pool": "plugins/postgres_pool",
     "voice_profile": "plugins/voice_profile",
     "codex_reasoner": "plugins/codex_reasoner",
-    "nabler": "plugins/nabler"
+    "nabler": "plugins/nabler",
+    "lesson_model": "plugins/lesson_model"
   },
   "canonical_prompt_ingress": {
     "redis_db": 3,
@@ -153,7 +155,9 @@
     "renderer": "PyMuPDF 1.28.2",
     "authority": "rendered page over untrusted text layer",
     "page_window": 10,
-    "delivery": "checksum-first managed plugin reconciliation; verified src is untouched, mismatched Norm src is repaired before any public fallback"
+    "delivery": "checksum-first managed plugin reconciliation; verified src is untouched, mismatched Norm src is repaired before any public fallback",
+    "hybrid_triage": "OCR-first for scanned PDF and image writing; confident OCR boxes masked with alpha, uncovered ink routed to local vision crops; native PDF text uses grayscale ink-accounting; explicit mode overrides",
+    "ocr": "Optional pytesseract 0.3.13 Python frontend and separate Tesseract OCR executable; NORM_TESSERACT_PATH may specify the executable"
   },
   "model_stream_safety": {
     "partial_line_flush_chars": 0,
@@ -172,7 +176,7 @@
   "imprint": "norm-imprint.json",
   "voice_profile": {
     "plugin": "plugins/voice_profile",
-    "version": "0.4.0",
+    "version": "0.4.1",
     "state_root": "state/voice_profiles",
     "pdf_extractor": "plugins/vision_parse",
     "style_activation": "explicit activate_profile; inactive by default",
@@ -211,9 +215,9 @@
     "plugins": {
       "plugins/vision_parse": {
         "name": "vision_parse",
-        "version": "0.2.1",
+        "version": "0.3.0",
         "entrypoint": "src/main.py",
-        "sha256": "c3ffc0499dd1a0b9ec5889321139b5d0ee2d2536d9fe1778cbb8fdb182f8ebe6"
+        "sha256": "f67a17564401f972ee78e6a8730df4a010aa0a7796e78b69deb53d284feac331"
       },
       "plugins/web_browser": {
         "name": "Norm Web Browser",
@@ -435,5 +439,18 @@
     "hard_limit": 384,
     "judge": "N1 grants each additional bounded lease only for genuine forward progress rather than raw tool/activity volume",
     "manual_recovery": "At the granted/hard boundary a resumable failure checkpoint is retained for /failed and /resume-failed; /flush-failed distills a reusable lesson before purging detailed failed-task state."
+  },
+  "lesson_model": {
+    "plugin": "plugins/lesson_model",
+    "version": "0.3.0a1",
+    "mode": "operator-reviewed lessons + versioned code memory + topology",
+    "training_backend": "not configured; training and auto-promotion disabled",
+    "state_root": "state/lesson_model",
+    "source_retention": "content-addressed wholesale ZIP copy; original input is never deleted",
+    "postgres_table": "configured runtime schema.code_memory_snapshots",
+    "human_outputs": [
+      "README.md",
+      "standalone interactive topology HTML"
+    ]
   }
 }

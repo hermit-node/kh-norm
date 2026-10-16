@@ -29,6 +29,9 @@ from norm_gui_common import (
     load_runtime_config,
 )
 from norm_runtime.about import format_about
+from norm_plugin_help import get_help
+from norm_voice_commands import run_voice_command
+from norm_vision_commands import run_vision_command
 from runtime_bootstrap import build_postgres_pool
 
 
@@ -312,12 +315,8 @@ def ensure_norm_running(ep: dict[str, str]) -> None:
     raise RuntimeError("Norm was started but did not become healthy within 30 seconds.")
 
 
-def show_help() -> None:
-    path = ROOT / "docs" / "help_menu.txt"
-    try:
-        print(path.read_text(encoding="utf-8").rstrip())
-    except Exception as exc:
-        print(f"Could not read help menu {path}: {exc}")
+def show_help(topic: str = "") -> None:
+    print(get_help(ROOT, topic))
 
 
 def maintenance_from_busy(ep: dict[str, str]) -> dict:
@@ -517,8 +516,15 @@ def main() -> int:
             if not text:
                 continue
             lowered = " ".join(text.lower().split())
-            if lowered in {"help", "/help"}:
-                show_help()
+            if lowered in {"help", "/help"} or lowered.startswith("/help ") or lowered.startswith("help "):
+                parts = text.split(maxsplit=1)
+                show_help(parts[1] if len(parts) > 1 else "")
+                continue
+            # Operator voice commands run locally and deterministically: never enqueue them
+            # as model tasks just to discover whether a profile is already active.
+            if text.startswith("/") and run_voice_command(text, ROOT):
+                continue
+            if text.startswith("/") and run_vision_command(text, ROOT):
                 continue
             if lowered == "/about":
                 try:

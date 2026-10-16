@@ -61,3 +61,16 @@ Version 0.4.0 also synthesizes `persona_profile.json` and `persona_prompt.txt` f
 corpus. Persona evidence is treated as untrusted corpus data: it can enrich a role selected in
 `config/profiles.json`, but it cannot override operator-authored direct persona or runtime/tool
 instructions. `persona_summary` and `render_persona_prompt` expose the generated profile.
+
+## Direct operator commands
+
+The Norm Prompt console implements direct `/voice-*` commands without submitting a
+Redis prompt/task. Run `/help voice-profiler` to inspect all supported operations,
+including text-only PDF build, inspection, idempotent profile activation, and deletion.
+The commands verify the plugin source identity before executing it. Activating an
+already-current prompt is a no-op; an edited `voice_profile.json` causes regeneration
+and updated active SHA.
+
+## PDF extraction policy
+
+`extraction_mode="auto"` delegates directly to `vision_parse(mode="hybrid")`. The shared PDF reader owns grayscale pixel-coverage assessment and vision fallback; the voice-profile module does not make independent text-length/quality decisions. Explicit `text`, `vision`, and `hybrid` are forwarded unchanged.

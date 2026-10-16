@@ -1,0 +1,7 @@
+vane — plugin help
+
+Remote Vane hybrid-retrieval adapter using an operator-configured Tailscale bridge and shared embedding model.
+
+No dedicated operator slash commands are registered for this plugin.
+The plugin provides its tools to Norm through the plugin manager.
+See plugins/vane/README.md for tool usage.
