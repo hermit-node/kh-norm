@@ -1,6 +1,6 @@
 {
-  "package": "Norm-0.55.10r11r5-Celery-Orphan-Guard-Portable-Source",
-  "source_baseline": "Norm-0.55.10r11r2-Browser-Postgres-Unified-Portable-Source(1).zip",
+  "package": "Norm-0.55.10r11r7-No-Celery-Portable-Source",
+  "source_baseline": "Installed 0.55.10r11r6",
   "files": [
     {
       "file": ".gitattributes",
@@ -18,69 +18,14 @@
       "sha256": "e5bffb24c733b1e297d3a0d3e742b050a16899ed71f97ff94210d5971c9c3bfb"
     },
     {
-      "file": "Modelfile",
-      "bytes": 71,
-      "sha256": "e774f5ea91a76af90b32d07d967a17a1e2741a3e99c67ee944536cb548e6a432"
-    },
-    {
-      "file": "README.md",
-      "bytes": 35655,
-      "sha256": "b07563bf579c2432efc548aefcaf85eddc005461f9f60b9b54df331c7259eaf8"
-    },
-    {
-      "file": "Run-Norm-Terminals.bat",
-      "bytes": 1005,
-      "sha256": "d6a5b826b89540b6c82eb5e694eb577c635b4dd31c46c3a73c791a7f0203f3d9"
-    },
-    {
-      "file": "Run-Norm.bat",
-      "bytes": 4655,
-      "sha256": "b1caace3a4f4db1b3a5b455732dd1f49f89931a8e4da62804f3728968fc539b9"
-    },
-    {
-      "file": "SOURCE_PACKAGE.md",
-      "bytes": 37326,
-      "sha256": "7ca0576f67d7bd2532633136a3ba2bb0e0e624614d72dd103c5abed753b979d2"
-    },
-    {
-      "file": "Safe-Shutdown-Norm.bat",
-      "bytes": 519,
-      "sha256": "0f96e2194b8352c5c77b22c57888fa024bdca67f667aabc1b025d77e445c8c73"
-    },
-    {
-      "file": "Show Shared Browser.cmd",
-      "bytes": 394,
-      "sha256": "797ff100f7d703e437ec7a9786f4b6822d0f08bf55315c8767a0e784880305bd"
-    },
-    {
-      "file": "backups/plugins-ini/plugins-20261014-151017-561326+0000-72956dfad8bb.ini",
-      "bytes": 1665,
-      "sha256": "72956dfad8bbdde0dd631bb19ab6ed3b7c1caafed990de0df0df552955a5037b"
-    },
-    {
-      "file": "config/plugins.ini",
-      "bytes": 1762,
-      "sha256": "ca13ca4d9f1be47b02ecb9f206f407c81d040b37dd59ac523698cb5708264c7a"
-    },
-    {
-      "file": "config/runtime.json",
-      "bytes": 16843,
-      "sha256": "deb77778116cbc9c635e628b45d3d4d134772aacbfafcb4d980a402ae0a8a6c6"
-    },
-    {
       "file": "config/settings.example.ini",
       "bytes": 2952,
       "sha256": "34c0c073df6e1b5a9985875f0f8297474611035a22567fc3dc621e9bda4b5cdc"
     },
     {
-      "file": "config/settings.ini",
-      "bytes": 3334,
-      "sha256": "83682b10dd79ddd38f0e03f08207d0644f09da2c3807568feadb6afb85f88c85"
-    },
-    {
       "file": "core/norm_main.py",
-      "bytes": 73014,
-      "sha256": "2c3307dc201b5720b9c9846476a23e70f991ef30c833a8e33fc1f132b8642eab"
+      "bytes": 70187,
+      "sha256": "607b17d2e4419ff8cc80494e4136f48a6f0d8835981e06e68dee3fc1e15ec37c"
     },
     {
       "file": "core/norm_runtime/__init__.py",
@@ -114,8 +59,8 @@
     },
     {
       "file": "core/norm_runtime/async_n1_delivery.py",
-      "bytes": 13360,
-      "sha256": "bc1d32f4ace0cce01e879ede2962220b0533ca5d0ce05d73c2633ceb77624728"
+      "bytes": 4409,
+      "sha256": "da8cc2788eb9206b71f76bc081d83421430da4ed64168c11206e58bbcb3f42ab"
     },
     {
       "file": "core/norm_runtime/backup_retention.py",
@@ -129,13 +74,8 @@
     },
     {
       "file": "core/norm_runtime/celery_shutdown.py",
-      "bytes": 6955,
-      "sha256": "2fad9000512efe034659d91b4a92f7933b050c4e96fcf69870e332eee36201a1"
-    },
-    {
-      "file": "core/norm_runtime/celery_tool_executor.py",
-      "bytes": 17846,
-      "sha256": "2f6b3f270f88c658d7be1df09d3a749ad450ccad8b08a5f7bfc16470d0741953"
+      "bytes": 5966,
+      "sha256": "721c4647c83db1003ebff58801e63c878e3ee142d67cd6690bf19fa82fd50226"
     },
     {
       "file": "core/norm_runtime/chunked_evidence.py",
@@ -304,8 +244,8 @@
     },
     {
       "file": "core/norm_runtime/prompt_worker.py",
-      "bytes": 388342,
-      "sha256": "30a833b71ed4e91ff6513c5399e0ceefeffdd7023674de22e37a85c5d9ef9df7"
+      "bytes": 387977,
+      "sha256": "69105db89eced96365821bb361da34d16fa6820483824f702c83e4a4d5f1cecf"
     },
     {
       "file": "core/norm_runtime/protocol.py",
@@ -408,6 +348,16 @@
       "sha256": "977f3a165d8114a7dec9813b3ed4d51ef62ba97b1513038d735cf1f839d42d64"
     },
     {
+      "file": "docs/help_full.txt",
+      "bytes": 6868,
+      "sha256": "123f5fb5b5bd3a8efeb5c714d43964af9198f6495dd497e833b57cc41550b116"
+    },
+    {
+      "file": "docs/help_menu.txt",
+      "bytes": 1735,
+      "sha256": "923816f08be954d1b29c8c1b568b8c3cd714db0fa44929f6f555d2e7b721b377"
+    },
+    {
       "file": "docs/MAINTENANCE_VERIFICATION.md",
       "bytes": 8797,
       "sha256": "fb25f7701cdbe72edb307cb9e548208c80ff06b99c8f2646357191619a9b2924"
@@ -443,6 +393,16 @@
       "sha256": "2320f97dcd0379818c8fa1e8ca2966becd4468bd11257509204c90bf4e07d472"
     },
     {
+      "file": "docs/R11R6_WORKSPACE_VALIDATION.md",
+      "bytes": 1094,
+      "sha256": "3f2d9c67ab82e1ba8a35f3755f94c7348f323a17e69d56d9165b9059d35a9829"
+    },
+    {
+      "file": "docs/R11R7_NO_CELERY_VALIDATION.md",
+      "bytes": 1118,
+      "sha256": "29b39228731e3c4b8ded29f73c21fa303199b394de21913a2c053486886b3cfd"
+    },
+    {
       "file": "docs/README.md",
       "bytes": 37906,
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
@@ -473,24 +433,9 @@
       "sha256": "f4b85523c45c9bacbb98e1b565bfa7cfceae721f52100adc2280ebd117a34743"
     },
     {
-      "file": "docs/help_full.txt",
-      "bytes": 6868,
-      "sha256": "123f5fb5b5bd3a8efeb5c714d43964af9198f6495dd497e833b57cc41550b116"
-    },
-    {
-      "file": "docs/help_menu.txt",
-      "bytes": 1735,
-      "sha256": "923816f08be954d1b29c8c1b568b8c3cd714db0fa44929f6f555d2e7b721b377"
-    },
-    {
       "file": "legacy_stegosplit_plugins_r8/original_plugins.ini",
       "bytes": 1769,
       "sha256": "80ea7d3d7b550488d5034c84a42f79af01595e7ceeeb9956fe8801b505855008"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_auth/README.md",
-      "bytes": 2183,
-      "sha256": "13689be800851b9a37e35b7784b9ed8346238b2357a4e5fdd2443eaf68b5933b"
     },
     {
       "file": "legacy_stegosplit_plugins_r8/stegosplit_auth/help.txt",
@@ -501,6 +446,11 @@
       "file": "legacy_stegosplit_plugins_r8/stegosplit_auth/plugin.json",
       "bytes": 762,
       "sha256": "4fbb33a449e365bb55b1dd44628d1291f4b3d77677caef1c7415f20cadf62617"
+    },
+    {
+      "file": "legacy_stegosplit_plugins_r8/stegosplit_auth/README.md",
+      "bytes": 2183,
+      "sha256": "13689be800851b9a37e35b7784b9ed8346238b2357a4e5fdd2443eaf68b5933b"
     },
     {
       "file": "legacy_stegosplit_plugins_r8/stegosplit_auth/src/auth_admin_cli.py",
@@ -533,11 +483,6 @@
       "sha256": "0941ff3ca04e9947bc0481e10e6f748fa3a0da9ab2ef74dd9ee3f9bec1f6f4fc"
     },
     {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_key/README.md",
-      "bytes": 539,
-      "sha256": "4636d9366a7d31077464a4d391b20e497d93579674080c8303eea74923e84eda"
-    },
-    {
       "file": "legacy_stegosplit_plugins_r8/stegosplit_key/help.txt",
       "bytes": 291,
       "sha256": "c41a8858b951d41bd74167fa4a08f5c09894add021cae0c8932d72089889874d"
@@ -546,6 +491,11 @@
       "file": "legacy_stegosplit_plugins_r8/stegosplit_key/plugin.json",
       "bytes": 531,
       "sha256": "5b420c740bbddbd9f35d1ee1e93ae51e4737d6c75b472b738718d4691742ce52"
+    },
+    {
+      "file": "legacy_stegosplit_plugins_r8/stegosplit_key/README.md",
+      "bytes": 539,
+      "sha256": "4636d9366a7d31077464a4d391b20e497d93579674080c8303eea74923e84eda"
     },
     {
       "file": "legacy_stegosplit_plugins_r8/stegosplit_key/src/_stegosplit/__init__.py",
@@ -573,11 +523,6 @@
       "sha256": "fff92a6c1c4fc6aed9abd0c12598dee64c92b059ac4c89709323f240ce7fc721"
     },
     {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_message/README.md",
-      "bytes": 1820,
-      "sha256": "f1a89c165488528875cbc528a504d440bb4be9ec4b3cc274d2b61a1a806b8f61"
-    },
-    {
       "file": "legacy_stegosplit_plugins_r8/stegosplit_message/help.txt",
       "bytes": 416,
       "sha256": "ca02d5ab112db5a102f739636f13580cec6b4fef394bbb0f7072bd054497559d"
@@ -586,6 +531,11 @@
       "file": "legacy_stegosplit_plugins_r8/stegosplit_message/plugin.json",
       "bytes": 1134,
       "sha256": "94f571dc36aa9e229e6934c9d9f819f38d69409a606a1ef15013e2debd06dd23"
+    },
+    {
+      "file": "legacy_stegosplit_plugins_r8/stegosplit_message/README.md",
+      "bytes": 1820,
+      "sha256": "f1a89c165488528875cbc528a504d440bb4be9ec4b3cc274d2b61a1a806b8f61"
     },
     {
       "file": "legacy_stegosplit_plugins_r8/stegosplit_message/src/_stegosplit_v3/__init__.py",
@@ -663,64 +613,14 @@
       "sha256": "e3210b0077888d2f28437da01107b1d055fcb5d5f3fb9d76a9a1804528b72667"
     },
     {
-      "file": "norm-ssh.ps1",
-      "bytes": 8195,
-      "sha256": "8c1215750298c25c88d5db35ed26e5d23ecf1b727ec7ad01ced442dbf96e6bb2"
-    },
-    {
-      "file": "objects/README.md",
-      "bytes": 6512,
-      "sha256": "21cfa8dd0fffdbebe3b1c82ed4899258985f7792c040f283399335a8bec90f76"
-    },
-    {
-      "file": "objects/__init__.py",
-      "bytes": 1097,
-      "sha256": "c896034b69fa44aefc45a54a37620514072f4f858362523782257f69ff794e97"
-    },
-    {
-      "file": "objects/_base.py",
-      "bytes": 2398,
-      "sha256": "a26833056ee7d434b5e9a8030f031e698a0bc9655dda06f4e3a2cec3577fb38e"
-    },
-    {
-      "file": "objects/evidence.py",
-      "bytes": 1745,
-      "sha256": "391d3d0fcbeabdc6adde1c2f388ab13598fe13781104d31de47c8874ab5424a0"
-    },
-    {
-      "file": "objects/recovery.py",
-      "bytes": 5988,
-      "sha256": "85ebe1d906b28eb02ba8c7a19b07767c96d2f1b1e75ec66ba96522ac54d250e8"
-    },
-    {
-      "file": "objects/review.py",
-      "bytes": 5776,
-      "sha256": "6fc6960c88d33169e50e1ef810d67292f1a5b6f634838f41624311227cbbe7d7"
-    },
-    {
-      "file": "objects/task.py",
-      "bytes": 3220,
-      "sha256": "4b4ca3c4a866d09e508ccac33836dfe6cdc3bf4a51448394bf8a6657da02c541"
-    },
-    {
-      "file": "objects/test_contracts.py",
-      "bytes": 5853,
-      "sha256": "814cf6e096ac167f56bbb47c98287818949ec13c65843574b3a733698c91f982"
+      "file": "Modelfile",
+      "bytes": 71,
+      "sha256": "e774f5ea91a76af90b32d07d967a17a1e2741a3e99c67ee944536cb548e6a432"
     },
     {
       "file": "package-manifest.json",
-      "bytes": 39801,
-      "sha256": "f2de6014db7cfb7392b0fbecda10f6f5f42c33f4d74e68251ca9fae9e984a583"
-    },
-    {
-      "file": "plugins/README.md",
-      "bytes": 903,
-      "sha256": "937a99ecf4e7bfeac34bf4e7e6c7e2aea03a28fd57d97e1c22d8beba8f9d1140"
-    },
-    {
-      "file": "plugins/backup/README.md",
-      "bytes": 967,
-      "sha256": "4ddaf11c83907afa931436a05e88a70c427210808dcfdf428bb2730a903b9b42"
+      "bytes": 39559,
+      "sha256": "413aeeec8c41b2791ecdc2d388ddbe4d08232cf7fd553405f5adcfb78f6e5a84"
     },
     {
       "file": "plugins/backup/help.txt",
@@ -733,14 +633,14 @@
       "sha256": "34998cf873326714a413affaff7b10bd606b864b54b41c7ec098169769a2859c"
     },
     {
+      "file": "plugins/backup/README.md",
+      "bytes": 967,
+      "sha256": "4ddaf11c83907afa931436a05e88a70c427210808dcfdf428bb2730a903b9b42"
+    },
+    {
       "file": "plugins/backup/src/main.py",
       "bytes": 1751,
       "sha256": "309fb3cc6c827325350374bb40fcba38018f3b88c7b97e5f990fd37905a8a20c"
-    },
-    {
-      "file": "plugins/codex_reasoner/README.md",
-      "bytes": 472,
-      "sha256": "2db79408b37a82d08f1c179017a593234a71b21567c02fa41b1d241bb4bc5eef"
     },
     {
       "file": "plugins/codex_reasoner/help.txt",
@@ -751,6 +651,11 @@
       "file": "plugins/codex_reasoner/plugin.json",
       "bytes": 681,
       "sha256": "9ceb8702d12bf81722d612fe111eb01f4c5cc1dcfe9e3cab26e0eee893f269de"
+    },
+    {
+      "file": "plugins/codex_reasoner/README.md",
+      "bytes": 472,
+      "sha256": "2db79408b37a82d08f1c179017a593234a71b21567c02fa41b1d241bb4bc5eef"
     },
     {
       "file": "plugins/codex_reasoner/src/__init__.py",
@@ -768,11 +673,6 @@
       "sha256": "6c5317a7a5c186078f2606d0e9e2141671208039a3055331b7753a23454cff84"
     },
     {
-      "file": "plugins/desktop_gui/README.md",
-      "bytes": 1379,
-      "sha256": "952e3bac908295822c2ebfb26b55ae88f4ffc14e6434512389a7c9fc276476e8"
-    },
-    {
       "file": "plugins/desktop_gui/help.txt",
       "bytes": 135,
       "sha256": "3934a4f0b07b9d96b7e2966412957820172bea994cc56f4e71f7d0e432b32a0a"
@@ -783,14 +683,14 @@
       "sha256": "2fe57486aad23d8fa2c96fc9f73595d771b43203a0f7a72df722223a9ce844f0"
     },
     {
+      "file": "plugins/desktop_gui/README.md",
+      "bytes": 1379,
+      "sha256": "952e3bac908295822c2ebfb26b55ae88f4ffc14e6434512389a7c9fc276476e8"
+    },
+    {
       "file": "plugins/desktop_gui/src/main.py",
       "bytes": 3258,
       "sha256": "75d7261b2b3f55c72b4cff395b2fbe1dff0e69b78ed6945fb531a9467894a6e1"
-    },
-    {
-      "file": "plugins/file_read/README.md",
-      "bytes": 1752,
-      "sha256": "e972567e62c873556e10c055499cf734c3403d1b27c3dca4d9af25668430bd05"
     },
     {
       "file": "plugins/file_read/help.txt",
@@ -803,14 +703,14 @@
       "sha256": "c0a1eae89cabf139d88cd2f8b6cff198edbf9a552bfdb06d478756504fc0b5d9"
     },
     {
+      "file": "plugins/file_read/README.md",
+      "bytes": 1752,
+      "sha256": "e972567e62c873556e10c055499cf734c3403d1b27c3dca4d9af25668430bd05"
+    },
+    {
       "file": "plugins/file_read/src/main.py",
       "bytes": 6962,
       "sha256": "f521e7df504a85f97cc5131d411893e7818e9e07a19f9bd0f4fcf6265c1a1dcc"
-    },
-    {
-      "file": "plugins/jan/README.md",
-      "bytes": 772,
-      "sha256": "48d29c78012cbe60078d33515dac6ebd2cc02a2522c834eb80425b1052900369"
     },
     {
       "file": "plugins/jan/help.txt",
@@ -823,6 +723,11 @@
       "sha256": "706ff509c4841bef0091c90b1c9190fcacea3f2b09684eb36888eabc03abe656"
     },
     {
+      "file": "plugins/jan/README.md",
+      "bytes": 772,
+      "sha256": "48d29c78012cbe60078d33515dac6ebd2cc02a2522c834eb80425b1052900369"
+    },
+    {
       "file": "plugins/jan/src/_client.py",
       "bytes": 4665,
       "sha256": "587657e1ff16b665c1f3c5dafdfcacd60ce164e0c5a10605469c3f110cecd0a5"
@@ -833,11 +738,6 @@
       "sha256": "acfc529c91edaf0086cefdbe0c5946805e1045b521d831e0bf866cc8f6360389"
     },
     {
-      "file": "plugins/lesson_model/README.md",
-      "bytes": 10898,
-      "sha256": "8fdf08623da898782b64bc720ae62809c91bb487f59cf8ebeb6600ed2dbc7ce0"
-    },
-    {
       "file": "plugins/lesson_model/help.txt",
       "bytes": 1760,
       "sha256": "302e1cb1a8698df78dd0c0df521cba490818bfd5d49d3ec7623f1564e07f010f"
@@ -846,6 +746,11 @@
       "file": "plugins/lesson_model/plugin.json",
       "bytes": 2082,
       "sha256": "1ce9d5aea7dfe5175a5ea7bbf14b6b25fad0d59185f0d6c6ba2d24c1944bca6a"
+    },
+    {
+      "file": "plugins/lesson_model/README.md",
+      "bytes": 10898,
+      "sha256": "8fdf08623da898782b64bc720ae62809c91bb487f59cf8ebeb6600ed2dbc7ce0"
     },
     {
       "file": "plugins/lesson_model/src/_code_graph.py",
@@ -893,11 +798,6 @@
       "sha256": "77c16a2154007f19bfd6530dd1cc44e97282787d9a811d1473e7fb16c2dc762a"
     },
     {
-      "file": "plugins/nabler/README.md",
-      "bytes": 4052,
-      "sha256": "228a4c17497a59be40cd609ef805784c306cd38dbb6c16c7eed1ce48c7b74dff"
-    },
-    {
       "file": "plugins/nabler/help.txt",
       "bytes": 313,
       "sha256": "0718ea3fa874072252df9ac6fe7133922cf448a90408aa65ead434acc3889de2"
@@ -913,6 +813,11 @@
       "sha256": "80acc191814daaa3aeacc242bdd1ce33e43ba9b035c164f457d94bc7638cb70f"
     },
     {
+      "file": "plugins/nabler/README.md",
+      "bytes": 4052,
+      "sha256": "228a4c17497a59be40cd609ef805784c306cd38dbb6c16c7eed1ce48c7b74dff"
+    },
+    {
       "file": "plugins/nabler/src/main.py",
       "bytes": 605,
       "sha256": "df57b0eb48a37c59d2ef56f93402bc4e146eccdaad89d97cc57e17f18cd9d735"
@@ -921,11 +826,6 @@
       "file": "plugins/nabler/src/nabler.py",
       "bytes": 10114,
       "sha256": "9587050df09c77575f9d2c323bf04bbbdde86e9b4322ef34b2a5425ec0cfb261"
-    },
-    {
-      "file": "plugins/norm_browser/README.md",
-      "bytes": 886,
-      "sha256": "ebee9022a79d21fe3d666f0f29aacedfa763e235f5eafc94be26ec0f95779d2d"
     },
     {
       "file": "plugins/norm_browser/help.txt",
@@ -938,6 +838,11 @@
       "sha256": "313b34fe2493806335d049d9459d4954a225abe6c6088e53a35f54ed9643c543"
     },
     {
+      "file": "plugins/norm_browser/README.md",
+      "bytes": 886,
+      "sha256": "ebee9022a79d21fe3d666f0f29aacedfa763e235f5eafc94be26ec0f95779d2d"
+    },
+    {
       "file": "plugins/norm_browser/src/extensions/convo_export/exporter.py",
       "bytes": 12656,
       "sha256": "33dfda37fb5ac2e1161ba252dd50564e96f0d4b2bbc84d16fd604f9d13207f8d"
@@ -946,11 +851,6 @@
       "file": "plugins/norm_browser/src/main.py",
       "bytes": 6380,
       "sha256": "167a72908225603c5d5e636ce118ea1def7cfddfa9358f9e0a264710a7b62d3a"
-    },
-    {
-      "file": "plugins/opencode/README.md",
-      "bytes": 724,
-      "sha256": "08edf608c7d89518e4f3428e18607ce455b724c1145141eb2186e66818df9810"
     },
     {
       "file": "plugins/opencode/help.txt",
@@ -963,6 +863,11 @@
       "sha256": "e7d7878cbc8e4dc2a3b6efcd14eb9737961c4520b6d451932f265b3b18d3466a"
     },
     {
+      "file": "plugins/opencode/README.md",
+      "bytes": 724,
+      "sha256": "08edf608c7d89518e4f3428e18607ce455b724c1145141eb2186e66818df9810"
+    },
+    {
       "file": "plugins/opencode/src/_client.py",
       "bytes": 4665,
       "sha256": "587657e1ff16b665c1f3c5dafdfcacd60ce164e0c5a10605469c3f110cecd0a5"
@@ -971,11 +876,6 @@
       "file": "plugins/opencode/src/main.py",
       "bytes": 4589,
       "sha256": "57cb8f506f1d5ea175b635f8bd54f9edd61a57f4df91c8fe7fef9d6d4b344c24"
-    },
-    {
-      "file": "plugins/postgres_pool/README.md",
-      "bytes": 2214,
-      "sha256": "7df4e95cedd6ac7976a2682b5d4e641846f3b5fed47e16a0731ea1f05c100766"
     },
     {
       "file": "plugins/postgres_pool/help.txt",
@@ -988,6 +888,11 @@
       "sha256": "c490d234b5d53e2ee40914987c18f92acefa76da48c9f137b43d7ad127ec0410"
     },
     {
+      "file": "plugins/postgres_pool/README.md",
+      "bytes": 2214,
+      "sha256": "7df4e95cedd6ac7976a2682b5d4e641846f3b5fed47e16a0731ea1f05c100766"
+    },
+    {
       "file": "plugins/postgres_pool/src/_pool.py",
       "bytes": 10051,
       "sha256": "537e9ca7f4cb2c918b2af15d8d32f3b475cbb7dea9b51d9eefda98aa8a49d623"
@@ -998,9 +903,9 @@
       "sha256": "15dbedf540e0d5daf1bc19cc9e64388d83543c5db590f274e9dad459af4f28e7"
     },
     {
-      "file": "plugins/rotor5_cipher/README.md",
-      "bytes": 2592,
-      "sha256": "d4715fbc14b32c8b0f5dbcf2f394e220302f6c84a7d3e68f879fd94827812aa9"
+      "file": "plugins/README.md",
+      "bytes": 903,
+      "sha256": "937a99ecf4e7bfeac34bf4e7e6c7e2aea03a28fd57d97e1c22d8beba8f9d1140"
     },
     {
       "file": "plugins/rotor5_cipher/help.txt",
@@ -1011,6 +916,11 @@
       "file": "plugins/rotor5_cipher/plugin.json",
       "bytes": 566,
       "sha256": "7af6db44055ec73545c9d159444be6981cdc516811f839e0d6b07b249d2e10ac"
+    },
+    {
+      "file": "plugins/rotor5_cipher/README.md",
+      "bytes": 2592,
+      "sha256": "d4715fbc14b32c8b0f5dbcf2f394e220302f6c84a7d3e68f879fd94827812aa9"
     },
     {
       "file": "plugins/rotor5_cipher/src/_rotor5/__init__.py",
@@ -1028,11 +938,6 @@
       "sha256": "d6a48c646920089ca2dacc78c87722287ff62ac487569b64ed2e810586fc1ec7"
     },
     {
-      "file": "plugins/shared_browser/README.md",
-      "bytes": 3429,
-      "sha256": "39d3e297ed72b155d19204e92f335c2c6001526ccc18f46feba417dc5d3b6b8e"
-    },
-    {
       "file": "plugins/shared_browser/help.txt",
       "bytes": 2745,
       "sha256": "5d4afd0d76abeec44fd0822c67434636280f836aad4736aa9bb7f823eb9caf98"
@@ -1043,14 +948,14 @@
       "sha256": "f8bcc4e387f7a1ba0c71ccbb07ec7c8edd5cbfaf4faf8b8dfd0df5fc565b4dc4"
     },
     {
+      "file": "plugins/shared_browser/README.md",
+      "bytes": 3429,
+      "sha256": "39d3e297ed72b155d19204e92f335c2c6001526ccc18f46feba417dc5d3b6b8e"
+    },
+    {
       "file": "plugins/shared_browser/src/main.py",
       "bytes": 21698,
       "sha256": "d528adc6545c5344fa1ad1cdf1e260f3287618cec49a5a41436e99cbfd654935"
-    },
-    {
-      "file": "plugins/soft_delete/README.md",
-      "bytes": 1219,
-      "sha256": "e61f091cac23d62330db397556109de4fe0ef21704fa0bf4bb17255aa34c769b"
     },
     {
       "file": "plugins/soft_delete/help.txt",
@@ -1063,14 +968,14 @@
       "sha256": "96fcb1a2426f26903bfdc0e1817be76ab1b256630c125e55fbd05a0b0351cb43"
     },
     {
+      "file": "plugins/soft_delete/README.md",
+      "bytes": 1219,
+      "sha256": "e61f091cac23d62330db397556109de4fe0ef21704fa0bf4bb17255aa34c769b"
+    },
+    {
       "file": "plugins/soft_delete/src/main.py",
       "bytes": 2354,
       "sha256": "3bb12660f1aeb2a4e2a9e32ab6f85a4700ddb253665b2d4dc3092ef1d86268f1"
-    },
-    {
-      "file": "plugins/stegoserve/README.md",
-      "bytes": 4039,
-      "sha256": "779b4ec3f0a664c915d67af67ccc885e820ed76af5bd68a05d41733d7023a219"
     },
     {
       "file": "plugins/stegoserve/help.txt",
@@ -1081,6 +986,11 @@
       "file": "plugins/stegoserve/plugin.json",
       "bytes": 985,
       "sha256": "180f8ab34c3dd061f300e95c85a55b81138c68df1d40daad1e3b1bebb2bc6cf9"
+    },
+    {
+      "file": "plugins/stegoserve/README.md",
+      "bytes": 4039,
+      "sha256": "779b4ec3f0a664c915d67af67ccc885e820ed76af5bd68a05d41733d7023a219"
     },
     {
       "file": "plugins/stegoserve/src/__init__.py",
@@ -1103,11 +1013,6 @@
       "sha256": "1c0241d6aa03abcf5ece13e4c95e05171b595fcbe9ae60469163a2ac86a082a5"
     },
     {
-      "file": "plugins/stegosplit/README.md",
-      "bytes": 1685,
-      "sha256": "552da83e02c7e9b2e21ba6f9a9a1aededdfe486f7e90e666e5a4f51e6f1dac47"
-    },
-    {
       "file": "plugins/stegosplit/help.txt",
       "bytes": 337,
       "sha256": "078630c406b57af7bb423429998882c2942b0a7210ade9fa3c8c1f76a72929aa"
@@ -1116,6 +1021,11 @@
       "file": "plugins/stegosplit/plugin.json",
       "bytes": 742,
       "sha256": "6d59f1e662d58b1fa09c5f6b262bda09e1b0e3e9865862689799fdef8f7d9b77"
+    },
+    {
+      "file": "plugins/stegosplit/README.md",
+      "bytes": 1685,
+      "sha256": "552da83e02c7e9b2e21ba6f9a9a1aededdfe486f7e90e666e5a4f51e6f1dac47"
     },
     {
       "file": "plugins/stegosplit/src/_stegosplit_v3/__init__.py",
@@ -1193,11 +1103,6 @@
       "sha256": "738c0ab61ded9077b11d84eb85e240ddd536944dc26987a2bf821e802d61d7d9"
     },
     {
-      "file": "plugins/vane/README.md",
-      "bytes": 721,
-      "sha256": "c7f95bda4162ba635e7fd09d2d54cb16ac74df2b7c9c0e102d5d3502fe4eb4b9"
-    },
-    {
       "file": "plugins/vane/help.txt",
       "bytes": 312,
       "sha256": "9d74ee66e5b136a84add6d0bb60a3b3e378241a42f2ff888eb5c989ff020cdc4"
@@ -1208,6 +1113,11 @@
       "sha256": "2ec01781b3137cc550a46f66df918a57c9bc8af087cab78fd8280efce09d1daa"
     },
     {
+      "file": "plugins/vane/README.md",
+      "bytes": 721,
+      "sha256": "c7f95bda4162ba635e7fd09d2d54cb16ac74df2b7c9c0e102d5d3502fe4eb4b9"
+    },
+    {
       "file": "plugins/vane/src/_client.py",
       "bytes": 4665,
       "sha256": "587657e1ff16b665c1f3c5dafdfcacd60ce164e0c5a10605469c3f110cecd0a5"
@@ -1216,11 +1126,6 @@
       "file": "plugins/vane/src/main.py",
       "bytes": 3028,
       "sha256": "3d3daf0613e43b4a2581ba8a041078919841316a12e08d7dae26dfe51e09bf2d"
-    },
-    {
-      "file": "plugins/verbatim_lines/README.md",
-      "bytes": 1696,
-      "sha256": "c4cbdffee195a123930de4869ee5e5d9bed3379dd48749794d4240c751ba3eed"
     },
     {
       "file": "plugins/verbatim_lines/_cli.py",
@@ -1238,6 +1143,11 @@
       "sha256": "1c165c79735490ade0b1f7194e956bd1195fe844e92377cbfb7b5f4ebe40c935"
     },
     {
+      "file": "plugins/verbatim_lines/README.md",
+      "bytes": 1696,
+      "sha256": "c4cbdffee195a123930de4869ee5e5d9bed3379dd48749794d4240c751ba3eed"
+    },
+    {
       "file": "plugins/verbatim_lines/src/_cli.py",
       "bytes": 1685,
       "sha256": "434fffaadf65fc7e4d5814f1816032f4de227a2469e6ca735ac4d10cde6c2998"
@@ -1246,11 +1156,6 @@
       "file": "plugins/verbatim_lines/src/main.py",
       "bytes": 2844,
       "sha256": "4e5577710640d52ff3f610a969c77e3d8c64bb67ad993d9e2eb7908e73c96be3"
-    },
-    {
-      "file": "plugins/vision_parse/README.md",
-      "bytes": 6884,
-      "sha256": "93dd7f0fb294bb695790ed32e17a91bd607640c0f609e191a28fa05de77af368"
     },
     {
       "file": "plugins/vision_parse/help.txt",
@@ -1263,14 +1168,14 @@
       "sha256": "fda684a2e6613973fee8fcae6aaf6849e21057dfcb86d62101485e1b9d7c9346"
     },
     {
+      "file": "plugins/vision_parse/README.md",
+      "bytes": 6884,
+      "sha256": "93dd7f0fb294bb695790ed32e17a91bd607640c0f609e191a28fa05de77af368"
+    },
+    {
       "file": "plugins/vision_parse/src/main.py",
       "bytes": 58277,
       "sha256": "1afccfd672bdd39625d226bfb0f7981a73f38cbe5ddb258944ae89573f13fe72"
-    },
-    {
-      "file": "plugins/voice_profile/README.md",
-      "bytes": 4564,
-      "sha256": "48f3c4f7b85bb93fd55ed1d31c35d7c4fe5e06b1f2effbd93b0f8aabccfb715a"
     },
     {
       "file": "plugins/voice_profile/help.txt",
@@ -1283,6 +1188,11 @@
       "sha256": "b9d017dac57117d3ee00abc1ce10de1e97b25eb6bb16d749e224292d642c573f"
     },
     {
+      "file": "plugins/voice_profile/README.md",
+      "bytes": 4564,
+      "sha256": "48f3c4f7b85bb93fd55ed1d31c35d7c4fe5e06b1f2effbd93b0f8aabccfb715a"
+    },
+    {
       "file": "plugins/voice_profile/src/_engine.py",
       "bytes": 54941,
       "sha256": "bbbc7628b4073950410eee463e624fcf77c06ef2f25edd704aace3d621b321e5"
@@ -1293,11 +1203,6 @@
       "sha256": "d9e12c5802dc8d6557a14160f917d4d7be6819fa83bfbee19ea769a14b6585a8"
     },
     {
-      "file": "plugins/web_browser/README.md",
-      "bytes": 1378,
-      "sha256": "4da33167348dce9890f669bf9eaff33d8efd39f29e013b6f7a9a4db9dce0b55a"
-    },
-    {
       "file": "plugins/web_browser/help.txt",
       "bytes": 376,
       "sha256": "a7d0c90b8860ca026a4458079720bae633f7da616daba7f354a6ec272edb418c"
@@ -1306,6 +1211,11 @@
       "file": "plugins/web_browser/plugin.json",
       "bytes": 785,
       "sha256": "496a541728407915b3a23e675e1b276b08fa76102f50579b408100d8d94b4206"
+    },
+    {
+      "file": "plugins/web_browser/README.md",
+      "bytes": 1378,
+      "sha256": "4da33167348dce9890f669bf9eaff33d8efd39f29e013b6f7a9a4db9dce0b55a"
     },
     {
       "file": "plugins/web_browser/src/_bridge.py",
@@ -1348,19 +1258,34 @@
       "sha256": "5c6db61fa30f1b1bd21c8d0d4e4d67f79d7705b03afb999f926f25c7c1dd911b"
     },
     {
-      "file": "source-content-hashes.json",
-      "bytes": 69346,
-      "sha256": "3153235f2bb159b5461f002253ab80778af467d113cf09f4e90207b375da4575"
+      "file": "README.md",
+      "bytes": 35655,
+      "sha256": "b07563bf579c2432efc548aefcaf85eddc005461f9f60b9b54df331c7259eaf8"
     },
     {
-      "file": "tools/7zip/7z.dll",
-      "bytes": 1906688,
-      "sha256": "65e4c1f855f9ef6e8f0f5df8e3f27d9eb5f07311408639da0a1ca0b8f4871b0d"
+      "file": "Run-Norm-Terminals.bat",
+      "bytes": 1005,
+      "sha256": "d6a5b826b89540b6c82eb5e694eb577c635b4dd31c46c3a73c791a7f0203f3d9"
     },
     {
-      "file": "tools/7zip/7z.exe",
-      "bytes": 577536,
-      "sha256": "6ee3c0ed0b27663c1b948ae85a7c0bb073aed1498983182f3f0df1f6a8c30b2f"
+      "file": "Run-Norm.bat",
+      "bytes": 4655,
+      "sha256": "b1caace3a4f4db1b3a5b455732dd1f49f89931a8e4da62804f3728968fc539b9"
+    },
+    {
+      "file": "Safe-Shutdown-Norm.bat",
+      "bytes": 519,
+      "sha256": "0f96e2194b8352c5c77b22c57888fa024bdca67f667aabc1b025d77e445c8c73"
+    },
+    {
+      "file": "Show Shared Browser.cmd",
+      "bytes": 394,
+      "sha256": "797ff100f7d703e437ec7a9786f4b6822d0f08bf55315c8767a0e784880305bd"
+    },
+    {
+      "file": "SOURCE_PACKAGE.md",
+      "bytes": 37207,
+      "sha256": "aa8682182bb5c943fcfc40f2103e5d61415bbc130ce7b568375e15b478424be1"
     },
     {
       "file": "tools/7zip/License.txt",
@@ -1373,11 +1298,6 @@
       "sha256": "5a937b86702b4ee9ca878725ada8886f156fb64faf909092327bf85ca2fc159a"
     },
     {
-      "file": "tools/ENVIRONMENT_REBUILD.md",
-      "bytes": 1207,
-      "sha256": "0e11324d42c9c7e0a2112c74a4d9c37d5567b4ad06f5d8fb1d5a096477be8833"
-    },
-    {
       "file": "tools/build_listener.py",
       "bytes": 25322,
       "sha256": "b458090cdb2e7c7f9753e68e52d5c971a617d8942c5b5c27079a2b96771f0eaf"
@@ -1388,14 +1308,14 @@
       "sha256": "0a767a94478a958e06fc5f807e372b78201358d7f8df47672362f3b00b6e1b69"
     },
     {
-      "file": "tools/celery_tool_worker.py",
-      "bytes": 5799,
-      "sha256": "ab289b5f859d534be74f171492745690f5d902a216b2d1b0aa05873d6bb41ced"
-    },
-    {
       "file": "tools/desktop_gui_bridge.py",
       "bytes": 5630,
       "sha256": "7ccde1fdedfee86bc07afe7d89ba35f68dfa682c8b7d8840c3a685e53f9a4123"
+    },
+    {
+      "file": "tools/ENVIRONMENT_REBUILD.md",
+      "bytes": 1207,
+      "sha256": "0e11324d42c9c7e0a2112c74a4d9c37d5567b4ad06f5d8fb1d5a096477be8833"
     },
     {
       "file": "tools/fetch_weasyprint_runtime.py",
@@ -1418,6 +1338,16 @@
       "sha256": "3d4e31a747a62215b0f676ffedbc34f265c959bb4d55459fa055eb94c8d486fa"
     },
     {
+      "file": "tools/launcher/build_launcher.py",
+      "bytes": 1095,
+      "sha256": "0afdd4bdfc98ee89e82b322cea2d0ef06c4299cf667e4d1d5642b1c4e3d819f8"
+    },
+    {
+      "file": "tools/launcher/norm.exe.sha256",
+      "bytes": 75,
+      "sha256": "2271a0b3c4819ea8fe68d5e1e97f6573439ad0963865ef1b46588c5de852bfab"
+    },
+    {
       "file": "tools/launcher/NormLauncher.cs",
       "bytes": 8793,
       "sha256": "ea08e1685684eec4d9848d6d76d802d55defd8b61b7aa07b0ee0c3b55843b372"
@@ -1426,21 +1356,6 @@
       "file": "tools/launcher/README-LAUNCHER.md",
       "bytes": 1795,
       "sha256": "f95e3a782e798b4ad00ca66fcef1ef6b3f3239f70497e261cb51bccbc961b090"
-    },
-    {
-      "file": "tools/launcher/build_launcher.py",
-      "bytes": 1095,
-      "sha256": "0afdd4bdfc98ee89e82b322cea2d0ef06c4299cf667e4d1d5642b1c4e3d819f8"
-    },
-    {
-      "file": "tools/launcher/norm.exe",
-      "bytes": 8192,
-      "sha256": "39024d3c832ae33e0cbebd89c3fc6306f17e677b4c0fe301eb54c5baab41436e"
-    },
-    {
-      "file": "tools/launcher/norm.exe.sha256",
-      "bytes": 75,
-      "sha256": "2271a0b3c4819ea8fe68d5e1e97f6573439ad0963865ef1b46588c5de852bfab"
     },
     {
       "file": "tools/launcher/test_launcher.py",
@@ -1534,8 +1449,8 @@
     },
     {
       "file": "tools/requirements-lock.txt",
-      "bytes": 1207,
-      "sha256": "964693e092803b951027b58c52673a55227c6fdb97b7cb0ca4c28c0f93bf4bfd"
+      "bytes": 1140,
+      "sha256": "d7c354e52176e42455145598bbd793bcfb987612b6460c204900552ac70464e2"
     },
     {
       "file": "tools/restart_shared_browser_visual.py",
@@ -1546,21 +1461,6 @@
       "file": "tools/safe_shutdown_norm.py",
       "bytes": 7136,
       "sha256": "1e1473ed25534e1b93bcde5290d74298673a6d1f27a19f89981e5047608fb316"
-    },
-    {
-      "file": "tools/shared_browser/Launch Browser.cmd",
-      "bytes": 126,
-      "sha256": "dd5ccb33d87d759c8bdec5ccda104d4c79a4125d4cd6bd5cd8df15df5058c632"
-    },
-    {
-      "file": "tools/shared_browser/Show Shared Browser.cmd",
-      "bytes": 54,
-      "sha256": "60430ef666d2eca03790519cbeb657f0d1964bfeb50b8578be9bbaa98d2f62a1"
-    },
-    {
-      "file": "tools/shared_browser/Start Hidden Browser.cmd",
-      "bytes": 274,
-      "sha256": "4fdb5ecb1625eecff505b8580db3a6b6302dd625f77aea5be5a5a686c5a1a2fc"
     },
     {
       "file": "tools/shared_browser/app.py",
@@ -1588,9 +1488,19 @@
       "sha256": "a5a074ad6f6cb8b2c04bf2bc6f48f200287f9c55835e53b92bdcb6a17f2c3a4f"
     },
     {
+      "file": "tools/shared_browser/Launch Browser.cmd",
+      "bytes": 126,
+      "sha256": "dd5ccb33d87d759c8bdec5ccda104d4c79a4125d4cd6bd5cd8df15df5058c632"
+    },
+    {
       "file": "tools/shared_browser/rich_dialogue_pdf.py",
       "bytes": 22426,
       "sha256": "899708458519f45ec74f3e6d5f4f163e07aea9ba806a5f0be39e70fe3d3dc6c0"
+    },
+    {
+      "file": "tools/shared_browser/Show Shared Browser.cmd",
+      "bytes": 54,
+      "sha256": "60430ef666d2eca03790519cbeb657f0d1964bfeb50b8578be9bbaa98d2f62a1"
     },
     {
       "file": "tools/shared_browser/speaker_pdf.py",
@@ -1598,9 +1508,19 @@
       "sha256": "02bf72a1e135711c9a40f198d0c5fd77e3caba462c84779bb315024cc7d28e60"
     },
     {
+      "file": "tools/shared_browser/Start Hidden Browser.cmd",
+      "bytes": 274,
+      "sha256": "4fdb5ecb1625eecff505b8580db3a6b6302dd625f77aea5be5a5a686c5a1a2fc"
+    },
+    {
       "file": "tools/shared_browser/task_submit.py",
       "bytes": 2602,
       "sha256": "81a6e68f8924ed42f57d8d10a5705d038d8754f08fa7d5fc56ce31f27745428c"
+    },
+    {
+      "file": "tools/shared_browser/tessdata/eng.traineddata",
+      "bytes": 4113088,
+      "sha256": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2"
     },
     {
       "file": "tools/shared_browser/tessdata/LICENSE-tessdata_fast.txt",
@@ -1611,11 +1531,6 @@
       "file": "tools/shared_browser/tessdata/OCR-DATA-README.txt",
       "bytes": 258,
       "sha256": "febdf2d7c2917313fe894214ab37edcbb72ab0441b1964644303578e8aa7041f"
-    },
-    {
-      "file": "tools/shared_browser/tessdata/eng.traineddata",
-      "bytes": 4113088,
-      "sha256": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2"
     },
     {
       "file": "tools/shared_browser/visual_capture.py",
@@ -1633,19 +1548,14 @@
       "sha256": "7a0f19e26d06da0c6382c42d85ad3eab51cb3c5b59d1428df5ceafaacd7abc83"
     },
     {
-      "file": "tools/start_async_workers.py",
-      "bytes": 3718,
-      "sha256": "b5e15f402f0f6cd5ffcec217d78d14e296c7bcf7eb78b985cc3c15b9de641698"
-    },
-    {
       "file": "tools/start_desktop_gui.py",
       "bytes": 4868,
       "sha256": "010f902684fe3f375034b0d41f051e02ae399d5157d4aee4f0d4194eef3a4ba2"
     },
     {
       "file": "tools/start_norm_service.py",
-      "bytes": 4338,
-      "sha256": "a270cfe810bf307d07dba418af1e73bc4c5795f215bb261e8845cc2701298cf9"
+      "bytes": 3914,
+      "sha256": "e4a4414ba3fdc9884e9172aaa02425617b4de6eb9d2136ba0da79f8362851029"
     },
     {
       "file": "tools/start_operator_consoles.py",
@@ -1673,39 +1583,9 @@
       "sha256": "c599b17cc92cfe056ed705e981df519d8b3dde65a0166175f19d467602378176"
     },
     {
-      "file": "tools/test_async_celery_r2.py",
-      "bytes": 4723,
-      "sha256": "05983fc4c1a7d1c8c99812388c6268322b594a8af7cc86086363e077bbda5f0f"
-    },
-    {
       "file": "tools/test_browser_cooperation_r11.py",
       "bytes": 5496,
       "sha256": "2ab9dfc8d41dcb7d8d95dfff340c31ecfb0a54b0610ac0f10122c3e43c11c345"
-    },
-    {
-      "file": "tools/test_celery_adaptive_r8.py",
-      "bytes": 4195,
-      "sha256": "e46e7767c89e36b88909cd7d30b910a36106fa4785eaec4de66dcecd519098fc"
-    },
-    {
-      "file": "tools/test_celery_n1_suppression_r11r4.py",
-      "bytes": 9662,
-      "sha256": "fa5582cd747142493c84c610f750cf082a807dd416f2d5ca60d53d7a6022c6e9"
-    },
-    {
-      "file": "tools/test_celery_queue_r8.py",
-      "bytes": 4485,
-      "sha256": "f135be7760e85f1555dbc178353869fde66f5b8c112c1310bcfde0e84de9482f"
-    },
-    {
-      "file": "tools/test_celery_suppress_n1_r11r3.py",
-      "bytes": 5646,
-      "sha256": "58aa1de1b094870fcf43a9ab71ece70c41c37c7c4d09f71ad4dc0bfc3cbe5d80"
-    },
-    {
-      "file": "tools/test_celery_watchdog_r11r5.py",
-      "bytes": 7114,
-      "sha256": "b41868a56551eff30fe8a385d4d86f427bf189a51ad5bd511d585891bbf1993e"
     },
     {
       "file": "tools/test_chunked_evidence.py",
@@ -1791,11 +1671,6 @@
       "file": "tools/test_full_condensation_r9.py",
       "bytes": 10405,
       "sha256": "1c45c970dd79ccea00e92e8669e3552c9c470ea573e03b88b822ea38d2a8b4cc"
-    },
-    {
-      "file": "tools/test_gui_celery_shutdown_r11.py",
-      "bytes": 5737,
-      "sha256": "5da67f8d179a36d6c99823576b0031c43a2027b5ad69856264d9f7c9cda8e489"
     },
     {
       "file": "tools/test_invoke_source_0557.py",
@@ -1973,11 +1848,6 @@
       "sha256": "1e0cb8757be891306684571cecaee11fb76678d17369ffaf89e7a4f65f0a3ff8"
     },
     {
-      "file": "tools/test_recovery_suppress_celery_r11r3.py",
-      "bytes": 11109,
-      "sha256": "28898f86eefa326e984fb754d505929d51774bf27d53c636f0fe98da87796009"
-    },
-    {
       "file": "tools/test_redis_pre_recovery_r7.py",
       "bytes": 9086,
       "sha256": "bb3266af384884e1a8b8d383b163f1eed899455c49eed5b9e9f106d2cb9a24a5"
@@ -2118,14 +1988,14 @@
       "sha256": "95308381c2fd0bf2729257258307b090797311bb75c9ce9845186ee5abcead9a"
     },
     {
-      "file": "tools/test_workspace_v05510.py",
-      "bytes": 5514,
-      "sha256": "789e2ac9caafa35b02b57c3b9ca228860d92a0b67678867b1ac42bcb909c350f"
+      "file": "tools/test_workspace_stability_r11r6.py",
+      "bytes": 4442,
+      "sha256": "dfdc963aa19017e9c5f84a9f4aab12d13bc83f42b6cb743d7f00c4077d5ee930"
     },
     {
-      "file": "tools/weasyprint.cmd",
-      "bytes": 336,
-      "sha256": "41716ef6dfd0a7ed044fdc4bf55ce6bd18b4919bc8b3909e855ef569cbd88f37"
+      "file": "tools/test_workspace_v05510.py",
+      "bytes": 4030,
+      "sha256": "c990975804a4aa56e9c16a6353fedc251fd19a85a41dc02ccbdebe439e678e27"
     },
     {
       "file": "tools/weasyprint/LICENSE",
@@ -2143,19 +2013,14 @@
       "sha256": "81d863bc7b936f6869cfdb79ce7e44abcb71bbcff694676bca4a9cc01e7b450a"
     },
     {
+      "file": "tools/weasyprint.cmd",
+      "bytes": 336,
+      "sha256": "41716ef6dfd0a7ed044fdc4bf55ce6bd18b4919bc8b3909e855ef569cbd88f37"
+    },
+    {
       "file": "tools/weasyprint_smoke.py",
       "bytes": 1722,
       "sha256": "b6c9378e642f22b54c9d97751a5974d861a723625f1db82c5a0c34d7e14364f8"
-    },
-    {
-      "file": "tools/workspace/NormWorkspace-Qt.json",
-      "bytes": 984,
-      "sha256": "221a8652e374849ab7ea329a3e4e43b3e68334cc711fb515033a1568830a208e"
-    },
-    {
-      "file": "tools/workspace/NormWorkspace-Triad.ico",
-      "bytes": 60143,
-      "sha256": "737364cbdc7b3e168328cc89f824492ad6bf685ba71700df5cc553c047d5a2dd"
     },
     {
       "file": "tools/workspace/app.py",
@@ -2178,11 +2043,6 @@
       "sha256": "eea7564aca8096d97ecde502f2df41c7253c0792221224c2e51b01dfd675aae5"
     },
     {
-      "file": "tools/workspace/native/NormWorkspace.exe",
-      "bytes": 382976,
-      "sha256": "09acc48e02d68cb57372c54952bc6dab8a9483c07208ca61de7c66e64ad38d3f"
-    },
-    {
       "file": "tools/workspace/native/NormWorkspace.json",
       "bytes": 456,
       "sha256": "7d13cad727d320a26777503057673413f0fd9f1f00f75068be06a4498e0d3a4c"
@@ -2196,6 +2056,16 @@
       "file": "tools/workspace/native/start_native_roles.py",
       "bytes": 2904,
       "sha256": "63eea3dd268422adb72d8d9f956830055d4a176c262bd776cc5d43eb5b6ff882"
+    },
+    {
+      "file": "tools/workspace/NormWorkspace-Qt.json",
+      "bytes": 984,
+      "sha256": "221a8652e374849ab7ea329a3e4e43b3e68334cc711fb515033a1568830a208e"
+    },
+    {
+      "file": "tools/workspace/NormWorkspace-Triad.ico",
+      "bytes": 60143,
+      "sha256": "737364cbdc7b3e168328cc89f824492ad6bf685ba71700df5cc553c047d5a2dd"
     },
     {
       "file": "tools/workspace/qt_focus_original_source.py",

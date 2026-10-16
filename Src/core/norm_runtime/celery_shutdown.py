@@ -83,32 +83,8 @@ def stop_owned_celery_workers(root: str | Path, *, timeout_seconds: float = 15) 
     result["found"]=len(workers)
     if not workers:
         return result
-    try:
-        from norm_runtime.celery_tool_executor import app
-        import socket
-        host=socket.gethostname()
-        destinations=sorted({
-            f"norm-async-{x['number']}@{host}"
-            for x in workers if x["number"] > 0
-        })
-        if destinations:
-            app.control.broadcast("shutdown",destination=destinations,timeout=3)
-    except Exception:
-        logging.exception("Could not broadcast graceful Celery shutdown; PID-scoped fallback follows")
-    deadline=time.monotonic()+max(0,min(30,float(timeout_seconds)))
     seen={x["pid"] for x in workers}
-    while time.monotonic()<deadline:
-        try:now={x["pid"] for x in _owned_workers(root)}
-        except Exception as exc:
-            result["errors"].append(f"poll: {type(exc).__name__}")
-            return result
-        if not now.intersection(seen):
-            break
-        time.sleep(0.75)
-    try:still={x["pid"] for x in _owned_workers(root)}
-    except Exception as exc:
-        result["errors"].append(f"final inventory: {type(exc).__name__}")
-        return result
+    still={x["pid"] for x in _owned_workers(root)}
     result["gracefully_stopped"]=len(seen-still)
     for pid in sorted(still.intersection(seen)):
         # Reverify identity immediately before targeting a PID (reuse guard).

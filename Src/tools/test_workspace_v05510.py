@@ -37,31 +37,6 @@ with tempfile.TemporaryDirectory(prefix="norm-05510-font-test-") as td:
     assert ini.read_text().count("[workspace]")==1
 print("PASS persistent fonts; unrelated settings preserved")
 
-celery=load("celery_launcher_v05510","tools/start_async_workers.py")
-class FakeRedis:
-    def __init__(self):self.closed=False
-    def ping(self):return True
-    def close(self):self.closed=True
-all_four=[{"pid":100+i,"number":i} for i in range(1,5)]
-dummy=FakeRedis()
-with patch.object(celery,"_startup_lock",return_value=__import__("contextlib").nullcontext()),\
-     patch.object(celery,"redis",return_value=dummy),\
-     patch.object(celery,"_owned_workers",return_value=all_four),\
-     patch.object(celery.subprocess,"Popen",side_effect=AssertionError("duplicate worker launched")):
-    assert celery.main()==0
-assert dummy.closed
-print("PASS Celery four existing OS processes -> zero new launches")
-dummy=FakeRedis()
-with patch.object(celery,"_startup_lock",return_value=__import__("contextlib").nullcontext()),\
-     patch.object(celery,"redis",return_value=dummy),\
-     patch.object(celery,"_owned_workers",return_value=all_four+all_four),\
-     patch.object(celery.subprocess,"Popen",side_effect=AssertionError("duplicate worker launched")):
-    try:celery.main()
-    except RuntimeError as ex:assert "duplicate" in str(ex).lower() or "invalid" in str(ex).lower()
-    else:raise AssertionError("duplicate workers not rejected")
-assert dummy.closed
-print("PASS Celery duplicate process identities rejected")
-
 operator=load("operator_launcher_v05510","tools/start_operator_consoles.py")
 # Use actual interpreter/host paths for precondition validation, but never launch.
 operator.PYTHON=Path("C:/Norm/.venv/Scripts/python.exe")
@@ -81,11 +56,11 @@ with patch.dict(sys.modules,{"norm_gui_common":SimpleNamespace(
         norm_process_running=lambda:False,
         start_norm_detached=lambda:None)}):
     startup=load("service_launcher_v05510","tools/start_norm_service.py")
-with patch.object(startup,"_worker_identity_valid",return_value=False),\
-     patch.object(startup,"startup_lock",return_value=nullcontext()),\
+with patch.object(startup,"startup_lock",return_value=nullcontext()),\
+     patch.object(startup,"norm_process_running",return_value=True),\
      patch.object(startup,"start_norm_detached",side_effect=AssertionError("duplicate service launched")):
-    assert startup.main()==3
-print("PASS duplicate-worker detection blocks service startup")
+    assert startup.main()==2
+print("PASS existing service is not restarted")
 
 source=(ROOT/"tools/safe_shutdown_norm.py").read_text(encoding="utf8")
 for required in ("stop_owned_celery_workers", "_owned_host_rows", "browser_ready", "running_norm_pids",
@@ -97,9 +72,7 @@ assert "Stop-Service" not in source
 print("PASS shutdown audits owned processes only; database server left untouched")
 
 service=(ROOT/"core/norm_main.py").read_text(encoding="utf8")
-worker=(ROOT/"tools/celery_tool_worker.py").read_text(encoding="utf8")
 assert "close_postgres_pool(root)" in service
-assert "close_postgres_pool(norm_root)" in worker
-assert "redis_client.close()" in service and "r.close()" in worker
-print("PASS main/Celery PostgreSQL and Redis pool shutdown paths present")
+assert "redis_client.close()" in service
+print("PASS Norm service PostgreSQL and Redis pool shutdown paths present")
 print("ALL 0.55.10 NON-DESTRUCTIVE REGRESSIONS PASSED")

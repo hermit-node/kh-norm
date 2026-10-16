@@ -498,16 +498,10 @@ class PromptWorker:
                 snapshot = self.durable.suppress_task(target, reason, payload)
             else:
                 snapshot = {"task_id": target}
-            # Suppression also cancels N1-approved Celery work belonging to this
-            # task tree. The durable receipt survives for N1 on manual resume.
-            celery_stop = {"found": 0, "cancelled": 0, "workers_stopped": 0, "errors": []}
-            try:
-                from .celery_tool_executor import CFG, cancel_task_dispatches
-                if CFG["enabled"]:
-                    celery_stop = cancel_task_dispatches(self.queue.r, member_ids)
-            except Exception as exc:
-                logging.exception("Could not stop task-owned Celery dispatches task=%s", target)
-                celery_stop["errors"].append(type(exc).__name__)
+            # No external worker can outlive task suppression: all new tools run
+            # synchronously under N1's existing permission and evidence policy.
+            celery_stop = {"found":0,"cancelled":0,"workers_stopped":0,
+                           "errors":[],"retired_transport":True}
             # Emergency mode cancels generation as soon as durable suppression
             # is committed, BEFORE optional cleanup. Never wait for a model
             # checkpoint or verifier turn.

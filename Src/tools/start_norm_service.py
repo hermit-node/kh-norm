@@ -41,37 +41,25 @@ def startup_lock():
             msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
 
 
-def _worker_identity_valid(root: Path) -> bool:
-    """Any old duplicate pool is a reason not to launch more work."""
-    sys.path.insert(0, str(root / "core"))
-    from norm_runtime.celery_shutdown import _owned_workers
-    from norm_runtime.celery_tool_executor import CFG
-    workers = _owned_workers(root)
-    ids = [int(row["number"]) for row in workers]
-    wanted = int(CFG["count"])
-    if len(ids) != len(set(ids)) or len(ids) > wanted or any(x < 1 or x > wanted for x in ids):
-        print(f"Refusing Norm startup: found {len(ids)} Celery processes for {wanted} configured slots.",
-              file=sys.stderr)
-        print("Stop orphaned workers first with C:\\Norm\\Safe-Shutdown-Norm.bat; "
-              "the PostgreSQL server is not stopped.", file=sys.stderr)
-        return False
-    return True
-
-
 def main() -> int:
     with startup_lock():
         root = Path(__file__).resolve().parents[1]
-        if not _worker_identity_valid(root):
-            return 3
         if norm_process_running():
             print("Existing norm.exe detected; attaching to the existing service.")
             return 2
 
+        # Migration only: stop exact-path Norm legacy Celery workers once,
+        # before launching the direct-execution service. No new workers start.
         try:
-            from start_async_workers import main as start_celery
-            start_celery()
+            sys.path.insert(0,str(root/"core"))
+            from norm_runtime.celery_shutdown import stop_owned_celery_workers
+            residual=stop_owned_celery_workers(root,timeout_seconds=1)
+            if residual["remaining"] or residual["errors"]:
+                print("Legacy Celery cleanup unverified; refusing to start Norm:",residual,file=sys.stderr)
+                return 3
         except Exception as exc:
-            print(f"Celery unavailable; Norm retains synchronous tool execution: {exc}")
+            print(f"Legacy worker inventory failed: {exc}",file=sys.stderr)
+            return 3
 
         try:
             from start_desktop_gui import main as start_gui
