@@ -22,10 +22,16 @@ def main():
     r=redis()
     heartbeat=f"{CFG['prefix']}:worker:{os.getpid()}"
     stop=threading.Event()
+    ready=threading.Event()
+    from celery.signals import worker_ready
+    @worker_ready.connect(weak=False)
+    def _on_ready(sender=None, **kwargs):
+        ready.set()
     def ping():
         while not stop.is_set():
-            try:r.set(heartbeat,str(number),ex=30)
-            except Exception:pass
+            if ready.is_set():
+                try:r.set(heartbeat,str(number),ex=30)
+                except Exception:pass
             stop.wait(5)
     thread=threading.Thread(target=ping,daemon=True)
     thread.start()

@@ -5,6 +5,8 @@ from .secret_redaction import redact
 import base64
 import json
 import logging
+import uuid
+from threading import Thread
 import re
 import time
 import zlib
@@ -36,6 +38,93 @@ class ModelOutputTruncated(RuntimeError):
         super().__init__("model output stopped because output length limit was reached")
         self.partial = str(partial or "")
         self.eval_count = int(eval_count or 0)
+
+
+class _ModelProgress:
+    """Log opaque Ollama phases even when N1 suppresses visible token streaming.
+
+    Does not read model output, change limits, or invoke any API. A live model
+    request must never be mistaken for an idle Celery worker or a timed-out tool.
+    """
+
+    INTERVAL_SECONDS = 60.0
+
+    def __init__(self, client, endpoint, *, think, num_predict, prompt_chars):
+        self.source = str(client.activity_source or "unknown")
+        self.model = str(client.model)
+        self.endpoint = endpoint
+        self.think = bool(think)
+        self.num_predict = int(num_predict or 0)
+        self.prompt_chars = int(prompt_chars)
+        self.request_id = uuid.uuid4().hex[:12]
+        self.started = time.monotonic()
+        self.last_activity = self.started
+        self.phase = "awaiting_http_response"
+        self.first_chunk_seconds = None
+        self.chunk_count = 0
+        self.text_chars = 0
+        self._lock = Lock()
+        self._stop = Event()
+        self._thread = Thread(target=self._watch, name="norm-ollama-progress", daemon=True)
+        logging.info(
+            "Ollama call started id=%s source=%s model=%s endpoint=%s think=%s "
+            "num_predict=%s prompt_chars=%s",
+            self.request_id, self.source, self.model, self.endpoint,
+            self.think, self.num_predict, self.prompt_chars,
+        )
+        self._thread.start()
+
+    def opened(self):
+        with self._lock:
+            self.phase = "awaiting_first_stream_chunk"
+            self.last_activity = time.monotonic()
+
+    def chunk(self, kind, chars=0):
+        now = time.monotonic()
+        with self._lock:
+            first = self.first_chunk_seconds is None
+            if first:
+                self.first_chunk_seconds = round(now - self.started, 2)
+            self.phase = str(kind)
+            self.last_activity = now
+            self.chunk_count += 1
+            self.text_chars += max(0, int(chars))
+        if first:
+            logging.info(
+                "Ollama first stream chunk id=%s source=%s phase=%s elapsed_seconds=%.2f",
+                self.request_id, self.source, kind, now - self.started,
+            )
+
+    def _watch(self):
+        while not self._stop.wait(self.INTERVAL_SECONDS):
+            now = time.monotonic()
+            with self._lock:
+                phase = self.phase
+                idle = now - self.last_activity
+                chunks = self.chunk_count
+            logging.info(
+                "Ollama call active id=%s source=%s model=%s phase=%s "
+                "elapsed_seconds=%.1f since_last_chunk_seconds=%.1f chunks=%s",
+                self.request_id, self.source, self.model, phase,
+                now - self.started, idle, chunks,
+            )
+
+    def finish(self, *, status, done_reason="", eval_count=0, prompt_eval_count=0):
+        self._stop.set()
+        self._thread.join(timeout=0.5)
+        with self._lock:
+            phase = self.phase
+            chunks = self.chunk_count
+            chars = self.text_chars
+            first = self.first_chunk_seconds
+        logging.info(
+            "Ollama call ended id=%s source=%s endpoint=%s status=%s phase=%s "
+            "elapsed_seconds=%.2f first_chunk_seconds=%s chunks=%s text_chars=%s "
+            "done_reason=%s eval_count=%s prompt_eval_count=%s",
+            self.request_id, self.source, self.endpoint, status, phase,
+            time.monotonic() - self.started, first, chunks, chars,
+            done_reason, eval_count, prompt_eval_count,
+        )
 
 
 class OllamaClient:
@@ -443,17 +532,24 @@ class OllamaClient:
             self._active[call_id] = (cancel_event, None)
         if emit_stream:
             self._emit("model_start", thinking=think)
+        progress = _ModelProgress(
+            self, "/api/generate", think=think, num_predict=num_predict,
+            prompt_chars=len(str(prompt)) + len(request_system),
+        )
+        model_completed = False
         try:
             call_timeout = self.timeout_seconds if timeout_seconds is None else float(timeout_seconds)
             with self._urlopen(req, timeout=call_timeout, endpoint="/api/generate") as response:
                 with self._active_lock:
                     self._active[call_id] = (cancel_event, response)
+                progress.opened()
                 if cancel_event.is_set():
                     raise ModelGenerationCancelled("generation cancelled")
                 for raw_line in response:
                     if cancel_event.is_set():
                         raise ModelGenerationCancelled("generation cancelled")
                     line = raw_line.decode("utf-8").strip()
+                    progress.chunk("stream_transport")
                     if not line:
                         continue
                     data = json.loads(line)
@@ -465,16 +561,19 @@ class OllamaClient:
                     thinking = str(data.get("thinking", ""))
                     answer = str(data.get("response", ""))
                     if thinking:
+                        progress.chunk("thinking", len(thinking))
                         guard_tail = self._guard_model_stream(guard_tail, thinking)
                         if emit_stream:
                             self._emit("thinking", text=thinking)
                     if answer:
+                        progress.chunk("answer", len(answer))
                         guard_tail = self._guard_model_stream(guard_tail, answer)
                         response_parts.append(answer)
                         if emit_stream:
                             self._emit("answer", text=answer)
                 if cancel_event.is_set():
                     raise ModelGenerationCancelled("generation cancelled")
+            model_completed = True
         except Exception as exc:
             if cancel_event.is_set():
                 cancelled_exc = exc if isinstance(exc, ModelGenerationCancelled) else ModelGenerationCancelled("generation cancelled")
@@ -485,6 +584,8 @@ class OllamaClient:
                 self._emit("model_error", text=str(exc), cancelled=False)
             raise
         finally:
+            progress.finish(status="completed" if model_completed else ("cancelled" if cancel_event.is_set() else "failed"),
+                            done_reason=done_reason, eval_count=eval_count)
             self._flush_crash()
             with self._active_lock:
                 self._active.pop(call_id, None)
@@ -582,14 +683,22 @@ class OllamaClient:
         with self._active_lock:
             self._active[call_id] = (cancel_event, None)
         self._emit("model_start", thinking=think, tool_mode=True)
+        progress = _ModelProgress(
+            self, "/api/chat", think=think,
+            num_predict=options.get("num_predict"),
+            prompt_chars=sum(len(str(msg.get("content") or "")) for msg in messages),
+        )
+        model_completed = False
         try:
             with self._urlopen(req, timeout=self.timeout_seconds, endpoint="/api/chat") as response:
                 with self._active_lock:
                     self._active[call_id] = (cancel_event, response)
+                progress.opened()
                 for raw_line in response:
                     if cancel_event.is_set():
                         raise ModelGenerationCancelled("generation cancelled")
                     line = raw_line.decode("utf-8").strip()
+                    progress.chunk("stream_transport")
                     if not line:
                         continue
                     data = json.loads(line)
@@ -603,10 +712,12 @@ class OllamaClient:
                     thinking = str(message.get("thinking", ""))
                     content = str(message.get("content", ""))
                     if thinking:
+                        progress.chunk("thinking", len(thinking))
                         guard_tail = self._guard_model_stream(guard_tail, thinking)
                         thinking_parts.append(thinking)
                         self._emit("thinking", text=thinking)
                     if content:
+                        progress.chunk("answer", len(content))
                         guard_tail = self._guard_model_stream(guard_tail, content)
                         content_parts.append(content)
                         self._emit("answer", text=content)
@@ -614,12 +725,14 @@ class OllamaClient:
                         marker = json.dumps(call, sort_keys=True, ensure_ascii=False)
                         if marker not in seen_calls:
                             seen_calls.add(marker)
+                            progress.chunk("tool_call")
                             tool_calls.append(call)
                             safe_marker = json.dumps(redact(call), sort_keys=True, ensure_ascii=False)
                             self._emit("tool_call", text=safe_marker)
                             self._buffer_crash("tool_call", safe_marker)
                 if cancel_event.is_set():
                     raise ModelGenerationCancelled("generation cancelled")
+            model_completed = True
         except Exception as exc:
             if cancel_event.is_set():
                 cancelled_exc = exc if isinstance(exc, ModelGenerationCancelled) else ModelGenerationCancelled("generation cancelled")
@@ -628,6 +741,8 @@ class OllamaClient:
             self._emit("model_error", text=str(exc), cancelled=False)
             raise
         finally:
+            progress.finish(status="completed" if model_completed else ("cancelled" if cancel_event.is_set() else "failed"),
+                            done_reason=done_reason, eval_count=eval_count, prompt_eval_count=prompt_eval_count)
             self._flush_crash()
             with self._active_lock:
                 self._active.pop(call_id, None)

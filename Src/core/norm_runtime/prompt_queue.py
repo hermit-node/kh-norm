@@ -521,6 +521,66 @@ class RedisPromptQueue:
     def _async_delayed_key(self) -> str:
         return f"{self.stream}:celery-delayed"
 
+    def _approval_wait_key(self) -> str:
+        return self.stream + ":awaiting-user-approval"
+
+    def park_for_user_approval(self, redis_id: str, job: PromptJob, checkpoint: str) -> None:
+        """Atomically park the active step and later chain steps until user context arrives."""
+        if not checkpoint.strip():
+            raise ValueError("Approval checkpoint required")
+        metadata = dict(job.metadata or {})
+        metadata["last_yield_reason"] = "awaiting_user_approval"
+        job.metadata = metadata
+        job.context = checkpoint.strip()
+        entries = [(redis_id, job)]
+        if job.chain_id:
+            for msg_id, fields in self.r.xrange(self.stream, min="-", max="+"):
+                if msg_id == redis_id:
+                    continue
+                other = self._fields_to_job(msg_id, fields)
+                if other.chain_id == job.chain_id and other.chain_index > job.chain_index:
+                    entries.append((msg_id, other))
+        pipe = self.r.pipeline(transaction=True)
+        for msg_id, item in entries:
+            pipe.zadd(self._approval_wait_key(), {
+                json.dumps(self._job_to_fields(item), sort_keys=True, ensure_ascii=False): 0
+            })
+            pipe.xack(self.stream, self.group, msg_id)
+            pipe.xdel(self.stream, msg_id)
+        pipe.execute()
+
+    def resume_approval_on_injection(self, task_ids: list[str]) -> int:
+        """Wake only the waiting steps in the addressed task tree; never all tasks."""
+        import redis as redis_module
+        selected = {str(value) for value in task_ids if str(value)}
+        if not selected:
+            return 0
+        key = self._approval_wait_key()
+        for _ in range(4):
+            with self.r.pipeline() as pipe:
+                try:
+                    pipe.watch(key)
+                    rows = []
+                    for raw in pipe.zrange(key, 0, -1):
+                        fields = json.loads(raw)
+                        if str(fields.get("task_id") or "") not in selected:
+                            continue
+                        if self._task_suppressed(fields["task_id"]):
+                            continue
+                        rows.append((raw, fields))
+                    if not rows:
+                        pipe.unwatch()
+                        return 0
+                    pipe.multi()
+                    for _, fields in rows:
+                        pipe.xadd(self.stream, fields)
+                    pipe.zrem(key, *(raw for raw, _ in rows))
+                    pipe.execute()
+                    return len(rows)
+                except redis_module.WatchError:
+                    continue
+        raise RuntimeError("Approval wake conflicted with concurrent queue updates")
+
     def yield_async_job(
         self, redis_id: str, job: PromptJob, checkpoint: str,
         *, next_check_at: float, step_rounds: int, task_rounds: int,
@@ -708,6 +768,26 @@ class RedisPromptQueue:
                     return task_id
         return None
 
+    def awaiting_approval(self, task_ids: list[str] | None = None) -> list[dict]:
+        """Read parked approval requests without disturbing their queue state."""
+        requested = {str(t) for t in task_ids} if task_ids is not None else None
+        found = []
+        for raw in self.r.zrange(self._approval_wait_key(), 0, -1):
+            try:
+                fields = json.loads(raw)
+                tid = str(fields.get("task_id") or "")
+                if requested is not None and tid not in requested:
+                    continue
+                metadata = json.loads(fields.get("metadata") or "{}")
+                request = metadata.get("approval_request") or {}
+                if isinstance(request, dict) and request.get("question"):
+                    found.append({"task_id": tid, "step_id": fields.get("step_id"),
+                                  "request": request,
+                                  "injection_floor": int(metadata.get("approval_injection_floor") or 0)})
+            except (TypeError, ValueError):
+                continue
+        return found
+
     def snapshot_task_jobs(self, task_id: str) -> dict:
         jobs = []
         for stream, label in ((self.stream, "work"), (self.retry_stream, "retry"), (self.escalation_stream, "escalation")):
@@ -716,6 +796,27 @@ class RedisPromptQueue:
                     continue
                 job = self._fields_to_job(redis_id, fields)
                 jobs.append({"stream": label, "redis_id": str(redis_id), "job": asdict(job)})
+        # Async continuations are parked in a Redis sorted set, NOT any stream.
+        # Snapshot them or /resume-task has no executable state after suppression.
+        for payload, score in self.r.zrange(self._async_delayed_key(), 0, -1, withscores=True):
+            try:
+                fields = json.loads(payload)
+                if str(fields.get("task_id") or "") != task_id:
+                    continue
+                job = self._fields_to_job("celery-delayed", fields)
+                jobs.append({"stream": "celery-delayed", "due_at": float(score),
+                             "job": asdict(job)})
+            except (ValueError, TypeError, KeyError):
+                continue
+        # Permission-waiting steps also live outside the Redis work streams.
+        for payload in self.r.zrange(self._approval_wait_key(), 0, -1):
+            try:
+                fields = json.loads(payload)
+                if str(fields.get("task_id") or "") == task_id:
+                    jobs.append({"stream": "approval-wait", "job":
+                                 asdict(self._fields_to_job("approval-wait", fields))})
+            except (ValueError, TypeError, KeyError):
+                continue
         return {"jobs": jobs, "captured_at": time.time()}
 
     def restore_task_jobs(self, payload: dict) -> list[str]:
@@ -746,8 +847,10 @@ class RedisPromptQueue:
             "work": self.stream,
             "retry": self.retry_stream,
             "escalation": self.escalation_stream,
+            "celery-delayed": self._async_delayed_key(),
+            "approval-wait": self._approval_wait_key(),
         }
-        restored: list[tuple[str, PromptJob]] = []
+        restored: list[tuple[str, PromptJob, float]] = []
         seen: set[str] = set()
         for item in raw:
             data = dict(item.get("job") or {})
@@ -760,14 +863,29 @@ class RedisPromptQueue:
             label = str(item.get("stream") or "work").strip().lower()
             if label not in destinations:
                 raise ValueError(f"unsupported suppression snapshot stream: {label!r}")
-            restored.append((label, PromptJob(**data)))
+            due_at = float(item.get("due_at") or 0)
+            if label == "celery-delayed" and due_at <= 0:
+                raise ValueError("async suppression snapshot missing Celery due_at")
+            restored.append((label, PromptJob(**data), due_at))
 
         if not restored:
             return []
         pipe = self.r.pipeline(transaction=True)
-        for label, job in restored:
-            pipe.xadd(destinations[label], self._job_to_fields(job))
-        return [str(value) for value in pipe.execute()]
+        for label, job, due_at in restored:
+            if label == "approval-wait":
+                pipe.zadd(destinations[label], {
+                    json.dumps(self._job_to_fields(job), ensure_ascii=False, sort_keys=True): 0
+                })
+            elif label == "celery-delayed":
+                # Keep the original due time: if already elapsed it will be
+                # promoted by the standard worker loop on the next pass.
+                pipe.zadd(destinations[label], {
+                    json.dumps(self._job_to_fields(job), ensure_ascii=False, sort_keys=True): due_at
+                })
+            else:
+                pipe.xadd(destinations[label], self._job_to_fields(job))
+        result = pipe.execute()
+        return [str(value) for value in result]
 
     def requeue_pending_on_startup(self) -> int:
         pending = self.r.xpending_range(self.stream, self.group, min="-", max="+", count=1000)
@@ -793,7 +911,14 @@ class RedisPromptQueue:
         return moved
 
     def cleanup_task(self, task_id: str) -> dict[str, int]:
-        counts = {"work": 0, "retry": 0, "escalation": 0, "dead": 0, "round_key": 0, "budget_key": 0, "async_delayed": 0}
+        counts = {"work": 0, "retry": 0, "escalation": 0, "dead": 0, "round_key": 0, "budget_key": 0, "async_delayed": 0, "approval_wait": 0}
+        approval_key = self._approval_wait_key()
+        for raw in self.r.zrange(approval_key, 0, -1):
+            try:
+                if str(json.loads(raw).get("task_id") or "") == task_id:
+                    counts["approval_wait"] += int(self.r.zrem(approval_key, raw))
+            except (TypeError, ValueError):
+                continue
         delayed_key = self._async_delayed_key()
         for raw in self.r.zrange(delayed_key, 0, -1):
             try:

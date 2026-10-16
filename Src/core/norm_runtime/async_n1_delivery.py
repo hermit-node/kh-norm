@@ -80,7 +80,7 @@ class N1AsyncBridge:
         unresolved = self.store.get(self._unresolved_key(signature))
         if unresolved:
             return {"ok": False, "tool": name, "status": "unresolved",
-                    "error": "Prior identical dispatch reached its 60-minute observation limit; do not execute it twice.",
+                    "error": "Prior identical dispatch is unresolved after N1 stopped waiting; do not execute it twice.",
                     "async_dispatch_id": str(unresolved.decode() if isinstance(unresolved, bytes) else unresolved)}
         if not self.enabled:
             # Only new, unclaimed calls may fall back to synchronous handling.
@@ -133,6 +133,9 @@ class N1AsyncBridge:
                 raise ValueError("N1 proposed an invalid follow-up interval")
             item["n1_estimates"] = int(item.get("n1_estimates") or 0) + 1
             item["last_estimate_reason"] = str(answer.get("reason") or "")[:220]
+            if answer.get("decision") == "stop":
+                item["n1_stop_reason"] = item["last_estimate_reason"]
+                return now
         except Exception:
             logging.exception("N1 async estimate failed dispatch=%s; retry review in three minutes", item["id"])
             delay = 180
@@ -193,16 +196,37 @@ class N1AsyncBridge:
                 completed += 1
                 continue
             if now >= deadline:
-                # Worker might still finish later. The timeout only ends
-                # Norm's one-hour observation window; do not rerun tool.
+                # Distinguish queued / orphaned / executing from the same
+                # generic 60m timeout. Nothing here authorizes another execute.
+                try:
+                    diagnostic = self.broker.inspect(item["id"]) if self.broker else {}
+                except Exception:
+                    diagnostic = {}
+                logging.warning("Celery observation deadline dispatch=%s task=%s tool=%s diagnostic=%s",
+                                item["id"], self.job.task_id, item["name"],
+                                {k: diagnostic.get(k) for k in ("state", "execution", "worker_alive", "worker_heartbeats", "setup_seconds", "elapsed_seconds")})
                 timeout = {"ok": False, "tool": item["name"],
-                           "status": "unresolved", "async_unresolved": True,
-                           "dispatch_id": item["id"],
-                           "error": "No confirmed Celery result within 60 minutes; execution outcome unknown."}
+                           "status": "timed_out", "async_unresolved": True,
+                           "dispatch_id": item["id"], "n1_decision": "hard_deadline",
+                           "celery_state": diagnostic.get("state", "unknown"),
+                           "execution_phase": diagnostic.get("execution", "unknown"),
+                           "error": "No confirmed Celery result within 60 minutes; execution outcome unknown. "
+                                    "See execution_phase and celery_state; no automatic redispatch."}
                 self._complete(item, timeout, messages, evidence, unresolved=True)
                 completed += 1
                 continue
             self._schedule_next(item, now)
+            if item.get("n1_stop_reason"):
+                logging.warning("N1 stopped Celery wait dispatch=%s task=%s reason=%s",
+                                item["id"], self.job.task_id, item["n1_stop_reason"])
+                self._complete(item, {"ok": False, "tool": item["name"],
+                    "status": "timed_out", "async_unresolved": True,
+                    "dispatch_id": item["id"], "n1_decision": "stop_waiting",
+                    "elapsed_seconds": round(now - submitted_at),
+                    "error": "N1 stopped waiting before confirmed result; execution outcome unknown. "
+                             + item["n1_stop_reason"]}, messages, evidence, unresolved=True)
+                completed += 1
+                continue
             modified = True
         if modified:
             self.persist()

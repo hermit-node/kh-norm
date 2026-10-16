@@ -91,6 +91,8 @@ class ConversationService:
         self.coordinator = coordinator
         self.durable = durable
         self.n1_gatekeeper = n1_gatekeeper
+        self.suppression_transition_active = None  # installed by the live worker
+        self.context_injections = None  # bound to the durable context store at startup
         self.wait_timeout_seconds = max(1.0, float(wait_timeout_seconds))
         self.persistent_instructions = tuple(str(v).strip() for v in persistent_instructions if str(v).strip())
         self.ingrained_details_enabled = bool(ingrained_details_enabled)
@@ -190,6 +192,15 @@ class ConversationService:
             member_ids = [task_id]
         if not raw_jobs:
             return task_id, "I found the suppressed task, but it has no captured executable queue state to resume safely.", full_context_status()
+        # Do not restore until the active Ollama cancellation has exited its
+        # worker frame: that frame otherwise removes newly queued jobs or
+        # overwrites the running state with a fresh suppression record.
+        transition = self.suppression_transition_active
+        if callable(transition) and transition(member_ids):
+            return task_id, (
+                "Suppression is still finishing for this task. Its durable checkpoint "
+                "is safe; retry /resume-task after the cancellation completes."
+            ), full_context_status()
         for item in raw_jobs:
             job = item.get("job") if isinstance(item, dict) else None
             if not isinstance(job, dict):
@@ -228,17 +239,26 @@ class ConversationService:
                 self.durable.suppress_task(task_id, reason, payload)
                 self.prompt_queue.cleanup_task(task_id)
             raise
-        deadline = time.monotonic() + self.wait_timeout_seconds
-        while time.monotonic() < deadline:
-            status = self.durable.task_status(task_id)
-            if status == "completed":
-                return task_id, self.durable.latest_summary(task_id) or "Resumed task completed.", full_context_status()
-            if status in {"failed", "cancelled", "passed_to"}:
-                return task_id, self.durable.latest_summary(task_id) or f"Resumed task ended {status}.", full_context_status()
-            if status == "suppressed":
-                return task_id, "The task was suppressed again before completion.", full_context_status()
-            time.sleep(0.1)
-        raise TimeoutError(f"resumed suppressed task did not finish within {self.wait_timeout_seconds:g} seconds")
+        # If authorization arrived during an operator suppression, that input
+        # must still wake the restored permission gate, rather than leaving it
+        # permanently parked in the approval wait set.
+        if getattr(self, "context_injections", None) is not None and hasattr(self.prompt_queue, "awaiting_approval"):
+            try:
+                for waiting in self.prompt_queue.awaiting_approval(member_ids):
+                    if self.context_injections.read(waiting["task_id"], after=int(waiting["injection_floor"])):
+                        self.prompt_queue.resume_approval_on_injection([waiting["task_id"]])
+            except Exception:
+                logging.exception("Approval wake after manual resume unavailable task=%s", task_id)
+        # /resume-task is a control operation, not a synchronous completion
+        # request. Waiting up to 24h here causes HTTP/GUI timeouts even when the
+        # task was correctly requeued. The normal task-delivery path owns the
+        # eventual outcome; acknowledge durable restoration immediately.
+        logging.info("Manual suppressed-task resume queued root=%s jobs=%s members=%s",
+                     task_id, len(restored), member_ids)
+        return task_id, (
+            f"Resumed task {task_id}; restored {len(restored)} queued job(s). "
+            "Execution continues normally. This acknowledges the resume, not task completion."
+        ), full_context_status()
 
     def _suppressed_resume_flow(self, message: str, *, primary_thread_id: str, thread_ids: list[str], user_message_id: str):
         if self.durable is None or self.prompt_queue is None:
@@ -2024,6 +2044,7 @@ class ConversationService:
             self.prompt_queue.enqueue_chain(jobs)
 
         deadline = time.monotonic() + self.wait_timeout_seconds
+        next_approval_poll = time.monotonic()
         while time.monotonic() < deadline:
             status = self.durable.task_status(task_id)
             if status == "completed":
@@ -2048,6 +2069,22 @@ class ConversationService:
                     else full_context_status()
                 )
                 return task_id, self._limit_human_reply(task_id, reply), merge_resource_status(resource_status, task_resource_status)
+            # A permission hold is intentionally nonterminal. Release the
+            # synchronous ingress owner and show the user the exact question;
+            # the waiting step and successors remain parked until injection.
+            now = time.monotonic()
+            if now >= next_approval_poll and hasattr(self.prompt_queue, "awaiting_approval"):
+                next_approval_poll = now + 1.0
+                tree = self.durable.task_tree(task_id) if hasattr(self.durable, "task_tree") else []
+                members = [str(row.get("task_id") or "") for row in tree] or [task_id]
+                waiting = self.prompt_queue.awaiting_approval(members)
+                if waiting:
+                    question = str(waiting[0]["request"]["question"])
+                    return task_id, (
+                        question + "\n\nTask " + task_id +
+                        " remains paused at this step. Reply with /inject-context --task " +
+                        task_id + " followed by your decision. No dependent steps were run."
+                    ), merge_resource_status(resource_status)
             if status == "suppressed":
                 # Suppression parks the task for explicit resume, but this particular
                 # synchronous delivery is finished. Returning here releases the DB3

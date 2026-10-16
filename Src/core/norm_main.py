@@ -977,6 +977,17 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         if worker_obj is None or injections is None:
             raise ValueError("Context injection is still initializing")
         target = str(task_id or "").strip()
+        if not target and prompt_queue_obj is not None and hasattr(prompt_queue_obj, "awaiting_approval"):
+            durable = resources.get("durable")
+            waiting = prompt_queue_obj.awaiting_approval()
+            roots = {str(durable.root_task_id(row["task_id"]) or "") for row in waiting} if durable is not None else set()
+            roots.discard("")
+            # A single outstanding permission question is the strongest
+            # implicit target for an answer such as /inject-context go.
+            if len(roots) == 1:
+                target = next(iter(roots))
+            elif len(roots) > 1:
+                raise ValueError("Several tasks await approval; specify --task TASK_ID")
         if not target:
             target = str(worker_obj.active_task_id() or "").strip()
         if not target and prompt_queue_obj is not None:
@@ -988,6 +999,14 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
         if not target:
             raise ValueError("No active task is available for context injection")
         result = injections.save(target, content, request_id, retire_when_satisfied=bool(retire_when_satisfied))
+        # Commit the user's context BEFORE requeuing the waiting step. Its
+        # next model boundary will therefore see the approval/denial verbatim.
+        if prompt_queue_obj is not None and hasattr(prompt_queue_obj, "resume_approval_on_injection"):
+            durable = resources.get("durable")
+            tree = durable.task_tree(result["task_id"]) if durable is not None else []
+            targets = [str(row.get("task_id") or "") for row in tree] or [result["task_id"]]
+            result["woken_steps"] = prompt_queue_obj.resume_approval_on_injection(targets)
+            result["task_resumed"] = bool(result["woken_steps"])
         logging.info("Context injection saved task=%s injection_id=%s", result.get("task_id"), result.get("injection_id"))
         return result
 
@@ -1202,6 +1221,10 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
                 context_injections=resources.get("context_injections"),
                 n1_gatekeeper=n1_gatekeeper,
             )
+            # Bind the operator resume guard before starting the worker, so a
+            # fast /resume-task can never race a cancellation still unwinding.
+            service.suppression_transition_active = worker.suppression_transition_active
+            service.context_injections = resources.get("context_injections")
             worker.start()
             resources["worker"] = worker
             resources["n2_client"] = worker_client

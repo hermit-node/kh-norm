@@ -1,3 +1,36 @@
+## 0.55.10r11r4 — N1 Celery wait decisions and task-scoped suppression (2026-10-15)
+
+Incremental changes on the supplied r11r2 baseline plus r11r3 recovery/resume patch. This is a **source-only offline candidate**, not a change deployed to KHzz.
+
+- **N1 owns Celery observation at 15 minutes:** At the first outstanding 15-minute poll, N1 chooses `stop` or `continue` using observed worker/execution state. Continuing schedules the next check (30–900s); stopping produces an explicit `timed_out`/`async_unresolved` result and preserves the no-duplicate-dispatch guard. The existing one-hour hard deadline remains in place. Results flow to N1 before N2. A timeout is not proof of execution failure, and stopping observation does not cancel Celery work.
+- **Suppress task = cancel task-owned Celery dispatches:** After durable suppression and before Redis queue cleanup, Norm finds signed Celery approvals belonging to the suppressed task tree, revokes queued jobs, and sets cancellation markers. Running Windows solo workers are terminated only after verifying a Norm-owned PID and the current Redis `active:<pid>` assignment matches the exact dispatch; unrelated workers remain alive. Existing worker launcher is requested to replenish only a terminated slot, under its identity lock. Existing N1 receipt records survive suppression for resume; the resumed step gets an explicit cancellation result rather than redispatching automatically.
+- No change to generic task parking, Redis/PostgreSQL schema, plugin interfaces, core read/write execution routing or independent N2 analysis. PostgreSQL inspection plugins remain eligible for the existing N1-approved Celery path; `read_file` streamed reads and mutations remain synchronous because blindly moving side-effecting calls would break dependent-step ordering. N2 can continue independent work within its current step; making cross-step independent completion safe requires a separate durable result mailbox and was **not** implemented here.
+
+Focused verification: `tools/test_celery_n1_suppression_r11r4.py` (6 cases) plus the r11r3 regression suites (7+3 cases), compilation, and selected historical tests. Windows PID termination/replenishment and Redis/Celery/Postgres concurrency require live testing before promotion. See `docs/R11R4_VALIDATION.md`.
+
+## 0.55.10r11r4 — N1 owns Celery non-response; targeted suppression hard-stop (2026-10-15)
+
+Based on the r11r3 candidate, retaining the user's r11r2 source baseline. **No redesign of Norm's existing task-parking or step-planning architecture.**
+
+- After 15 minutes without a Celery response, N1 receives execution-phase/worker status, chooses `continue` (bounded polling) or `stop` (an explicit unresolved timeout). The original 60-minute hard observation deadline stays. Neither decision automatically kills or repeats a Celery job.
+- `/suppress-task` persists the original task-tree snapshot and fences outstanding approved Celery dispatches, revokes queued jobs and verifies both dispatch-to-PID ownership and the actual Norm worker process before hard-stopping only a worker executing that suppressed task. Other jobs/workers stay untouched. A killed slot is replenished via the existing idempotent launcher. No global Celery shutdown or new queue system.
+- Cancellation receipts remain available for N1 when the suppressed task resumes; no automatic redispatch. `tools/test_celery_n1_suppression_r11r4.py` and `tools/test_celery_suppress_n1_r11r3.py` cover offline ownership/cancellation and N1 non-response.
+- Retains the r11r3 permission-step hold, context-injection wake, recovery N1 scope exception, and suppression/resume fixes. Celery continues to use the existing N1-approved registered tool executor; no expansion of mutation privileges.
+
+**Boundary:** N2 can continue independent tool calls within its current step while N1 awaits Celery. Cross-step advancement with a pending independent receipt requires additional dependency bookkeeping and is **not** claimed as implemented here. No live Windows, Redis, PostgreSQL, Ollama or Celery service test; this source package is a candidate, not a deployed hotfix.
+
+## 0.55.10r11r3 — Permission, recovery, suppressed resume, and Celery diagnostics (2026-10-15)
+
+**Base:** the exact user-supplied `Norm-0.55.10r11r2-Browser-Postgres-Unified-Portable-Source(1).zip`. Source-only candidate; no KHzz runtime or database was modified.
+
+- Added explicit N2 `request_user_approval` native action. On use, the running step and all later chain steps park in a Redis approval-wait sorted set; the step stays RUNNING rather than falsely completing. The chat request returns the actual approval question and `/inject-context --task TASK_ID` instruction. The injection is durably stored before atomic restoration of the paused step, without assuming that a reply means yes. The model must interpret the actual user's approval/denial. An injection arriving just before the park also wakes it, and approval-wait jobs are included in suppression snapshots.
+- Recovery children can call `request_scope_reconsideration` to ask N1 about an evidence-backed, previously incomplete predecessor step. N1 returns a bounded, deduplicated approve/deny receipt. This **does not** overwrite predecessor checkpoints or bypass per-tool authorization; the current recovery step may perform only the specifically authorized missing work.
+- `/resume-task` now waits for cancellation to unwind before restoring Redis jobs and acknowledges queue restoration immediately rather than blocking for eventual task completion. Includes async Celery delayed jobs and paused approval steps in the durable suppression snapshot.
+- Celery solo workers reuse a process-local tool executor, emit submitted/bootstrap/execute/result markers, and only announce worker readiness after `worker_ready`. Norm skips speculative N1 ETAs for never-started jobs and attaches diagnostic phase to unresolved 60-minute observations. **The one-hour deadline remains unchanged; this is not a guarantee every underlying tool will finish.**
+- Offline regression suites: `tools/test_recovery_suppress_celery_r11r3.py` and `tools/test_permission_gate_r11r3.py`; see `docs/R11R3_VALIDATION.md`.
+
+**Limitations:** Source compilation and isolated regression tests only. No live Redis/PostgreSQL/Celery/Ollama/Windows integration run. Existing N2 model behavior that asks for permission in plain prose instead of invoking `request_user_approval` may still fail to park; the system prompt now explicitly instructs native gating. Verify on an expendable task before using this for destructive or long-running operations. No runtime redesigns, plugin changes, or database migrations were performed.
+
 ## 0.55.10r11r2 — Shared PostgreSQL boundary and python-sql
 
 - All Norm-owned PostgreSQL connections through `postgres_pool` use one per-connection JSON/JSONB serialization policy (`configure` callback). No process-global psycopg adapter, extra pool, new database, or new connection credentials are introduced.

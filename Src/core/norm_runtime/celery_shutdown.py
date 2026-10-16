@@ -131,3 +131,30 @@ def stop_owned_celery_workers(root: str | Path, *, timeout_seconds: float = 15) 
         result["errors"].append(f"postcheck: {type(exc).__name__}")
     logging.info("Norm Celery process exit: %s",result)
     return result
+
+
+def stop_task_celery_worker(root: str | Path, pid: int, jobid: str, redis_client, prefix: str) -> bool:
+    """Hard-stop one verified Norm solo worker ONLY while it owns this job.
+
+    Never terminate other Celery workers or unverified process IDs. The Redis
+    active assignment closes most stale-marker cases; a final Windows process
+    identity check also guards recycled PIDs and unrelated Python processes.
+    """
+    if os.name != "nt" or int(pid) <= 0:
+        return False
+    active_key = prefix + ":active:" + str(pid)
+    try:
+        if redis_client.get(active_key) != jobid.encode("utf-8"):
+            return False
+        if int(pid) not in {int(w["pid"]) for w in _owned_workers(Path(root).resolve())}:
+            return False
+        # Recheck immediately before sending the process-scoped kill.
+        if redis_client.get(active_key) != jobid.encode("utf-8"):
+            return False
+        proc = subprocess.run(["taskkill.exe", "/PID", str(pid), "/T", "/F"],
+                              capture_output=True, text=True, timeout=10, check=False,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return proc.returncode == 0
+    except Exception:
+        logging.exception("Task-scoped Celery worker termination failed dispatch=%s pid=%s", jobid, pid)
+        return False

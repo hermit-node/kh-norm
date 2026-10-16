@@ -1,14 +1,15 @@
 {
-  "version": "0.55.10r13",
-  "variant": "Browser-Postgres-Unified",
-  "tag": "v0.55.10r13",
-  "source_archive_sha256": "e26205713402ccffd377540db780f9c58fb6462ba787cefed724accbf25d1560",
-  "source_archive": "0.55.10r13--Browser-Postgres-Unified--e26205713402.zip",
+  "version": "0.55.10r14",
+  "variant": "N1-Celery-Suppression",
+  "tag": "v0.55.10r14",
+  "source_archive_sha256": "24c9e24f3d2ae98a36038ecabf839b9b04f5a0ef65c135d1c3ee0e2eb1f55b65",
+  "source_archive": "0.55.10r14--N1-Celery-Suppression--24c9e24f3d2a.zip",
   "quality": "source-inventory-verified",
   "known_issues": [
-    "Normalized from 0.55.10r11r2-browser-postgres-unified; old ZIP and mapping retained in the installer kit."
+    "Source notes refer to an r11r3 patch, but no standalone r11r3 source ZIP is in the active install kit.",
+    "Normalized from 0.55.10r11r4-n1-celery-suppression; old ZIP and mapping retained in the installer kit."
   ],
-  "published_source_files": 365,
+  "published_source_files": 371,
   "omitted_paths": [
     "backups/plugins-ini/plugins-20261014-151017-561326+0000-72956dfad8bb.ini",
     "config/plugins.ini",

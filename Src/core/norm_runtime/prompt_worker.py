@@ -127,6 +127,20 @@ class PromptWorker:
         with self._state_lock:
             return self._active_task_id
 
+    def suppression_transition_active(self, task_ids: list[str]) -> bool:
+        """A cancelled model call must finish unwinding before jobs are restored.
+
+        The durable tree can already be 'suppressed' while an in-flight worker
+        still owns its Redis claim. Requeueing then lets that worker delete the
+        newly restored claim or re-suppress it.
+        """
+        with self._state_lock:
+            ids = {str(t) for t in task_ids}
+            # The suppression flag may be cleared in the handler before its
+            # worker frame releases the claim; active ownership is decisive.
+            return (self._active_task_id in ids or
+                    bool(self._suppress_requested.intersection(ids)))
+
     def _consume_context_injections(self, job: PromptJob) -> list[dict]:
         """Refresh active injection state at EVERY model boundary.
 
@@ -484,6 +498,16 @@ class PromptWorker:
                 snapshot = self.durable.suppress_task(target, reason, payload)
             else:
                 snapshot = {"task_id": target}
+            # Suppression also cancels N1-approved Celery work belonging to this
+            # task tree. The durable receipt survives for N1 on manual resume.
+            celery_stop = {"found": 0, "cancelled": 0, "workers_stopped": 0, "errors": []}
+            try:
+                from .celery_tool_executor import CFG, cancel_task_dispatches
+                if CFG["enabled"]:
+                    celery_stop = cancel_task_dispatches(self.queue.r, member_ids)
+            except Exception as exc:
+                logging.exception("Could not stop task-owned Celery dispatches task=%s", target)
+                celery_stop["errors"].append(type(exc).__name__)
             # Emergency mode cancels generation as soon as durable suppression
             # is committed, BEFORE optional cleanup. Never wait for a model
             # checkpoint or verifier turn.
@@ -510,7 +534,7 @@ class PromptWorker:
             return {
                 "status": "ok", "suppressed": True, "immediate": immediate, "task_id": target,
                 "title": snapshot.get("title", ""), "suppressed_task_ids": member_ids,
-                "queue_cleanup": queue_cleanup,
+                "queue_cleanup": queue_cleanup, "celery_stop": celery_stop,
             }
         finally:
             # Do not clear an active task's transition marker here. The model call can
@@ -4753,7 +4777,12 @@ class PromptWorker:
                 "how you would plan or perform it. Do not redo completed steps, "
                 "regenerate the task plan, or silently do later steps. Reopen prior "
                 "work only when new evidence specifically invalidates it or the "
-                "active step explicitly requires it.\n"
+                "active step explicitly requires it. If this is a recovery child "
+                "and new evidence proves an earlier prerequisite remains undone, "
+                "call request_scope_reconsideration with the evidence and exact "
+                "missing action. Do not silently execute out-of-scope work or "
+                "loop over whether the earlier step may be revisited: N1 must "
+                "first decide whether a bounded exception is justified.\n"
                 "If a targeted verifier/N1 correction is included in this invocation, "
                 "resolve that correction within the current step rather than "
                 "returning to the beginning. On a conclusion step, synthesize the "
@@ -4765,6 +4794,115 @@ class PromptWorker:
             "current work_request's processing contract; execute rather than "
             "re-plan unless the current request explicitly calls for planning.\n"
         )
+
+    @staticmethod
+    def _recovery_scope_exception_allowed(job: PromptJob) -> bool:
+        meta = job.metadata or {}
+        origin = str(meta.get("prompt_origin") or "").lower()
+        return bool(meta.get("recovery_mode")) or origin in {
+            "runtime_oversize_recovery_unit", "runtime_recovery_attempt"
+        }
+
+    @staticmethod
+    def _user_approval_schema() -> dict:
+        return {"type": "function", "function": {
+            "name": "request_user_approval",
+            "description": "Suspend THIS unfinished step and all its successors while asking the user "
+                           "to authorize a concrete action. Do not claim the action completed. "
+                           "Wait for /inject-context to wake the same step. Invoke alone.",
+            "parameters": {"type": "object", "properties": {
+                "question": {"type": "string"},
+                "proposed_action": {"type": "string"},
+                "why_approval_needed": {"type": "string"},
+            }, "required": ["question", "proposed_action", "why_approval_needed"],
+               "additionalProperties": False},
+        }}
+
+    @staticmethod
+    def _scope_reconsideration_schema() -> dict:
+        return {"type": "function", "function": {
+            "name": "request_scope_reconsideration",
+            "description": (
+                "Ask N1 whether a recovery child may execute SPECIFIC unfinished earlier work "
+                "when new evidence/user instructions invalidate an earlier completion assumption. "
+                "This is approval to change recovery-step scope, NOT an executor; never "
+                "treat a request itself as permission or a completed file operation."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "prior_task_id": {"type": "string"},
+                "prior_step_id": {"type": "string"},
+                "missing_work": {"type": "string"},
+                "proposed_action": {"type": "string"},
+                "new_evidence": {"type": "string"},
+                "authorization_evidence": {"type": "string"},
+            }, "required": ["prior_task_id", "prior_step_id", "missing_work",
+                            "proposed_action", "new_evidence", "authorization_evidence"],
+               "additionalProperties": False},
+        }}
+
+    def _request_scope_reconsideration(self, job: PromptJob, arguments: dict) -> dict:
+        """Request a single bounded exception; N1, never N2, owns approval.
+
+        Returns a decision tool receipt for the current step. Its result is
+        captured by normal durable tool evidence and N1's step review. No prior
+        PostgreSQL step status is rewritten; evidence of missing execution is
+        preserved alongside the original checkpoint.
+        """
+        import hashlib
+        if not self._recovery_scope_exception_allowed(job):
+            return {"ok": False, "approved": False, "error": "scope exception is restricted to recovery execution"}
+        if not isinstance(arguments, dict):
+            return {"ok": False, "approved": False, "error": "structured arguments required"}
+        fields = ("prior_task_id", "prior_step_id", "missing_work", "proposed_action",
+                  "new_evidence", "authorization_evidence")
+        info = {key: str(arguments.get(key) or "").strip()[:4000] for key in fields}
+        if any(not value for value in info.values()):
+            return {"ok": False, "approved": False, "error": "all scope-reconsideration fields are required"}
+        if self.durable is None or self.n1_gatekeeper is None or not self.n1_gatekeeper.enabled:
+            return {"ok": False, "approved": False, "error": "independent N1 approval unavailable"}
+        try:
+            current_root = self.durable.root_task_id(job.task_id)
+            prior_root = self.durable.root_task_id(info["prior_task_id"])
+            if not current_root or current_root != prior_root:
+                return {"ok": False, "approved": False, "error": "prior task is not in the current recovery lineage"}
+            snapshot = self.durable.task_plan_snapshot(info["prior_task_id"])
+            matched = next((step for step in (snapshot or {}).get("steps", [])
+                            if str(step.get("id") or "") == info["prior_step_id"]), None)
+            if matched is None:
+                return {"ok": False, "approved": False, "error": "prior step not found in durable plan"}
+            original = self._ensure_original_user_prompt(job)
+            if not original:
+                return {"ok": False, "approved": False, "error": "original user request unavailable"}
+            key_data = json.dumps({"task": job.task_id, "step": job.step_id, **info},
+                                  ensure_ascii=False, sort_keys=True)
+            digest = hashlib.sha256(key_data.encode("utf-8")).hexdigest()
+            meta = dict(job.metadata or {})
+            old = dict(meta.get("scope_reconsideration_receipts") or {})
+            if digest in old:
+                return dict(old[digest])
+            decision = self.n1_gatekeeper.judge_scope_reconsideration(
+                original_request=original, current_step=str(job.prompt or ""),
+                prior_step=matched, request=info)
+            approved = str(decision.get("decision") or "") == "approve"
+            receipt = {
+                "ok": True, "approved": approved, "decision": "approve" if approved else "deny",
+                "prior_task_id": info["prior_task_id"], "prior_step_id": info["prior_step_id"],
+                "missing_work": info["missing_work"], "authorized_action": info["proposed_action"] if approved else "",
+                "reason": str(decision.get("reason") or "")[:1600],
+                "approval_id": digest[:24], "source": "n1_independent_scope_review",
+                "note": "Authorization is bounded to this missing action; normal N1 tool gates and user approval still apply.",
+            }
+            old[digest] = receipt
+            meta["scope_reconsideration_receipts"] = dict(list(old.items())[-16:])
+            job.metadata = meta
+            if hasattr(self.durable, "record_maintenance_note"):
+                self.durable.record_maintenance_note(
+                    "recovery_scope_review", "N1 scope reconsideration " + receipt["decision"],
+                    task_id=job.task_id, details={"step_id": job.step_id, "review": receipt})
+            return receipt
+        except Exception as exc:
+            logging.exception("N1 recovery scope review failed task=%s step=%s", job.task_id, job.step_id)
+            return {"ok": False, "approved": False, "error": f"N1 scope review failed: {type(exc).__name__}"}
 
     def _run_tool_slice(self, job: PromptJob, prompt: str, tools) -> dict:
         import json
@@ -4879,6 +5017,10 @@ class PromptWorker:
                  if async_bridge.enabled or async_bridge.pending else ""),
                 self._active_voice_instructions(),
                 self._tool_slice_execution_instructions(job),
+                ("If user authorization is required before unfinished work, call "
+                 "request_user_approval ALONE rather than answering with only a permission "
+                 "question or pretending the step is complete. Once /inject-context wakes "
+                 "the step, incorporate the actual response and proceed only if authorized."),
                 "[NORM INTERNAL TASK/STEP INSTRUCTION — NOT USER-AUTHORED]\n"
                 "The user-role message is anchored to the CURRENT active step "
                 "with the verbatim original user request clearly marked as reference. "
@@ -4891,6 +5033,9 @@ class PromptWorker:
             native_schemas = tools.schemas()
             from .task_record_lookup import TOOL_SCHEMA
             native_schemas.append(TOOL_SCHEMA)
+            native_schemas.append(self._user_approval_schema())
+            if self._recovery_scope_exception_allowed(job):
+                native_schemas.append(self._scope_reconsideration_schema())
             if self.n1_gatekeeper is not None:
                 native_schemas = self.n1_gatekeeper.instrument_schemas(native_schemas)
             response = self.client.chat_with_tools(
@@ -5051,6 +5196,42 @@ class PromptWorker:
                     "evidence": evidence,
                 }
 
+            # A request for operator approval is a suspension, NOT a completed
+            # step or a tool execution. No other calls in the same turn may run.
+            approval_calls = [call for call in calls if isinstance(call, dict)
+                              and isinstance(call.get("function"), dict)
+                              and call["function"].get("name") == "request_user_approval"]
+            if approval_calls:
+                if len(approval_calls) != 1 or len(calls) != 1:
+                    messages.append({"role": "system", "content":
+                        "Approval request must be the sole tool call in the turn; no work was executed. Retry alone."})
+                    continue
+                request = approval_calls[0]["function"].get("arguments", {})
+                if isinstance(request, str):
+                    try:
+                        request = json.loads(request)
+                    except (ValueError, TypeError):
+                        request = {}
+                if (not isinstance(request, dict) or
+                    any(not str(request.get(k) or "").strip()
+                        for k in ("question", "proposed_action", "why_approval_needed"))):
+                    messages.append({"role": "system", "content":
+                        "Approval request must specify a question, proposed_action, and why_approval_needed. Retry."})
+                    continue
+                request = {k: str(request[k]).strip()[:3000]
+                           for k in ("question", "proposed_action", "why_approval_needed")}
+                # No approval is inferred from the model's own request.
+                # The next model turn must judge the fresh operator message.
+                checkpoint = self._continuation_checkpoint(
+                    job, prompt, messages, "awaiting_user_approval", step_rounds, task_rounds)
+                checkpoint += "\n\nAWAITING USER APPROVAL: " + json.dumps(request, ensure_ascii=False)
+                logging.info("Waiting for user approval task=%s step=%s action=%s",
+                             job.task_id, job.step_id, request["proposed_action"][:120])
+                return {"yielded": True, "reason": "awaiting_user_approval",
+                        "checkpoint": checkpoint, "step_rounds": step_rounds,
+                        "task_rounds": task_rounds, "evidence": evidence,
+                        "resume_metadata": {"approval_request": request,
+                                            "approval_injection_floor": int((job.metadata or {}).get("context_injection_cursor") or 0)}}
             messages.append(
                 redact({"role": "assistant", "content": content, "tool_calls": calls})
             )
@@ -5307,6 +5488,9 @@ class PromptWorker:
                             "error": "N1 stopped this repeated reasoning/tool turn before execution; continue from existing evidence and change approach.",
                         }
                         gate_meta = {"executed": False, "reasoning_loop_blocked": True}
+                    elif name == "request_scope_reconsideration":
+                        result = self._request_scope_reconsideration(job, arguments)
+                        gate_meta = {"executed": False, "author": "n1", "scope_exception": True}
                     elif name in {"verification_preflight", "verification_history", "verification_checkin"}:
                         # Legacy N2-managed verification is intentionally unavailable in
                         # checkpoint 1. N1 owns this boundary now.
@@ -6143,7 +6327,15 @@ class PromptWorker:
                 completed_at=_utc_now(),
             )
             self.durable.checkpoint_step(result)
-        if reason == "n1_async_pending":
+        if reason == "awaiting_user_approval":
+            self.queue.park_for_user_approval(redis_id, job, checkpoint)
+            # A response can arrive between the model asking and the Redis
+            # park transaction. Re-check durable injections AFTER parking.
+            if self.context_injections is not None:
+                floor = int((job.metadata or {}).get("approval_injection_floor") or 0)
+                if self.context_injections.read(job.task_id, after=floor):
+                    self.queue.resume_approval_on_injection([job.task_id])
+        elif reason == "n1_async_pending":
             next_check_at = float(outcome.get("next_check_at") or 0)
             if next_check_at <= 0:
                 raise RuntimeError("Pending Celery continuation has no due time")
