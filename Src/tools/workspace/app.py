@@ -402,6 +402,13 @@ class Workspace(QWidget):
         self._closing = False
         self._shutdown_complete = False
         self._shutdown_started = False
+        # Watch the EXISTING terminal shutdown signal. Ignore stale signals
+        # from before this workspace instance started.
+        self._external_shutdown_signal = self.settings.norm_root() / "state/operator-console-shutdown.json"
+        try:
+            self._external_shutdown_baseline = self._external_shutdown_signal.stat().st_mtime_ns
+        except OSError:
+            self._external_shutdown_baseline = 0
         self._shutdown_proc = None
         self._shutdown_log = None
         self._test_mode = test_mode
@@ -416,7 +423,7 @@ class Workspace(QWidget):
         self.mouse_hook = None
         self._mouse_callback = None
 
-        self.setWindowTitle("Norm Workspace 0.55.10 — Native Terminal Container")
+        self.setWindowTitle("Norm Workspace 0.55.10r1 — Native Terminal Container")
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
         self.setWindowFlag(Qt.WindowType.Window)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
@@ -801,8 +808,32 @@ class Workspace(QWidget):
         except OSError as e:
             self.set_status(f"Couldn't launch Norm: {e}")
 
+    def _check_external_shutdown(self) -> bool:
+        """Close only on a fresh, normal Norm exit signaled by BAT/service.
+
+        Do not launch a second shutdown or purge any database/trash state.
+        Workspace's own Quit helper remains authoritative if already running.
+        """
+        if self._test_mode or self._shutdown_started:
+            return False
+        signal = self._external_shutdown_signal
+        try:
+            state = signal.stat()
+            if state.st_mtime_ns <= self._external_shutdown_baseline:
+                return False
+            payload = json.loads(signal.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            return False
+        if payload.get("reason") != "normal-service-exit":
+            return False
+        self._external_shutdown_baseline = state.st_mtime_ns
+        self._shutdown_complete = True
+        self.set_status("Norm exited through the service/BAT. Closing workspace.")
+        self.close()
+        return True
+
     def poll(self) -> None:
-        if self._closing:
+        if self._closing or self._check_external_shutdown():
             return
         if self.capture_enabled and len(self.attached) < 3:
             # No automatic release of previous workspaces on every poll.

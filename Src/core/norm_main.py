@@ -240,12 +240,9 @@ def clear_runtime_redis(root: Path) -> dict[str, int]:
         if preserved:
             client.mset(preserved)
         cleared[name] = max(0, before - len(preserved))
-    deletion_queue = build_deletion_queue(root)
-    purge = deletion_queue.purge_all()
-    if purge.get("held", 0):
-        raise RuntimeError(f"Deletion queue purge held {purge['held']} item(s); deletion Redis was preserved")
-    deletion_queue.flush_db()
-    cleared["deletion_queue"] = int(purge.get("purged", 0))
+    # Reversible soft-delete trash is operator-controlled and must survive
+    # ALL normal shutdowns. Never purge it or flush its dedicated Redis DB.
+    cleared["deletion_queue"] = 0
     return cleared
 
 
@@ -1303,7 +1300,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             logging.info("Stop-all Ollama result: %s", ollama_result)
         elif graceful_exit and startup_completed and not shutdown_now.is_set():
             cleared = clear_runtime_redis(root)
-            logging.info("Graceful shutdown purged deletion queue and cleared Redis: %s", cleared)
+            logging.info("Graceful shutdown cleared transient Redis; reversible deletion queue preserved: %s", cleared)
 
         # Ordinary /shutdown also closes an Ollama instance that THIS Norm
         # process launched. Never shut down another independently managed

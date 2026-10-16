@@ -51,6 +51,7 @@ def fragment(settings: dict) -> dict:
             "guid": "{" + str(uuid.uuid5(UUID_ROOT, name)) + "}",
             "commandline": "cmd.exe",
             "tabTitle": title,
+            "closeOnExit": "always",
             "font": font_spec(settings, key, face, size),
         })
     return {"profiles": profiles}

@@ -735,7 +735,7 @@ class ConversationService:
         last_error = None
         for _ in range(2):
             try:
-                parsed = self._structured_generate(prompt, command_schema(), num_predict=900, think=False)
+                parsed = self._structured_generate(prompt, command_schema(), num_predict=6900, think=False)
                 command = normalize_command(parsed, original_user_prompt)
                 command = self._validate_append_target(command, related_running_work)
                 return self._verify_append_boundary(original_user_prompt, command, related_running_work)
@@ -980,7 +980,7 @@ class ConversationService:
         for _ in range(2):
             try:
                 parsed = self._structured_generate(
-                    prompt, self._turn_interpretation_schema(), num_predict=2600, think=False
+                    prompt, self._turn_interpretation_schema(), num_predict=9600, think=False
                 )
                 # The model may identify intent and sidecar durable details, but it may not
                 # freely paraphrase the executable request.  Only exact, clearly separable
@@ -1149,7 +1149,7 @@ class ConversationService:
             f"CANDIDATE UNRESOLVED BITS:\n{json.dumps(candidates, ensure_ascii=False)}"
         )
         try:
-            parsed = self._structured_generate(prompt, self._unresolved_fit_schema(), num_predict=1800, think=False)
+            parsed = self._structured_generate(prompt, self._unresolved_fit_schema(), num_predict=12800, think=False)
         except Exception:
             logging.exception("Unresolved-bit fit test failed")
             return []
@@ -1237,7 +1237,7 @@ class ConversationService:
             f"INITIAL APPEND CLASSIFICATION:\n{json.dumps(command, ensure_ascii=False)}\n\n"
             f"PREDECESSOR PLAN:\n{json.dumps(task, ensure_ascii=False)}"
         )
-        parsed = self._structured_generate(prompt, self._append_boundary_schema(), num_predict=600, think=False)
+        parsed = self._structured_generate(prompt, self._append_boundary_schema(), num_predict=7600, think=False)
         step_id = str(parsed.get("previous_step_id") or "").strip()
         reason = str(parsed.get("reason") or "").strip()[:500]
         if not reason:
@@ -1342,7 +1342,7 @@ class ConversationService:
             f"AUTHORITATIVE PRIMARY TASK REQUEST:\n{original_user_prompt}\n\n"
             f"YOUR DRAFT PLAN:\n{json.dumps(plan, ensure_ascii=False)}"
         )
-        parsed = self._structured_generate(prompt, self._plan_self_review_schema(), num_predict=650, think=False,
+        parsed = self._structured_generate(prompt, self._plan_self_review_schema(), num_predict=7650, think=False,
                                            invoke_source="n2", invoke_target="n2", invocation_kind="plan_self_audit")
         improve = parsed.get("improve")
         issues = parsed.get("issues")
@@ -1502,7 +1502,7 @@ class ConversationService:
         for _ in range(2):
             try:
                 parsed = self._structured_generate(
-                    prompt, self._plan_verifier_schema(), num_predict=1600, think=True,
+                    prompt, self._plan_verifier_schema(), num_predict=14600, think=True,
                     invoke_source="n2", invoke_target="n1", invocation_kind="plan_submission_for_review"
                 )
                 accepted = parsed.get("accepted")
@@ -2118,7 +2118,7 @@ class ConversationService:
                 prompt += "\n\nN1 ROUTING REVIEW FEEDBACK:\n" + retry_feedback + "\nReturn a corrected routing proposal only."
             try:
                 parsed = self._structured_generate(
-                    prompt, schema, num_predict=3200, think=False, max_chars=48_000, emit_stream=False
+                    prompt, schema, num_predict=13200, think=False, max_chars=48_000, emit_stream=False
                 )
             except Exception as exc:
                 logging.exception("Subject routing proposal failed")
@@ -2287,7 +2287,7 @@ class ConversationService:
         )
         try:
             parsed = self._structured_generate(
-                prompt, schema, num_predict=2600, think=False, max_chars=48_000, emit_stream=False
+                prompt, schema, num_predict=9600, think=False, max_chars=48_000, emit_stream=False
             )
             valid = set(route.thread_ids)
             projections: dict[str, list[str]] = {}
@@ -2638,7 +2638,7 @@ class ConversationService:
         parsed = None
         try:
             parsed = self._structured_generate(
-                prompt, schema, num_predict=7000, think=False,
+                prompt, schema, num_predict=27000, think=False,
                 max_chars=28_000, emit_stream=False,
             )
             first_summary = parsed.get("summary") if isinstance(parsed, dict) else None
@@ -2662,7 +2662,7 @@ class ConversationService:
             }
             try:
                 parsed = self._structured_generate(
-                    retry_prompt, retry_schema, num_predict=4000, think=False,
+                    retry_prompt, retry_schema, num_predict=24000, think=False,
                     max_chars=16_000, emit_stream=False,
                 )
                 retry_summary = parsed.get("summary") if isinstance(parsed, dict) else None
@@ -2721,7 +2721,7 @@ class ConversationService:
             + "\n\nAssistant reply:\n"
             + assistant_reply
         )
-        raw = self.ollama.generate(prompt, think=False, temperature=0.0, num_predict=1400, emit_stream=False)
+        raw = self.ollama.generate(prompt, think=False, temperature=0.0, num_predict=12400, emit_stream=False)
         try:
             parsed = self.ollama.parse_json(raw)
         except ValueError:

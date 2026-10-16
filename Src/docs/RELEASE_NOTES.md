@@ -1,3 +1,14 @@
+## Norm 0.55.10r1 — targeted shutdown & Windows Terminal corrections (2026-10-12)
+
+- Baseline: installed 0.55.10 workspace source; no changes to live C:\Norm.
+- Preserve the reversible soft-delete folder and separate deletion Redis DB during normal shutdown; never purge them implicitly.
+- Correct Celery worker inventory to collapse only true Windows Python launcher parent/child process pairs; independent duplicate worker instances remain distinct.
+- Permit explicit Shared Browser quit even while manual control or visual export is active.
+- Windows Terminal Norm-owned role fragments use closeOnExit=always, preventing tab restart prompts after process termination; global Terminal settings remain untouched.
+- The Python/PySide6 workspace embeds real Windows Terminal HWNDs via native Win32 APIs; no UI rendering rewrite without an observed reproduction.
+- The workspace now detects a fresh normal-service-exit console signal when Norm is shut down through its BAT/service, releases embedded terminal windows, and closes itself. Stale signals are ignored; it never initiates a duplicate shutdown or performs trash cleanup.
+- Retained all 11 increased per-call num_predict budgets from the live conversation_service.py; no unrelated changes. Structured output character caps remain separate and were not modified.
+
 ## Norm 0.55.10 - Native Qt workspace and safe owner-scoped cleanup (2026-10-12)
 
 - Three real native Windows terminal HWNDs inside the existing Qt workspace.

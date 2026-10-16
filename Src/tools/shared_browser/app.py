@@ -169,10 +169,10 @@ class Browser(QMainWindow):
     @Slot(object)
     def dispatch(self,job):
         act=str(job.get("action") or "");args=job.get("args") or {}
-        if self.manual and act not in ("status","show","hide","take_control","release","visual_pdf_status","visual_pdf_cancel"):
+        if self.manual and act not in ("status","show","hide","take_control","release","visual_pdf_status","visual_pdf_cancel","quit"):
             self.done(job,error="Human controls this page; return control to Norm")
             return
-        if self.visual.job is not None and act not in ("status","visual_pdf_status","visual_pdf_cancel"):
+        if self.visual.job is not None and act not in ("status","visual_pdf_status","visual_pdf_cancel","quit"):
             self.done(job,error="Visual PDF capture in progress; other page actions paused")
             return
         try:

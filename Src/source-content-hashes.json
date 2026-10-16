@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "release": "0.55.10",
-  "baseline": "Norm-0.55.9r13-portable-source.zip",
-  "file_count": 362,
+  "release": "0.55.10r1",
+  "baseline": "Norm-0.55.10-WORKSPACE-STAGING",
+  "file_count": 364,
   "hash_algorithm": "sha256",
   "files": {
     ".gitattributes": {
@@ -58,8 +58,8 @@
       "sha256": "9eac7103f6b72b4cff3deb4fb40def0641323d1a148c304e26c0c7740cdd71de"
     },
     "core/norm_main.py": {
-      "bytes": 70082,
-      "sha256": "ed84550566aa0823e1a1273e0d2ef2b36677f40d4e0d376b83ebdc052cdf764d"
+      "bytes": 69971,
+      "sha256": "371bc8ad587c03eb6b8e8b403bfccd209f92ca71476027e8017c30040de801e5"
     },
     "core/norm_runtime/__init__.py": {
       "bytes": 2,
@@ -98,8 +98,8 @@
       "sha256": "1724e6f5dd41a262ef2d86033c310345e2dddfbf4e041ff938f1956dc919056d"
     },
     "core/norm_runtime/celery_shutdown.py": {
-      "bytes": 4890,
-      "sha256": "627327e81f0129fca812d4f0555f7375efc65339ec01e4a192d0efa286f9bad8"
+      "bytes": 5608,
+      "sha256": "8e66dbb570e010f6792e0118000f239e84cf2ec462b4839a7814c8649fa73bd7"
     },
     "core/norm_runtime/celery_tool_executor.py": {
       "bytes": 5865,
@@ -126,8 +126,8 @@
       "sha256": "63a0d1bba133690211e57973fa4426b8a849fb425119d8e85d795f0fcb3348e1"
     },
     "core/norm_runtime/conversation_service.py": {
-      "bytes": 155048,
-      "sha256": "316da6a99b9772fcaea03ac8c5398a0394112dc0bd4149431083751e0715999a"
+      "bytes": 155057,
+      "sha256": "9a87b20d2483b230f8dc42bf9d67bae0d40a158462be82dad1fd42e6042ad145"
     },
     "core/norm_runtime/conversation_store.py": {
       "bytes": 25249,
@@ -322,8 +322,8 @@
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
     },
     "docs/RELEASE_NOTES.md": {
-      "bytes": 145853,
-      "sha256": "dfe201e578d2210287497d77b5ea67b99700337895e7c4a9e9b3cf5c06944f29"
+      "bytes": 147175,
+      "sha256": "764f4fdb69d50ee77f66f99a8fb5a8fb47f32eeee40404fdbe45f1d1af05336a"
     },
     "docs/SHARED_BROWSER.md": {
       "bytes": 6642,
@@ -386,8 +386,8 @@
       "sha256": "814cf6e096ac167f56bbb47c98287818949ec13c65843574b3a733698c91f982"
     },
     "package-manifest.json": {
-      "bytes": 35291,
-      "sha256": "b73c379a67bc2a0ca89c5a5b7e458ebe12838f9b5f2e22715c76480ae9f3c36c"
+      "bytes": 35295,
+      "sha256": "9050622cf52dada87a61f80aa9af0bef2da821bb436dbc2899c280d7e658ee67"
     },
     "plugins/README.md": {
       "bytes": 721,
@@ -1078,8 +1078,8 @@
       "sha256": "4fdb5ecb1625eecff505b8580db3a6b6302dd625f77aea5be5a5a686c5a1a2fc"
     },
     "tools/shared_browser/app.py": {
-      "bytes": 18443,
-      "sha256": "c7fa6b21758a630a95fe153ae1d29d4553bd48ca4d804c9e94babf64e70afd5b"
+      "bytes": 18457,
+      "sha256": "bedfa800b1cb060c2c598de5e4f28b22878b145e5efe515f87493b3dd6b0b133"
     },
     "tools/shared_browser/speaker_pdf.py": {
       "bytes": 6202,
@@ -1369,6 +1369,10 @@
       "bytes": 1201,
       "sha256": "f05e7c1d03cc3bf50587f7bb546408b72eb9594fa184c6e7ce143754531941c8"
     },
+    "tools/test_shutdown_r1.py": {
+      "bytes": 4082,
+      "sha256": "83c34a01822f1e29d6f9cf0481932fe21cd09f64edbc2f8c261271ac49681c84"
+    },
     "tools/test_subject_routing.py": {
       "bytes": 6992,
       "sha256": "3ebf5cfc2696f44e5b4ae30cab6276d9a95e65e69a43b210951bb1cf910a9d30"
@@ -1413,6 +1417,10 @@
       "bytes": 6762,
       "sha256": "d442f31bf075f8e758a1705dc45b1e4b9e006101adba40abd7a4bd513f856293"
     },
+    "tools/test_workspace_external_shutdown_r1.py": {
+      "bytes": 1717,
+      "sha256": "95308381c2fd0bf2729257258307b090797311bb75c9ce9845186ee5abcead9a"
+    },
     "tools/test_workspace_v05510.py": {
       "bytes": 5514,
       "sha256": "789e2ac9caafa35b02b57c3b9ca228860d92a0b67678867b1ac42bcb909c350f"
@@ -1438,12 +1446,12 @@
       "sha256": "b6c9378e642f22b54c9d97751a5974d861a723625f1db82c5a0c34d7e14364f8"
     },
     "tools/workspace/app.py": {
-      "bytes": 50253,
-      "sha256": "c531b83388cf7c18d97e4c294c8311385a0dc898182628eddc820deb53b47abd"
+      "bytes": 51738,
+      "sha256": "a399b6f1084cc747936526959fa664de99f5af18baafa9b921834cddc56906d7"
     },
     "tools/workspace/font_profiles.py": {
-      "bytes": 8296,
-      "sha256": "0066b716d9dfac5dc414b66173aeb9c005801bd3a3b3d0b599f8cf4b191137f7"
+      "bytes": 8333,
+      "sha256": "c0ff9718a55afb3afffd579a9431ff5fc5eaae7ad4118651a185aca4e15396f7"
     },
     "tools/workspace/start_roles.py": {
       "bytes": 1236,

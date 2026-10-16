@@ -35,23 +35,39 @@ def _owned_workers(root: Path) -> list[dict]:
     rows = raw if isinstance(raw,list) else [raw]
     owned = []
     for item in rows:
-        if not isinstance(item,dict):
+        if not isinstance(item, dict):
             continue
-        cmd = str(item.get("CommandLine") or "").casefold().replace("/", "\\\\")
-        # Source script identity + interpreter identity are both necessary.
+        cmd = str(item.get("CommandLine") or "").casefold().replace("/", "\\")
         if script not in cmd or py_dir not in cmd:
             continue
         try:
-            pid=int(item["ProcessId"])
-            number=0
+            pid = int(item["ProcessId"])
+            parent = int(item.get("ParentProcessId") or 0)
             import re
-            match=re.search(r"--id\s+(\d+)",cmd)
-            if match:number=int(match.group(1))
+            match = re.search(r"--id\s+(\d+)", cmd)
+            number = int(match.group(1)) if match else 0
             if pid > 0:
-                owned.append({"pid":pid,"number":number})
-        except (ValueError,TypeError,KeyError):
+                owned.append({"pid": pid, "parent_pid": parent, "number": number})
+        except (ValueError, TypeError, KeyError):
             pass
-    return owned
+    by_pid = {row["pid"]: row for row in owned}
+    roots = []
+    for row in owned:
+        ancestor = row["parent_pid"]
+        seen = {row["pid"]}
+        duplicate_child = False
+        while ancestor in by_pid and ancestor not in seen:
+            seen.add(ancestor)
+            parent = by_pid[ancestor]
+            if parent["number"] == row["number"]:
+                duplicate_child = True
+                break
+            ancestor = parent["parent_pid"]
+        if not duplicate_child:
+            roots.append({"pid": row["pid"], "number": row["number"]})
+    # Independently started workers are NOT collapsed: duplicate IDs in
+    # unrelated process trees must still trigger the launcher safety guard.
+    return roots
 
 
 def stop_owned_celery_workers(root: str | Path, *, timeout_seconds: float = 15) -> dict:
