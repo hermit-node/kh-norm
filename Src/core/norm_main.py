@@ -1324,9 +1324,27 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="norm")
     parser.add_argument("--check", action="store_true", help="Verify Ollama, Redis, and PostgreSQL, then exit")
     parser.add_argument("--version", action="store_true", help="Print Norm project/version metadata, then exit")
+    parser.add_argument("--self-test-celery", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--console", action="store_true", help="Open the interactive Rich console")
     parser.add_argument("--service", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.self_test_celery:
+        # Installer must execute THIS CHECK on the actual compiled candidate,
+        # not merely prove that dependencies import under .venv Python.
+        import celery.fixups
+        import celery.backends.redis
+        import celery.worker.worker
+        import celery.concurrency.solo
+        import kombu.transport.redis
+        from norm_runtime.celery_tool_executor import app, CFG, Broker
+        from norm_runtime.async_n1_delivery import N1AsyncBridge
+        if not callable(Broker) or not callable(N1AsyncBridge):
+            raise RuntimeError("missing N1 asynchronous delivery integration")
+        print(json.dumps({"ok": True, "frozen_celery": bool(getattr(sys, "frozen", False)),
+                          "redis_db": CFG["db"], "queue": CFG["queue"],
+                          "worker_count": CFG["count"],
+                          "broker": str(app.conf.broker_url).rsplit("/", 1)[-1]}))
+        return 0
     root = norm_root()
     path_cfg = load_path_settings(root)
     if args.version:

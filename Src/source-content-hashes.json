@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "release": "0.55.9r2",
-  "baseline": "Norm-0.55.9-portable-source.zip",
+  "release": "0.55.9r3",
+  "baseline": "Norm-0.55.9r2-portable-source.zip",
   "file_count": 300,
   "hash_algorithm": "SHA-256",
   "files": {
@@ -18,16 +18,16 @@
       "sha256": "e774f5ea91a76af90b32d07d967a17a1e2741a3e99c67ee944536cb548e6a432"
     },
     "README.md": {
-      "bytes": 20966,
-      "sha256": "6330518f97a228af55260f11402477a24f5ba5ff6981bf85d3c45aeef562c47b"
+      "bytes": 21474,
+      "sha256": "c433375da94f14b9abed5ffcc4fba47590feb17591fcc4abbbb556be60787a06"
     },
     "Run-Norm.bat": {
       "bytes": 3908,
       "sha256": "b2397cdde74158ad65a40823a5dacf6eec134450341d39e12fd6d15d29263694"
     },
     "SOURCE_PACKAGE.md": {
-      "bytes": 20830,
-      "sha256": "d6c582daa02791adf195d2c37b9a422c918569106a270d72889f9b90e835f3f6"
+      "bytes": 21338,
+      "sha256": "94e62557f87480615bed5954de128485739c68d607c7e58a73dcaf9c1bd43aca"
     },
     "Safe-Shutdown-Norm.bat": {
       "bytes": 1568,
@@ -47,11 +47,11 @@
     },
     "config/settings.ini": {
       "bytes": 2696,
-      "sha256": "3793624190074d7c87501d733a76147ee833d81ac7cab387ec3a7821f2757bf9"
+      "sha256": "40bfeea3b529bf9cb64540f4c796841573660ca182c3e3b3810ac1eb520cbb1c"
     },
     "core/norm_main.py": {
-      "bytes": 65755,
-      "sha256": "3a197ff1f3ab60fd1a3d05c0f9a182e49ad5c9a7a221a0a15d30c189650e24fa"
+      "bytes": 66803,
+      "sha256": "0e83f3c561327403448a1fc356bde9c3e09ba3890c34cfbb502eb1dca020a275"
     },
     "core/norm_runtime/__init__.py": {
       "bytes": 2,
@@ -278,8 +278,8 @@
       "sha256": "1fcd208613e23083e27e1b4d8ae131b52dca4bb1b71a4190571c380cf4fd4ca3"
     },
     "docs/DEVELOPMENT_NOTES.md": {
-      "bytes": 22979,
-      "sha256": "5b9dffa7586fd50fe0ddede0fc997ea078dd38eab5dd43dcccf33c404a24e56c"
+      "bytes": 23513,
+      "sha256": "38d93ad8f31cd9d8b92ada1b2a4d1fdecd83df6f54cf93a6786919bb0f9bd832"
     },
     "docs/FUTURE_IMPLEMENTATION_NOTES.md": {
       "bytes": 4268,
@@ -298,8 +298,8 @@
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
     },
     "docs/RELEASE_NOTES.md": {
-      "bytes": 124880,
-      "sha256": "4ee98507784d2db5ae742cee34b3f9332b835338c5847266be1426f3c6dbc96c"
+      "bytes": 125784,
+      "sha256": "d6a7d4dffc536c3e5b6e0c8b3ddb0c38c1fa801a6218e87b338b77f993416b02"
     },
     "docs/VOICE_OPERATOR_COMMANDS_PATCH.md": {
       "bytes": 1796,
@@ -354,8 +354,8 @@
       "sha256": "814cf6e096ac167f56bbb47c98287818949ec13c65843574b3a733698c91f982"
     },
     "package-manifest.json": {
-      "bytes": 26310,
-      "sha256": "8cf81f19fb40dd66aba9faf2674c7600ea6dc97afe66d1ac23467ad40af9015a"
+      "bytes": 26337,
+      "sha256": "e9e507add8ea2bf19a49c1477ea1cdb7ef3b882677e024b5fb353f925ca27966"
     },
     "plugins/README.md": {
       "bytes": 721,

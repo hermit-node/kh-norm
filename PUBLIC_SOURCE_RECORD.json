@@ -1,14 +1,11 @@
 {
-  "version": "0.55.9r2",
+  "version": "0.55.9r3",
   "variant": "",
-  "tag": "v0.55.9r2",
-  "source_archive_sha256": "52d7e39378457cd14587b2a6212bb48eb6707a474a2b7526a631f0c0b7dc31b3",
-  "source_archive": "0.55.9r2--release--52d7e3937845.zip",
-  "quality": "broken frozen Celery; use r3+",
-  "known_issues": [
-    "broken frozen Celery; use r3+",
-    "Known frozen Celery import failure; r3 correction follows."
-  ],
+  "tag": "v0.55.9r3",
+  "source_archive_sha256": "954b0a6607e9381b127115f9e155841cf6359faf7e6e12f4ba966a699d905a9f",
+  "source_archive": "0.55.9r3--release--954b0a6607e9.zip",
+  "quality": "static/CLI PASS, historical",
+  "known_issues": [],
   "published_source_files": 259,
   "omitted_paths": [
     "config/plugins.ini",

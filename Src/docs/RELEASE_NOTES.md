@@ -1,3 +1,17 @@
+## Norm 0.55.9r3 - frozen Celery dependency compatibility (2026-10-11)
+
+- Corrects the installer PyInstaller analysis to explicitly collect dynamically
+  imported Celery, Kombu, Billiard, AMQP, and Vine modules. Python-only tests
+  had missed a frozen ModuleNotFoundError: No module named celery.fixups.
+- Adds norm.exe --self-test-celery for an actual frozen import/transport probe
+  without starting Ollama, PostgreSQL, a prompt queue, or any N1/N2 task.
+- The corrected installer tests this frozen candidate before promoting it.
+  Installation fails without replacing the old exe if this gate fails.
+- N1's verification-pool-first authorization and N2's independent execution
+  and conclusion remain unchanged. No GUI/MSS plugin is added in this repair.
+- Celery still uses configurable [celery] redis_db (DB4 default) and four
+  optional worker processes. The existing runtime state is not cleared.
+
 ## Norm 0.55.9r2 - optional N1-approved Celery tool transport (2026-10-11)
 
 - N2 tool proposals still enter N1.before_tool before dispatch.

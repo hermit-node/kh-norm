@@ -1,3 +1,13 @@
+# Norm 0.55.9r3 - Frozen Celery import repair
+
+The Norm 0.55.9r2 native tool agent split, N1 verification-pool-first
+gate, N2 step/conclusion logic and Celery's configured Redis database
+are unchanged. The corrected installer collects Celery/Kombu and related
+runtime modules explicitly when building norm.exe and rejects compiled
+candidates that fail --self-test-celery BEFORE the installer promotes
+them. Tested a real frozen executable on KHzz before this release.
+See docs/RELEASE_NOTES.md for details.
+
 # Norm 0.55.9r2 - N1-approved asynchronous tool execution
 
 This is a source release for live testing. N1 remains the tool and

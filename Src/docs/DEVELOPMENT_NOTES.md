@@ -344,3 +344,13 @@ remain on the existing synchronous N1-gated path. Generic Celery worker
 dispatch code supports registry-based tools, but asynchronous mutation should
 NOT be enabled until cancellation, at-most-once side-effects, plugin identity
 checks and full live recovery tests pass.
+
+## Required release gate for frozen dependencies
+
+When adding an indirect import or a multiprocessing/plugin transport such
+as Celery, the installer MUST build the candidate once and run its frozen
+--self-test-celery command BEFORE promotion to core/norm.exe. Testing
+Norm's .venv Python alone is NOT validation of the frozen binary.
+Import Celery dynamic fixups/worker/backends/transports in this
+probe and fail installation on import errors. Never restart an already
+completed N1/N2 task due to an optional tool transport failure.
