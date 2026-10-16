@@ -1,3 +1,13 @@
+## Norm 0.55.9r7 - parent-side Redis reconstruction before recovery
+
+- Preserve the existing RedisTaskLog evidence stream; alongside it, save bounded actual tool-return values (including screenshot paths and measurements) as an additional Redis-only reconstruction layer.
+- Surface the latest observed values to N2 within the current task, without changing original-prompt role or N1 tool approval.
+- Before creating any recovery successor, the failed parent cross-checks its Redis execution plan, step events, recorded task status, tool-return evidence, saved checkpoint, and pending Celery receipts. N1 constructs a bounded new list covering ALL unresolved original steps, with deterministic coverage checks.
+- Create a distinct successor from those approved remaining-work steps. Never copy or share the parent's Redis ledger with it.
+- If source plans disagree or N1 fails to produce a valid covered plan, preserve the failed parent rather than invent recovery work.
+- No additional PostgreSQL writes for the Redis ledger; existing task history/lineage writes and existing shutdown/suppression semantics remain.
+- Tests: tools/test_redis_pre_recovery_r7.py and updated recovery contract regression. No live install performed by release construction.
+
 ## Norm 0.55.9r6 ? tool-result evidence and emergency suppression
 
 - Plugin return values are authoritative structured tool results. N1 and N2

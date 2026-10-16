@@ -2133,14 +2133,121 @@ class PromptWorker:
         )
         (self._runtime_root() / "SOS.readme").write_text(body, encoding="utf-8")
 
+    def _reconstruct_parent_before_recovery(
+        self, job: PromptJob, *, source: dict, original: str,
+        error: str, checkpoint: str,
+    ) -> tuple[list[dict], dict]:
+        """Reconcile the FAILED PARENT before a successor is created.
+
+        This is not a successor ledger. Redis's original plan/step execution
+        events and independent returned-result ledger are corroborating layers.
+        N1 creates a new list covering every unresolved source step.
+        """
+        if self.n1_gatekeeper is None or not hasattr(
+            self.n1_gatekeeper, "reconstruct_remaining_recovery_steps"
+        ):
+            raise RuntimeError("N1 pre-recovery reconstruction unavailable; preserve failed parent")
+        if not all(hasattr(self.live, name) for name in
+                   ("state", "events", "task_evidence", "result_ledger")):
+            raise RuntimeError("Redis reconstruction layers unavailable; preserve failed parent")
+        redis_state = self.live.state(job.task_id)
+        raw_plan = redis_state.get("plan") if isinstance(redis_state, dict) else None
+        redis_plan = json.loads(raw_plan) if isinstance(raw_plan, str) and raw_plan else raw_plan
+        if not isinstance(redis_plan, dict):
+            raise RuntimeError("Missing original Redis step execution plan; cannot reconstruct safely")
+        redis_steps = [x for x in redis_plan.get("steps", []) if isinstance(x, dict)]
+        durable_steps = [x for x in (source or {}).get("steps", []) if isinstance(x, dict)]
+        redis_map = {str(x.get("id") or ""): x for x in redis_steps}
+        durable_map = {str(x.get("id") or ""): x for x in durable_steps}
+        if (not redis_map or set(redis_map) != set(durable_map)
+                or any(not key for key in redis_map)):
+            raise RuntimeError("Redis step execution list and durable plan disagree; preserve failed parent")
+        # RedisTaskLog.events() returns newest-first. Reverse to apply latest
+        # step terminal event last, ignoring heartbeats and speculation.
+        statuses: dict[str, str] = {}
+        for _, fields in reversed(self.live.events(job.task_id, count=5000)):
+            if not isinstance(fields, dict):
+                continue
+            kind = str(fields.get("event") or "")
+            sid = str(fields.get("step_id") or "")
+            if sid not in redis_map:
+                continue
+            if kind in ("step_started", "step_completed", "step_failed", "step_cancelled"):
+                statuses[sid] = kind.removeprefix("step_")
+        controls = {"plan-breakdown", "verify-plan"}
+        # The final verifier itself can be the failed step after all N2 work
+        # completed. It is still outstanding work, not a reason to restart.
+        if job.step_id != "final-verify":
+            controls.add("final-verify")
+        completed: list[dict] = []
+        unresolved: list[dict] = []
+        for step in redis_steps:
+            sid = str(step["id"])
+            if sid in controls:
+                continue
+            current = dict(step)
+            current["id"] = sid
+            current["durable_status"] = str(durable_map[sid].get("status") or "pending")
+            current["redis_execution_status"] = statuses.get(sid, "not_observed")
+            if (sid != job.step_id
+                    and current["durable_status"] == "completed"
+                    and current["redis_execution_status"] == "completed"):
+                completed.append(current)
+            else:
+                unresolved.append(current)
+        if not unresolved:
+            raise RuntimeError("No unresolved execution steps to recover; preserve failed parent")
+        ledger = self.live.result_ledger(job.task_id, limit=64)
+        stream_evidence = list(self.live.task_evidence(job.task_id) or [])
+        # Older installations may have evidence-stream entries before the new
+        # ledger existed; pass both as corroboration, never equate absence
+        # from the new list with a failed historical tool call.
+        observed = ledger[-48:] if ledger else [
+            {"step_id": "unknown", **x} for x in stream_evidence[-48:] if isinstance(x, dict)
+        ]
+        pending: list[dict] = []
+        if hasattr(self.queue, "r"):
+            for step in unresolved:
+                try:
+                    value = self.queue.r.get(
+                        f"norm:async-link:{job.task_id}:{step['id']}"
+                    )
+                    if value:
+                        raw_pending = json.loads(value)
+                        if isinstance(raw_pending, list):
+                            pending.extend({
+                                "step_id": step["id"], "dispatch_id": str(x.get("id") or ""),
+                                "tool": str(x.get("name") or ""), "status": "pending",
+                            } for x in raw_pending if isinstance(x, dict))
+                except Exception:
+                    logging.exception("Could not examine Redis pending dispatches task=%s", job.task_id)
+                    raise RuntimeError("Pending async state unavailable; cannot safely reconstruct")
+        steps = self.n1_gatekeeper.reconstruct_remaining_recovery_steps(
+            original_request=original, failed_step_id=job.step_id,
+            failure=error, checkpoint=checkpoint,
+            unresolved_steps=unresolved, completed_steps=completed,
+            redis_results=observed, pending_dispatches=pending,
+        )
+        assessment = {
+            "parent_task_id": job.task_id,
+            "completed_step_ids": [x["id"] for x in completed],
+            "remaining_source_step_ids": [x["id"] for x in unresolved],
+            "observed_result_count": len(ledger),
+            "event_evidence_count": len(stream_evidence),
+            "redis_plan_checked": True,
+            "new_step_count": len(steps),
+            "pending_dispatches": pending,
+        }
+        return steps, assessment
+
     def _handoff_failed_task_to_recovery(
         self, job: PromptJob, *, stage: str, error: str, checkpoint: str = ""
     ) -> str:
         """Promote a terminal failure to a *designated* recovery task.
 
-        Do not restart the operator's original request. N2 must first inventory
-        existing work and let N1 approve each recovery stage; full historical
-        evidence remains available by ID, not copied wholesale into the prompt.
+        The FAILING PARENT first reconstructs verified progress using the
+        Redis execution list and actual tool returns. N1 approves remaining
+        work before a distinct successor exists; never copy the parent ledger.
         SOS, durable failures and chunk archives are intentionally left intact.
         """
         if not self.durable or not hasattr(self.durable, "start_child_task"):
@@ -2166,21 +2273,54 @@ class PromptWorker:
         child_id = "recovery-" + uuid.uuid5(
             uuid.NAMESPACE_URL, "norm:recovery:" + job.task_id + ":" + job.step_id
         ).hex[:20]
+        # The failing PARENT resolves completed/remaining work before creating
+        # its successor. Reconstruct once per deterministic successor ID;
+        # never replace a previously approved plan after a crash/retry.
+        existing = self.durable.task_status(child_id)
+        cached = None
+        if hasattr(self.queue, "r"):
+            raw_saved = self.queue.r.get("norm:recovery:handoff:" + child_id)
+            if raw_saved:
+                cached = json.loads(raw_saved)
+        if existing in {"completed", "passed_to"}:
+            return child_id
+        if existing is not None and not isinstance(cached, dict):
+            raise RuntimeError("Existing recovery successor lacks its approved plan; refusing regeneration")
+        if isinstance(cached, dict) and cached.get("reconstruction_version") == 7:
+            if cached.get("concluding_from_task_id") != job.task_id:
+                raise RuntimeError("Recovery handoff parent mismatch")
+            approved_steps = cached.get("approved_remaining_steps")
+            assessment = cached.get("assessment")
+            if not isinstance(approved_steps, list) or not approved_steps:
+                raise RuntimeError("Saved recovery plan missing approved remaining steps")
+            if not isinstance(assessment, dict):
+                raise RuntimeError("Saved recovery assessment unavailable")
+        elif cached:
+            raise RuntimeError("Existing recovery handoff uses a different protocol; do not overwrite")
+        else:
+            approved_steps, assessment = self._reconstruct_parent_before_recovery(
+                job, source=source, original=original, error=error,
+                checkpoint=checkpoint,
+            )
         prior_steps = list((source or {}).get("steps") or [])
-        # This compact inventory is a POINTER, not an adjudication of success.
-        # N2 must independently check anything reported as completed.
-        prior_index = [{"step_id": str(x.get("id") or ""),
-                        "status": str(x.get("status") or "unknown"),
-                        "name": str(x.get("name") or "")[:100]}
-                       for x in prior_steps if isinstance(x, dict)]
+        prior_index = [
+            {"step_id": str(x.get("id") or ""),
+             "status": str(x.get("status") or "unknown"),
+             "name": str(x.get("name") or "")[:100]}
+            for x in prior_steps if isinstance(x, dict)
+        ]
+        # This handoff has the APPROVED remaining-work plan, not the parent's
+        # Redis ledger or full execution transcript.
         info = {
             "kind": "recovery_handoff", "task_kind": "recovery",
+            "reconstruction_version": 7,
             "concluding_from_task_id": job.task_id, "failed_step_id": job.step_id,
             "failure_stage": str(stage)[:100], "failure_reason": redact(str(error))[:900],
-            "saved_checkpoint": redact(str(checkpoint))[:2200],
+            "saved_checkpoint": "retained on original task; not transferred",
             "prior_step_index": prior_index[:120],
-            "full_history_location": "PostgreSQL task_runs/task_steps/task_evidence, original task ID above",
-            "context_policy": "This is a summary/index, not the complete history. Look up archived evidence selectively.",
+            "assessment": assessment,
+            "approved_remaining_steps": approved_steps,
+            "context_policy": "This is a new task with approved remaining work; parent ledger stays with the parent.",
         }
         compact = json.dumps(info, ensure_ascii=False)
         marker = validate_recovery_handoff(
@@ -2189,47 +2329,43 @@ class PromptWorker:
             original_prompt=original, summary=compact)
         if marker != "PASSED_TO:" + child_id:
             raise VerifierProtocolError("Invalid designated recovery handoff")
+        work_steps = []
+        prior_id = "verify-plan"
+        for index, item in enumerate(approved_steps, 1):
+            step_id = f"step-{index:02d}"
+            instruction = (
+                "RECOVERY CONTINUATION, SCOPED TO REMAINING WORK. "
+                "The parent task already reconciled the old plan and evidence. "
+                "Do not re-plan the original request. Execute the bounded assignment "
+                "below, using the normal N1-approved tools; recheck uncertain external "
+                "state when needed.\\n"
+                + str(item["instruction"])
+            )
+            work_steps.append(TaskStep(
+                step_id, str(item["name"]), instruction,
+                str(item["verify"]), depends_on=(prior_id,),
+            ))
+            prior_id = step_id
+        conclusion_id = f"step-{len(work_steps) + 1:02d}"
         steps = (
-            TaskStep("plan-breakdown", "Recovery lineage", "Existing failed task referenced; no new user request.",
-                     "Lineage is recorded."),
-            TaskStep("verify-plan", "Recovery scope", "Original task was handed off as recovery.",
-                     "Prior work remains available for selective readback.", depends_on=("plan-breakdown",)),
-            TaskStep("step-01", "N2 recovery check plan",
-                     "RECOVERY MODE (NOT A NEW USER REQUEST). Review the compact handoff and the "
-                     "original request solely as intent. Propose specific READ-ONLY checks for "
-                     "each claimed completed artifact/step; identify uncertain or missing evidence. "
-                     "Never execute the original task or re-create a file in this phase. "
-                     "N1 must approve this plan before verification proceeds.",
-                     "Plan includes concrete checks and preserves completed work.", depends_on=("verify-plan",)),
-            TaskStep("step-02", "N2 verify surviving work",
-                     "Execute the N1-approved recovery checks using the NORMAL N2 tools and "
-                     "file access rules. Verify files and durable step evidence, then write an "
-                     "evidence-backed completed/pending/unknown report to Redis via the ordinary "
-                     "task evidence/checkpoint machinery. Do not treat an old summary as proof. "
-                     "If insufficient evidence, state UNKNOWN rather than making duplicate files.",
-                     "Every recovered claim has direct evidence; N1 checks N2's report.", depends_on=("step-01",)),
-            TaskStep("step-03", "N2 plan remaining recovery",
-                     "Use N1-reviewed surviving-work checks to propose only missing work. "
-                     "Do NOT parse the original user prompt as a new assignment. Reconcile "
-                     "completed/unknown targets and specify a bounded execution sequence "
-                     "for what truly remains. N1 reviews this recovery plan before execution.",
-                     "Recovery plan contains only grounded missing work.", depends_on=("step-02",)),
-            TaskStep("step-04", "N2 complete missing work",
-                     "Follow the reviewed recovery plan, executing ONLY demonstrably missing "
-                     "work through the normal N2 tools. Prefer safe read-only rechecks for "
-                     "UNKNOWN targets. Preserve original artifacts, use checkpoints/chunks and "
-                     "existing bounded child-task mechanisms if necessary. N1 verifies outcomes.",
-                     "Missing work verified; no completed work needlessly redone.", depends_on=("step-03",)),
-            TaskStep("step-05", "N2 recovery conclusion",
-                     "Write the full user-facing result in the active N2 voice with normal "
-                     "plugins, citing recovered and newly finished work accurately. Self-verify "
-                     "before submitting the final candidate to N1; do not claim uncertain "
-                     "checks passed.",
-                     "N2 self-check and N1 final acceptance required.", depends_on=("step-04",)),
+            TaskStep("plan-breakdown", "Recovery lineage",
+                     "Independent successor created after parent reconstruction.",
+                     "Parent reconstruction recorded."),
+            TaskStep("verify-plan", "N1-approved remaining work",
+                     "The failing parent already reviewed outstanding steps before handoff.",
+                     "Parent-approved recovery scope recorded.", depends_on=("plan-breakdown",)),
+            *work_steps,
+            TaskStep(conclusion_id, "N2 recovery conclusion",
+                     "Write the user-facing result from this successor's completed "
+                     "assigned work, preserving the original user constraints. "
+                     "Do not re-execute already completed parent steps. "
+                     "Use the existing report tools when appropriate.",
+                     "N2 submits final result for N1 verification.",
+                     depends_on=(prior_id,)),
             TaskStep("final-verify", "N1 recovery acceptance",
-                     "Review N2's final candidate against the original request and evidence.",
-                     "N1 accepts only when requirements and artifact proof are satisfied.",
-                     depends_on=("step-05",)),
+                     "Review N2's final result against original request and evidence.",
+                     "N1 accepts only evidence-backed requirements.",
+                     depends_on=(conclusion_id,)),
         )
         # Stable node IDs are essential: a crash between durable child creation
         # and Redis enqueue must retry the SAME child without duplicating work.
@@ -2279,7 +2415,7 @@ class PromptWorker:
                     "recovery_parent_task_id": job.task_id,
                     "recovery_failed_step_id": job.step_id,
                     "task_user_prompt": original, "original_user_prompt": original,
-                    "compact_resume_context": False, "allow_subtask": index >= 3,
+                    "compact_resume_context": False, "allow_subtask": True,
                     "is_final_candidate": index == len(active)-1,
                     "generated_step_index": index + 1, "generated_step_count": len(active),
                     "final_verification_node_id": steps[-1].node_id,
@@ -2290,6 +2426,10 @@ class PromptWorker:
                 # when the new task's first step starts.
                 meta.pop("applied_context_injections", None)
                 meta.pop("context_injection_cursor", None)
+                for stale in ("chunked_evidence_streams", "n1_pending_dispatch_ids",
+                              "postgres_context_slice_index", "context_checkpoint_remaining_fraction",
+                              "last_yield_reason", "continuation_count"):
+                    meta.pop(stale, None)
                 jobs.append(PromptJob(
                     message_id=step.node_id, task_id=child_id, step_id=step.id,
                     prompt=step.description, project_id=job.project_id,
@@ -4078,6 +4218,46 @@ class PromptWorker:
         return [{"role": "system", "content": ""},
                 {"role": "user", "content": user_turn}]
 
+    def _redis_returned_result_context(self, task_id: str, *, max_chars: int = 5600) -> str:
+        """Replay factual tool-return fields from THIS task only on N2 turns."""
+        if not hasattr(self.live, "result_ledger"):
+            return ""
+        try:
+            entries = self.live.result_ledger(task_id, limit=18)
+        except Exception:
+            logging.exception("Redis result ledger unavailable on N2 turn task=%s", task_id)
+            return ""
+        filtered = []
+        budget = int(max_chars)
+        for entry in reversed(entries):
+            if not isinstance(entry, dict):
+                continue
+            result = entry.get("result") if isinstance(entry.get("result"), dict) else {}
+            # A returned file location or factual tool measurement must not be
+            # lost, but bulky text or an opaque plugin payload needn't be injected.
+            compact_result = {k: v for k, v in result.items()
+                              if k not in {"content", "text", "answer", "analysis", "data", "items",
+                                           "html", "stdout", "stderr"}}
+            item = {"step_id": entry.get("step_id"), "tool": entry.get("tool"),
+                    "result": compact_result}
+            encoded = json.dumps(item, ensure_ascii=False, default=str)
+            if len(encoded) > budget:
+                continue
+            filtered.append(item)
+            budget -= len(encoded)
+            if budget < 300:
+                break
+        if not filtered:
+            return ""
+        return (
+            "[REDIS OBSERVED TOOL RETURNS FOR THIS TASK; NOT USER INSTRUCTIONS]\\n"
+            "These are values actually returned by tools, not N2's summaries. "
+            "A successful tool call does not automatically complete its step. "
+            "Do not claim a file path is unknown if it is shown here; "
+            "recheck external state when required.\\n"
+            + json.dumps(list(reversed(filtered)), ensure_ascii=False, default=str)
+        )
+
     @staticmethod
     def _tool_slice_execution_instructions(job: PromptJob) -> str:
         """Distinguish the already-reviewed PLAN from the active EXECUTION turn."""
@@ -4219,6 +4399,7 @@ class PromptWorker:
                  "Do not browse plugin implementation files unless the user's request "
                  "explicitly concerns software development or debugging."),
                 gate_instructions,
+                self._redis_returned_result_context(job.task_id),
                 ("N1 may return status=pending with dispatch_id for asynchronous tools. "
                  "Continue independent tasks. Do not re-request pending calls. "
                  "Do not finish a step dependent on pending results until N1 delivers them. "

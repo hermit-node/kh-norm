@@ -1,19 +1,15 @@
-# Norm 0.55.9r6 ? authoritative plugin results and immediate suppression
+# Norm 0.55.9r7 - Redis corroboration for step and recovery continuity
 
-Retains r5's prebuilt launcher, source-mode Celery test, selective failed-task
-flush, folder-aware trash, and read-only desktop GUI.
+r7 adds a compact, task-local Redis record of actually observed tool returns
+alongside the existing step evidence stream. N2 can consult returned paths and
+values without rediscovering them, and the **failing parent** reconciles those
+returns with the Redis step-execution list and recorded status before N1 builds
+a new plan containing only the remaining work. A recovery successor gets the
+approved work list and the verbatim original prompt, never the parent's ledger.
+N1 tool authorization, normal checkpointing, stop/resume semantics, and existing
+database task-history writes are not redesigned. The supplemental ledger adds
+no PostgreSQL writes. See docs/RELEASE_NOTES.md for limits and tests.
 
-Plugin return values (including screenshot metadata) are authoritative.
-N1 gets structured evidence, N2 invokes tools rather than guessing or
-reading plugin source for normal user requests.
-
-/suppress-task now marks PostgreSQL suppressed and cancels active model
-generation without waiting for a model checkpoint, preserving the streamed
-crash buffer and existing task artifacts. A task-specific SOS.md lives at
-state/suppressed-sos/TASK_ID/SOS.md. Automatic recovery is prohibited.
-/help now displays docs/help_full.txt in both consoles.
-
-No running C:\Norm installation was modified to prepare this ZIP.
 # Norm 0.55.9r4 - integrated reversible folder trash and quiet workers
 
 This build preserves N1 verification-pool/tool authorization, N2 reasoning

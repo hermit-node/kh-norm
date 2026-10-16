@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "release": "0.55.9r6",
-  "baseline": "Norm-0.55.9r5-portable-source.zip",
-  "file_count": 316,
+  "release": "0.55.9r4",
+  "baseline": "Norm-0.55.9r3-portable-source.zip",
+  "file_count": 307,
   "hash_algorithm": "SHA-256",
   "files": {
     ".gitattributes": {
@@ -18,16 +18,16 @@
       "sha256": "e774f5ea91a76af90b32d07d967a17a1e2741a3e99c67ee944536cb548e6a432"
     },
     "README.md": {
-      "bytes": 22922,
-      "sha256": "e7ce5596718a073ea4a654ba0884295b0979faf1b8f59af5b738d761a79f14ec"
+      "bytes": 22882,
+      "sha256": "0bd1206b6ae4fb7a799048d99194e68260fd39f32536f1451164dd1d3144eee8"
     },
     "Run-Norm.bat": {
       "bytes": 4006,
       "sha256": "8c89b7cb41b39ee2f363d26e452bf3ed87fd965caffdb63fe9465cd17af07e36"
     },
     "SOURCE_PACKAGE.md": {
-      "bytes": 22786,
-      "sha256": "5d4ab86d52353994f2445915669a08ea84a1e0a98051ef6aedce5186b87f2b43"
+      "bytes": 21972,
+      "sha256": "dd0f5be8ec1737a787faf408525434b3e7c18b5e7c97d7db516a2da95853448e"
     },
     "Safe-Shutdown-Norm.bat": {
       "bytes": 1568,
@@ -47,7 +47,7 @@
     },
     "config/settings.ini": {
       "bytes": 2739,
-      "sha256": "ef0830fc7f97b0731b3500697dc01e47ec788bc8de9fbf2bfc76690b84d831bc"
+      "sha256": "675ea20fa65343e625b88a06b791a028a3c5a9603ad3fd05a0b87c13684a6b85"
     },
     "core/norm_main.py": {
       "bytes": 67714,
@@ -154,8 +154,8 @@
       "sha256": "5eb101158ccf2516275039dd3dfe909c3222cda0593aaa5e886d2b5d05f92eaf"
     },
     "core/norm_runtime/live_log.py": {
-      "bytes": 31836,
-      "sha256": "a927ab5832ec072577568c1ff1773f032f695b6876f80a10a38cabcb7c71454b"
+      "bytes": 33699,
+      "sha256": "db6de1f96dfaf15ed733169cdc92e7fe128d12a6c3fe04be16c576b486a90592"
     },
     "core/norm_runtime/maintenance_model_client.py": {
       "bytes": 10316,
@@ -174,8 +174,8 @@
       "sha256": "5b2ec43398e95b7814453b65330b224b9a2ffd87aa46fc4b1f2b6aee4b48f5e8"
     },
     "core/norm_runtime/n1_gatekeeper.py": {
-      "bytes": 99085,
-      "sha256": "c93c776eeb1f427a8043ea75123c5ff21df4c711b0e8c6e3ed1c9863886895e0"
+      "bytes": 104410,
+      "sha256": "484e722b55ee43c0515092644f458dece91bdc16234eb4ecd837b3a373ca270a"
     },
     "core/norm_runtime/ollama_client.py": {
       "bytes": 33032,
@@ -214,8 +214,8 @@
       "sha256": "b2c39070add4e948be4998d75a72f4305661c130f6e7ba1b223f30ac7097bd32"
     },
     "core/norm_runtime/prompt_worker.py": {
-      "bytes": 334271,
-      "sha256": "c0e89717d71006721826bcd756c95f4b90f58f4954358135881be6b563fad25c"
+      "bytes": 342881,
+      "sha256": "d708e2dad90f10c17edab0c113f701ccad992af2a78c0695198af4f226381af0"
     },
     "core/norm_runtime/protocol.py": {
       "bytes": 14182,
@@ -298,8 +298,8 @@
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
     },
     "docs/RELEASE_NOTES.md": {
-      "bytes": 129653,
-      "sha256": "d9a6398649107b49aeb85f3dcfd997b7b94cbd45d0014b52239cd9a8dd03d6da"
+      "bytes": 130908,
+      "sha256": "d96388aa3e872ba86610624820fa1157c92a70c48017db7f7219a480416877ef"
     },
     "docs/VOICE_OPERATOR_COMMANDS_PATCH.md": {
       "bytes": 1796,
@@ -354,8 +354,8 @@
       "sha256": "814cf6e096ac167f56bbb47c98287818949ec13c65843574b3a733698c91f982"
     },
     "package-manifest.json": {
-      "bytes": 26790,
-      "sha256": "056a3a15dabbde562d6e6c0a7472073852b963f3c9b8c8de24e17ea4712b4a02"
+      "bytes": 27599,
+      "sha256": "bdfd85e542bab988016b7cf786b3bbe4ab82c45375482288523b482e418465eb"
     },
     "plugins/README.md": {
       "bytes": 721,
@@ -917,30 +917,6 @@
       "bytes": 9182,
       "sha256": "3d4e31a747a62215b0f676ffedbc34f265c959bb4d55459fa055eb94c8d486fa"
     },
-    "tools/launcher/NormLauncher.cs": {
-      "bytes": 8793,
-      "sha256": "ea08e1685684eec4d9848d6d76d802d55defd8b61b7aa07b0ee0c3b55843b372"
-    },
-    "tools/launcher/README-LAUNCHER.md": {
-      "bytes": 1795,
-      "sha256": "f95e3a782e798b4ad00ca66fcef1ef6b3f3239f70497e261cb51bccbc961b090"
-    },
-    "tools/launcher/build_launcher.py": {
-      "bytes": 1095,
-      "sha256": "0afdd4bdfc98ee89e82b322cea2d0ef06c4299cf667e4d1d5642b1c4e3d819f8"
-    },
-    "tools/launcher/norm.exe": {
-      "bytes": 8192,
-      "sha256": "39024d3c832ae33e0cbebd89c3fc6306f17e677b4c0fe301eb54c5baab41436e"
-    },
-    "tools/launcher/norm.exe.sha256": {
-      "bytes": 75,
-      "sha256": "2271a0b3c4819ea8fe68d5e1e97f6573439ad0963865ef1b46588c5de852bfab"
-    },
-    "tools/launcher/test_launcher.py": {
-      "bytes": 5352,
-      "sha256": "c264ee21a170e731cc558345d0e66bbb1040db0f683622a6fb331dfb5d949283"
-    },
     "tools/norm-network-map.cmd": {
       "bytes": 256,
       "sha256": "b58a3133cb250ccd32485237796ed2d16343d088635aa02735c5fe62892c61ad"
@@ -1069,10 +1045,6 @@
       "bytes": 5604,
       "sha256": "c451a02cebc245d54a49f8c84f245636b6ac21cc680dfcd670dc63e68e039e1d"
     },
-    "tools/test_failed_task_flush_r5.py": {
-      "bytes": 3520,
-      "sha256": "62d5f24de0659d1d664c5c55afcaf15b1cc996e30358276e898360e0cf331f6e"
-    },
     "tools/test_failed_task_resume.py": {
       "bytes": 2947,
       "sha256": "c04d384cda69bba50e32c907eecf71308e9edb38d8d5b5996926109cf62ac097"
@@ -1173,10 +1145,6 @@
       "bytes": 9893,
       "sha256": "dabddb4f61506e3c2b265f5155516af0b0417789df3d24be333e244f9181bd44"
     },
-    "tools/test_plugin_result_handoff_r6.py": {
-      "bytes": 3299,
-      "sha256": "a2814ef49ce932025fb9f2e78f97a49a97c1bf9ebf1c3cacc034d6f6d1d2c5bb"
-    },
     "tools/test_plugin_settings_backups.py": {
       "bytes": 3073,
       "sha256": "da659fa0a5930c39cfb7ac00087cbb6a2bf8d8fabcfeb18ef5a9149931645281"
@@ -1186,8 +1154,8 @@
       "sha256": "d7ce87d425bd453706c46eacd313d1ebdd026fc53eabd755d936eb5173a233ec"
     },
     "tools/test_recovery_r9.py": {
-      "bytes": 5996,
-      "sha256": "f0403fb39d602b75d7cf718b2ca6f042e5a920d3079dda916ae91c2fa2496b0c"
+      "bytes": 1926,
+      "sha256": "1e0cb8757be891306684571cecaee11fb76678d17369ffaf89e7a4f65f0a3ff8"
     },
     "tools/test_requirements_manifest.py": {
       "bytes": 1685,
@@ -1208,10 +1176,6 @@
     "tools/test_subject_routing.py": {
       "bytes": 6992,
       "sha256": "3ebf5cfc2696f44e5b4ae30cab6276d9a95e65e69a43b210951bb1cf910a9d30"
-    },
-    "tools/test_suppress_now_r6.py": {
-      "bytes": 4152,
-      "sha256": "e508efa8b6df9728db96566611ad6225ec12adddcaf2f8b80178712a81974701"
     },
     "tools/test_suppression_resume.py": {
       "bytes": 6053,

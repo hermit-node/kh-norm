@@ -1,7 +1,7 @@
 {
   "package_schema": 1,
   "name": "Norm",
-  "version": "0.55.9r6",
+  "version": "0.55.9r7",
   "package_type": "portable-source",
   "source_dir": "core",
   "entrypoint": "core/norm_main.py",
@@ -499,7 +499,7 @@
     "policy": "retain full generated original and submit shortest complete summary; no bypass of N1/N2 verification",
     "normal_output_child_tasks": "not included; deferred"
   },
-  "release_revision": "r6 native plugin results/evidence and emergency suppression; full operator help",
+  "release_revision": "r7 parent-side reconstruction from Redis step events and corroborating tool-result ledger",
   "celery_tool_transport": {
     "transport": "Celery",
     "enabled_setting": "config/settings.ini:[celery].enabled",
@@ -509,5 +509,15 @@
     "n2": "original active step and final conclusion remain N2-owned",
     "worker_entrypoint": "tools/celery_tool_worker.py",
     "launcher": "tools/start_async_workers.py"
+  },
+  "parent_recovery_reconstruction": {
+    "scope": "failure preparation on original task before successor creation",
+    "ledger": "RedisTaskLog.record_evidence appends both legacy step events and compact returned-value list",
+    "reconcile": "cross-check Redis step execution plan/events with durable step-status snapshot and observed returns",
+    "authority": "N1 reviews remaining-step list; source-step coverage validation prevents omitted work",
+    "successor": "new task, new approved remaining-work steps; no copied parent ledger",
+    "original_prompt": "preserved verbatim as reference in each successor execution slice",
+    "persistence": "Redis only for supplemental ledger; no new PostgreSQL writes",
+    "safety": "failed parent preserved if reconciliation or N1 review fails"
   }
 }

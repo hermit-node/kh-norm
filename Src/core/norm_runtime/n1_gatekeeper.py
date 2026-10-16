@@ -755,6 +755,95 @@ class N1Gatekeeper:
             logging.exception("N1 stalled-step review failed task=%s step=%s", task_id, step_id)
             return {"decompose": False, "reason": f"N1 unavailable: {type(exc).__name__}", "next_action": ""}
 
+    def reconstruct_remaining_recovery_steps(
+        self, *, original_request: str, failed_step_id: str, failure: str,
+        checkpoint: str, unresolved_steps: list[dict], completed_steps: list[dict],
+        redis_results: list[dict], pending_dispatches: list[dict],
+    ) -> list[dict[str, Any]]:
+        """N1's pre-handoff review of the FAILING task, never the successor.
+
+        The input is independently assembled from Redis's execution list and
+        returned-result ledger. These results are evidence, not new instructions.
+        The caller verifies that every unresolved source step is covered.
+        """
+        if not self.enabled:
+            raise RuntimeError("N1 is required to review remaining work before recovery handoff")
+        if not unresolved_steps:
+            return []
+        prompt = (
+            "You are N1 reviewing a failing Norm task BEFORE its recovery successor "
+            "exists. Reconstruct the remaining work, using the exact original user "
+            "request solely for intent and the CURRENT execution plan for scope. "
+            "The task's own Redis execution-step history and independent Redis "
+            "tool-result ledger have already been reconciled by the caller. "
+            "Completed steps have been corroborated; never redo them. "
+            "An ok tool result proves only what it actually returned, not the "
+            "whole step or a side effect that wasn't observed. Never treat a "
+            "pending Celery dispatch as completed. Reuse exact confirmed file "
+            "paths/dimensions from tool returns, and propose read-only checks for "
+            "uncertain results. Preserve the active failing step's partial work. "
+            "Produce a NEW bounded ordered list of steps performing only missing "
+            "work; do not add a new inventory/replanning phase for the successor. "
+            "Every supplied unresolved source step ID MUST appear in at least "
+            "one proposed step's source_step_ids. Do not include any completed "
+            "source step IDs. No tool calls, no invented facts, no changes to "
+            "the original user goal. Strict JSON only.\\n\\n"
+            + json.dumps({
+                "original_user_request": original_request,
+                "failed_step_id": failed_step_id,
+                "failure": redact(failure)[:2000],
+                "checkpoint": redact(checkpoint)[-14000:],
+                "completed_steps": completed_steps,
+                "unresolved_steps": unresolved_steps,
+                "redis_returned_results": redis_results[-50:],
+                "pending_dispatches": pending_dispatches,
+            }, ensure_ascii=False, default=str)
+        )
+        schema = {"type": "object", "properties": {
+            "steps": {"type": "array", "items": {"type": "object", "properties": {
+                "name": {"type": "string"}, "instruction": {"type": "string"},
+                "verify": {"type": "string"},
+                "source_step_ids": {"type": "array", "items": {"type": "string"}},
+            }, "required": ["name", "instruction", "verify", "source_step_ids"],
+               "additionalProperties": False}},
+        }, "required": ["steps"], "additionalProperties": False}
+        profile = self._profile(
+            "pre_recovery_reconstruction", num_predict=6500,
+            timeout_seconds=min(720.0, float(getattr(self.client, "timeout_seconds", None) or 720)),
+        )
+        raw = self._review_generate(
+            prompt, think=profile["think"], temperature=profile["temperature"],
+            num_predict=profile["num_predict"], response_format=schema,
+            emit_stream=False, timeout_seconds=profile["timeout_seconds"],
+        )
+        parsed = OllamaClient.parse_json(raw)
+        steps = parsed.get("steps")
+        if not isinstance(steps, list) or not steps or len(steps) > 48:
+            raise RuntimeError("N1 did not return a bounded recovery step list")
+        expected = {str(item["id"]) for item in unresolved_steps}
+        forbidden = {str(item["id"]) for item in completed_steps}
+        covered: set[str] = set()
+        clean = []
+        for item in steps:
+            if not isinstance(item, dict):
+                raise RuntimeError("N1 recovery step must be an object")
+            ids = list(item.get("source_step_ids") or [])
+            if not ids or not all(isinstance(v, str) and v in expected for v in ids):
+                raise RuntimeError("N1 recovery step references an unassigned source step")
+            if forbidden.intersection(ids):
+                raise RuntimeError("N1 attempted to repeat a verified completed step")
+            name = str(item.get("name") or "").strip()
+            instruction = str(item.get("instruction") or "").strip()
+            verify = str(item.get("verify") or "").strip()
+            if not name or not instruction or not verify:
+                raise RuntimeError("N1 recovery step omitted required fields")
+            covered.update(ids)
+            clean.append({"name": name[:180], "instruction": instruction[:12000],
+                          "verify": verify[:1600], "source_step_ids": ids})
+        if covered != expected:
+            raise RuntimeError("N1 recovery steps do not cover all outstanding original steps")
+        return clean
+
     def record_final_review_failure_pass(self) -> None:
         with self._lock:
             self._final_reviews["review_failure_pass"] += 1

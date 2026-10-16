@@ -48,6 +48,10 @@ class RedisTaskLog:
     def _stream_key(self, task_id: str) -> str:
         return f"{self.prefix}:{task_id}:events"
 
+    def _result_ledger_key(self, task_id: str) -> str:
+        """Another Redis reconstruction layer, separate from the step event stream."""
+        return f"{self.prefix}:{task_id}:returned-results"
+
     def _global_validation_key(self) -> str:
         # Verification metadata stays compact in one hash so candidate scans never
         # deserialize hot raw replay payloads. Individual facts are hash fields.
@@ -176,7 +180,10 @@ class RedisTaskLog:
             "image_count", "output_dir", "analysis_json", "geometry_overlay", "horizontal_consensus", "profile",
             "device", "width", "height", "reconstruction_similarity", "artifact_fraction", "resource_status", "storage_context",
             "returned_bytes", "start_byte", "next_byte", "truncated", "chunk_stream", "context_budget",
-            "chunk_evicted", "retained_facts", "raw_chunk_in_durable_evidence"
+            "chunk_evicted", "retained_facts", "raw_chunk_in_durable_evidence",
+            "size", "file_size", "bytes", "saved_path", "image_path",
+            "saved_file", "filename", "monitor", "quality", "mime_type", "format",
+            "result", "dispatch_id", "async_pending",
         )
         for item in evidence:
             if not isinstance(item, dict):
@@ -191,7 +198,37 @@ class RedisTaskLog:
                 "deterministic_verification": bool(item.get("deterministic_verification")),
             })
         if compact:
+            # Original event stream is authoritative for the existing runtime.
+            # The new bounded ledger is only an extra reconstruction layer and
+            # must not change whether recording original evidence succeeds.
             self._emit(task_id, "step_evidence", step_id=step_id, evidence=compact)
+            try:
+                safe_items = redact(compact)
+                ledger_entries = [
+                    json.dumps({"step_id": step_id, **item}, ensure_ascii=False)
+                    for item in safe_items
+                ]
+                pipe = self.client.pipeline(transaction=True)
+                pipe.rpush(self._result_ledger_key(task_id), *ledger_entries)
+                pipe.ltrim(self._result_ledger_key(task_id), -160, -1)
+                pipe.execute()
+            except Exception:
+                logging.exception("Supplementary Redis result ledger failed task=%s", task_id)
+
+    def result_ledger(self, task_id: str, limit: int = 64) -> list[dict]:
+        """Read only this task's actual tool returns; no inferred successes."""
+        rows = self.client.lrange(
+            self._result_ledger_key(task_id), -max(1, min(160, int(limit))), -1
+        )
+        result = []
+        for row in rows:
+            try:
+                item = json.loads(row)
+            except (ValueError, TypeError):
+                continue
+            if isinstance(item, dict):
+                result.append(item)
+        return result
 
     def task_evidence(self, task_id: str) -> list[dict]:
         collected: list[dict] = []
@@ -629,7 +666,9 @@ class RedisTaskLog:
         return {"migrated": migrated, "removed_legacy_keys": len(existing)}
 
     def cleanup(self, task_id: str) -> None:
-        keys = [self._state_key(task_id), self._stream_key(task_id), f"{self.prefix}:{task_id}:validations"]
+        keys = [self._state_key(task_id), self._stream_key(task_id),
+                self._result_ledger_key(task_id),
+                f"{self.prefix}:{task_id}:validations"]
         keys.extend(self.client.scan_iter(match=f"{self.prefix}:{task_id}:model-buffer:*"))
         if keys:
             self.client.delete(*keys)
