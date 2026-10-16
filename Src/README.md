@@ -1,4 +1,4 @@
-> **0.55.8 r5 source-only:** Updated tool-enabled N2 budgets (38k/74k), final repair (87,400), and Redis/Markdown output-overflow fallback. N2 without tools stays at 16k. See `docs/RELEASE_NOTES.md`. This ZIP is not a rebuilt Windows executable.
+> **0.55.8 continuity r6 source-only:** Preserves the original user request as an Ollama `user` message on generated N2 steps, while explicitly separating planning from **active-step execution** (no re-planning or redoing completed work). Includes all r5 token-budget and Redis/Markdown output-overflow changes. N2 without tools remains at 16k. See `docs/RELEASE_NOTES.md`. This ZIP is not a rebuilt Windows executable.
 
 ### 0.55.8 continuity r4 — protect task handoffs (2026-10-09; source-only)
 

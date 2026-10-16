@@ -1454,6 +1454,12 @@ class ConversationService:
     def _generate_plan(self, original_user_prompt: str, execution_context: str, command_envelope: dict) -> dict:
         prompt = (
             f"PERSISTENT OPERATING PRINCIPLES:\n{self._persistent_instruction_text()}\n\n"
+            "[NORM PLANNING PHASE — PLAN ONLY, DO NOT EXECUTE] "
+            "This is the ONE planning pass for the current user request. Design "
+            "bounded steps for later execution; do not run tools, modify files, "
+            "claim execution results, or turn the plan into a user-facing answer. "
+            "A separate worker execution phase will prosecute each accepted step "
+            "using its own concrete verification criteria and progress record. "
             "Create a concrete execution plan for Norm before any task work begins. "
             "Break substantial work into small observable actions that can each finish within a bounded "
             "model/tool slice. Aim for about 6 actionable steps for substantial work, but use exactly ONE step when the request can be completed as one bounded action. Never manufacture a separate preparation step plus synthesis step for a trivial request. Use more steps only when the work genuinely benefits from decomposition, up to a hard maximum of 25. Preserve every user constraint, especially "
@@ -1624,7 +1630,12 @@ class ConversationService:
                 + item["description"]
                 + "\n\nVERIFICATION REQUIREMENT:\n"
                 + item["verify"]
-                + "\n\nDo only this step. Do not silently absorb later steps. Return a concise durable result for subsequent steps. "
+                + "\n\nEXECUTION (NOT PLANNING): This plan and its N1 verification are already complete. "
+                "Actively carry out this exact step and verify its result. The original user's "
+                "request remains authoritative for the overall goal, but is not a fresh "
+                "instruction to plan or restart the project. Preserve completed prior steps; "
+                "do not repeat their work without specific contrary evidence. "
+                "Do only this step. Do not silently absorb later steps. Return a concise durable result for subsequent steps. "
                 + ("Because this is the final step, return the direct user-facing answer using prior completed step results." if index == total else "Do not present this intermediate result as the final answer.")
             )
             generated.append(TaskStep(

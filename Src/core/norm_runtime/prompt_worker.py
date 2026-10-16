@@ -1243,6 +1243,7 @@ class PromptWorker:
             "invoke_target": "n2",
             "instruction_source": "user_prompt_interface" if is_user_prompt else "norm_internal",
             "processing_contract": directives[request_type],
+            "execution_phase": "execute_scoped_step" if request_type in {"step", "task_step", "conclusion"} or prompt_origin.startswith("runtime_child") or prompt_origin.startswith("runtime_oversize_recovery") else "execute_current_request",
             "persistent_instructions": agent_persistent_instructions(self._runtime_config(), "n2"),
             "task_id": job.task_id,
             "step_id": job.step_id,
@@ -3587,6 +3588,82 @@ class PromptWorker:
 
         return {"ok": False, "tool": name, "error": "unknown verification-pool tool"}
 
+    @staticmethod
+    def _tool_slice_initial_messages(job: PromptJob) -> list[dict]:
+        """Keep the human's request as a genuine user-role message on every slice.
+
+        A generated step is not a new request to plan the parent task. Its
+        current executable instruction and verified progress are supplied by
+        the *system* work_request; the user-role text remains the unchanged
+        original goal/constraints for semantic grounding and final review.
+        Ollama also requires an actual user message for its chat template.
+        """
+        metadata = job.metadata or {}
+        request_type = normalize_request_type(job.request_type)
+        user_request = str(metadata.get("original_user_prompt") or metadata.get("task_user_prompt") or "").strip()
+        direct_user_turn = (
+            request_type == "prompt"
+            and str(metadata.get("prompt_origin") or "user_prompt")
+            in {"user_prompt", "prompt_interface", "gui_prompt", "ssh_prompt"}
+        )
+        if not user_request and direct_user_turn:
+            user_request = str(job.prompt or "").strip()
+        if not user_request:
+            # Old queued step metadata may have lost the separate field, while
+            # the original task survives in its generated step text.
+            old_step = str(job.prompt or "")
+            marker = "AUTHORITATIVE PRIMARY TASK REQUEST:\n"
+            end_marker = "\n\nNORM-GENERATED EXECUTION STEP:"
+            if marker in old_step and end_marker in old_step.split(marker, 1)[1]:
+                user_request = old_step.split(marker, 1)[1].split(end_marker, 1)[0].strip()
+        if not user_request:
+            raise RuntimeError(
+                "Cannot execute an Ollama tool slice without the original user request. "
+                "Restore original_user_prompt/task_user_prompt from durable task metadata; "
+                "do not invent a replacement user message."
+            )
+        return [{"role": "system", "content": ""}, {"role": "user", "content": user_request}]
+
+    @staticmethod
+    def _tool_slice_execution_instructions(job: PromptJob) -> str:
+        """Distinguish the already-reviewed PLAN from the active EXECUTION turn."""
+        metadata = job.metadata or {}
+        request_type = normalize_request_type(job.request_type)
+        index = int(metadata.get("generated_step_index") or 0)
+        total = int(metadata.get("generated_step_count") or 0)
+        is_planned_step = str(metadata.get("prompt_origin") or "") in {
+            "norm_generated_step", "runtime_child_subtask", "runtime_oversize_recovery_analysis",
+            "runtime_oversize_recovery_unit",
+        } or request_type in {"step", "task_step", "conclusion"}
+        if is_planned_step:
+            stage = f"Step {index}/{total}" if index and total else f"step_id={job.step_id}"
+            return (
+                "[NORM EXECUTION PHASE — ACTIVE STEP, NOT TASK PLANNING]\n"
+                f"Current execution target: {stage}.\n"
+                "The original user request remains in the user role and defines the "
+                "overall purpose, constraints, and meaning of success. It is NOT a "
+                "new request to start planning or restart the parent task.\n"
+                "Planning and N1 plan verification have ALREADY occurred. Actively "
+                "PROSECUTE the CURRENT work_request.instruction and its verification "
+                "requirement, using the current continuation, task memory, and "
+                "PostgreSQL-completed earlier steps as established progress. Use tools "
+                "and produce concrete results for THIS step; do not merely describe "
+                "how you would plan or perform it. Do not redo completed steps, "
+                "regenerate the task plan, or silently do later steps. Reopen prior "
+                "work only when new evidence specifically invalidates it or the "
+                "active step explicitly requires it.\n"
+                "If a targeted verifier/N1 correction is included in this invocation, "
+                "resolve that correction within the current step rather than "
+                "returning to the beginning. On a conclusion step, synthesize the "
+                "verified prior results into the user-facing deliverable.\n"
+            )
+        return (
+            "[NORM DIRECT EXECUTION PHASE]\n"
+            "The user-role message is the actual operator request. Follow the "
+            "current work_request's processing contract; execute rather than "
+            "re-plan unless the current request explicitly calls for planning.\n"
+        )
+
     def _run_tool_slice(self, job: PromptJob, prompt: str, tools) -> dict:
         import json
 
@@ -3610,22 +3687,10 @@ class PromptWorker:
         )
         metadata = job.metadata or {}
         request_type = normalize_request_type(job.request_type)
-        # Only a *direct* operator turn receives Ollama's `user` role. A planned
-        # step/child already carries the original user request for semantic
-        # reference inside the typed system payload. Repeating that old request
-        # as the latest user-role message at every fresh slice causes an N2
-        # continuation to restart the whole task instead of obeying its step.
-        original_user_prompt = str(metadata.get("original_user_prompt") or "").strip()
-        direct_user_turn = (
-            request_type == "prompt"
-            and str(metadata.get("prompt_origin") or "user_prompt")
-            in {"user_prompt", "prompt_interface", "gui_prompt", "ssh_prompt"}
-        )
-        if not original_user_prompt and direct_user_turn:
-            original_user_prompt = str(job.prompt or "").strip()
-        messages: list[dict] = [{"role": "system", "content": ""}]
-        if direct_user_turn and original_user_prompt:
-            messages.append({"role": "user", "content": original_user_prompt})
+        # Retain the original operator request in its genuine Ollama user role
+        # during every execution slice. The system phase contract below—not
+        # deleting the user's words—prevents internal steps from replanning.
+        messages: list[dict] = self._tool_slice_initial_messages(job)
         pending_verification: dict[str, str] = {}
         evidence: list[dict] = []
         step_rounds = 0
@@ -3681,12 +3746,12 @@ class PromptWorker:
                 tools.instructions(),
                 gate_instructions,
                 self._active_voice_instructions(),
+                self._tool_slice_execution_instructions(job),
                 "[NORM INTERNAL TASK/STEP INSTRUCTION — NOT USER-AUTHORED]\n"
-                "A separate user-role message, if present, is a direct operator turn. "
-                "For planned steps and recovery children, the original user request "
-                "in the typed work payload is REFERENCE ONLY; the active step, its "
-                "verification requirement, and its continuation govern WHAT TO DO NOW. "
-                "Do not restart the parent task or claim internal follow-up instructions were said by the user.\n"
+                "The user-role message contains the operator's original task, "
+                "preserved on each slice for purpose and constraints. The scoped "
+                "internal work_request below defines WHAT TO EXECUTE NOW. "
+                "Never attribute this internal step or its corrections to the user.\n"
                 + prompt,
                 live_injection,
             ]

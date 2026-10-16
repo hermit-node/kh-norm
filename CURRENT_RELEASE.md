@@ -1,6 +1,6 @@
-# Norm 0.55.8 - continuity r5
+# Norm 0.55.8 - continuity r6
 
-Original archive SHA-256: 5e82f7195a21e52b264eab35150718a366bd9f20c92d3a1a916737f48eae71d2
+Original archive SHA-256: 0ccefd7f7cd6223a09a1cade0d1dce1963ec34e2c3d17f5625ca134cee473322
 
 Historical assessment: static/CLI PASS, historical
 
