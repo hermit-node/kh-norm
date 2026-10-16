@@ -853,10 +853,11 @@ class PromptWorker:
         request_type = normalize_request_type(job.request_type)
         name = str(metadata.get("step_name") or job.step_id)
         logging.info("Processing queued request task=%s step=%s type=%s", job.task_id, job.step_id, request_type)
-        if (request_type == "conclusion" and self.durable
-                and self.durable.task_status(job.task_id) in {"passed_to", "completed"}):
+        if (self.durable and self.durable.task_status(job.task_id) in {"passed_to", "completed"}):
+            # This applies to EVERY step type: stale Redis entries must never
+            # revive a parent task after a recovery-successor handoff.
             self.queue.ack(redis_id)
-            logging.info("Discarded terminal replay of already concluded task=%s",job.task_id)
+            logging.info("Discarded replay of already concluded task=%s", job.task_id)
             return
         if self._task_suppressed(job.task_id):
             # A durable suppression snapshot is the resume source of truth. Delete any
@@ -925,24 +926,18 @@ class PromptWorker:
                 self._process_final_verification(redis_id, job, name, started)
                 return
 
-            # Only the LAST generated action step uses the isolated Redis-backed
-            # terminal pipeline. Earlier planning/execution and direct prompts stay intact.
-            if (request_type == "conclusion"
-                    and bool(metadata.get("is_final_candidate"))
-                    and int(metadata.get("generated_step_count") or 0) > 1
-                    and bool((self._runtime_config().get("terminal_conclusion") or {}).get("enabled", True))):
-                from .terminal_conclusion import TerminalConclusion
-                result = TerminalConclusion(self).run(job)
-                self._finish_terminal_conclusion(redis_id, job, name, started, result)
-                return
-
             task_memory = ""
             prior = ""
             background = ""
             metadata_resume = dict(job.metadata or {})
             resource_status = merge_resource_status(metadata_resume.get("resource_status"))
             compact_resume = self._compact_resume_requested(job)
-            if compact_resume:
+            if metadata_resume.get("recovery_mode") and not compact_resume:
+                # Recovery begins from a compact handoff; old full history is
+                # durable and available selectively, never bulk-injected again.
+                if self.durable and hasattr(self.durable, "completed_step_context"):
+                    prior = self.durable.completed_step_context(job.task_id, job.step_id, max_chars=9000)
+            elif compact_resume:
                 # A context-headroom checkpoint already asked N1 to distill the full
                 # active execution state into job.context. Re-injecting Redis's entire
                 # task event stream here defeats that compaction and can restart the
@@ -1097,7 +1092,22 @@ class PromptWorker:
                     )
                     terminal = False
             if terminal:
+                self._write_sos(job, "terminal-exception", error,
+                                "A dedicated recovery task inventories surviving work before continuation.")
                 self.live.step_failed(job.task_id, job.step_id, error)
+                try:
+                    successor = self._handoff_failed_task_to_recovery(
+                        job, stage="terminal-exception", error=error, checkpoint=job.context
+                    )
+                except Exception:
+                    logging.exception("Recovery successor unavailable; preserving failed task task=%s", job.task_id)
+                else:
+                    if self.durable:
+                        self.durable.finalize_task(job.task_id,
+                            f"PASSED_TO:{successor} — failed at {job.step_id}; recover only missing work.", "passed_to")
+                    if hasattr(self.live, "transfer_task"):
+                        self.live.transfer_task(job.task_id, successor,
+                            f"PASSED_TO:{successor} — dedicated recovery attempt.")
                 self._clear_terminal_redis(job.task_id)
                 logging.exception("Prompt failed terminally task=%s step=%s", job.task_id, job.step_id)
             else:
@@ -1233,7 +1243,7 @@ class PromptWorker:
             "step": "Execute only this bounded task step and return a durable result for later steps.",
             "task": "Execute the scheduled task work for this node; do not claim unscheduled work was completed.",
             "maintenance": "Perform only the bounded maintenance operation and report observed before/after state.",
-            "conclusion": "Synthesize prior task results into the direct final candidate; do not redo completed work unless verification requires it. For multi-item results or checklists, prefer the Nabler render_report native tool when available; collect verified results first, format once, and do not treat rendering as verification.",
+            "conclusion": "Write the final user-facing response as N2 using current tools, context, and active voice. For multi-item results/checklists, prefer the Nabler render_report native tool when available, formatting previously verified data without suppressing detailed checks. Self-verify then submit to N1 for final acceptance. Synthesize prior results; do not redo completed work.",
             "final_verification": "Validate the final-candidate envelope and verify completion without redoing completed acquisition or mutation work.",
         }
         metadata = job.metadata or {}
@@ -1261,6 +1271,13 @@ class PromptWorker:
             "processing_contract": directives[request_type],
             "execution_phase": "execute_scoped_step" if request_type in {"step", "task_step", "conclusion"} or prompt_origin.startswith("runtime_child") or prompt_origin.startswith("runtime_oversize_recovery") else "execute_current_request",
             "persistent_instructions": agent_persistent_instructions(self._runtime_config(), "n2"),
+            "recovery_contract": (
+                "This task is a recovery attempt. The original user request is a REFERENCE for intent "
+                "only. Do not execute it anew or replan from scratch; inspect verified prior progress, "
+                "verify what survived, and execute only demonstrably missing work. "
+                "Use the compact handoff; fetch additional archived evidence selectively."
+                if metadata.get("recovery_mode") else ""
+            ),
             "task_id": job.task_id,
             "step_id": job.step_id,
             "project_id": job.project_id,
@@ -1392,7 +1409,8 @@ class PromptWorker:
             "task_user_prompt": str((job.metadata or {}).get("task_user_prompt") or (job.metadata or {}).get("original_user_prompt") or ""),
             "ingrained_task_context": list((job.metadata or {}).get("ingrained_task_context") or []),
             "command_envelope": self._command_from_job(job),
-            "verification_cycle": 1,
+            "verification_cycle": int((job.metadata or {}).get("verification_cycle") or 1),
+            "n2_conclusion_step_id": job.step_id,
             "queue_protocol_version": PROTOCOL_VERSION,
             "coordinator_source": "local",
             "task_uuid": task_uuid,
@@ -1530,68 +1548,6 @@ class PromptWorker:
             "n1_reason": str(judgment.get("reason") or ""),
         }, False
 
-    def _finish_terminal_conclusion(self, redis_id, job, name, started, outcome) -> None:
-        """Persist a final-stage result without re-entering the oversized final reviewer."""
-        state = str(outcome.status)
-        if state not in {"completed", "passed_to", "unresolved"}:
-            raise ValueError("unrecognized terminal conclusion state")
-        if (getattr(self, "_suppression_requested", lambda _: False)(job.task_id)
-                or (self.durable and self.durable.task_status(job.task_id) == "suppressed")
-                or getattr(getattr(self, "_stop_all_now", None), "is_set", lambda:False)()):
-            raise ModelGenerationCancelled("Terminal conclusion interrupted before durable finalization")
-        report_key = f"norm:terminal:v2:{job.task_id}:checks"
-        summary = json.dumps({
-            "schema_version":PROTOCOL_VERSION,"kind":"terminal_report_card",
-            "status":state,"report_card":report_key,
-            "successor_task_id":str(outcome.successor_id or ""),
-            "verified_step_ids":list(outcome.report.get("passed") or []),
-            "failed_step_ids":list(outcome.report.get("failed") or []),
-            "unknown_step_ids":list(outcome.report.get("unknown") or []),
-        },ensure_ascii=False)
-        ok = state in {"completed","passed_to"}
-        status = StepStatus.COMPLETED if ok else StepStatus.FAILED
-        if self.durable:
-            self.durable.checkpoint_step(StepResult(
-                task_id=job.task_id,step_id=job.step_id,name=name,status=status,
-                summary=summary,verification="redis-terminal-checks",
-                started_at=started,completed_at=_utc_now(),
-            ))
-            if ok:
-                self.durable.checkpoint_step(StepResult(
-                    task_id=job.task_id,step_id="final-verify",
-                    name="Verify final candidate envelope",status=StepStatus.COMPLETED,
-                    summary=summary,verification="terminal-paragraph-checks" if state=="completed"
-                        else "terminal-recovery-handoff",
-                    started_at=started,completed_at=_utc_now(),
-                ))
-                if state == "completed" and not self.durable.all_steps_completed(job.task_id):
-                    raise RuntimeError("Terminal conclusion cannot report success with missing planned steps")
-            self.durable.finalize_task(job.task_id,outcome.answer,
-                "failed" if state=="unresolved" else state)
-            if not self.durable.terminal_summary_verified(job.task_id):
-                raise RuntimeError("Terminal summary was not verified after durable write")
-        if ok:
-            self.live.step_completed(job.task_id,job.step_id,summary,
-                "redis-terminal-checks")
-            self.live.step_started(job.task_id,"final-verify","Verify final candidate envelope")
-            self.live.step_completed(job.task_id,"final-verify",summary,
-                "terminal-paragraph-checks" if state=="completed" else "terminal-recovery-handoff")
-            if state == "passed_to":
-                self.live.transfer_task(job.task_id,outcome.successor_id,outcome.answer)
-            else:
-                self.live.finish(job.task_id,outcome.answer)
-        else:
-            # Inconclusive verification is not task success. Keep the report card
-            # persisted, and let the ordinary failed-task resume workflow handle it.
-            self.live.step_failed(job.task_id,job.step_id,outcome.answer)
-        # The special terminal stage deliberately avoids legacy terminal cleanup:
-        # it would invoke another unrestricted model call for an effectiveness note,
-        # delete Redis state needed for handoff, and potentially soft-delete artifacts
-        # referenced by a passed_to successor. Retention is handled separately.
-        self.queue.ack(redis_id)
-        logging.info("Terminal conclusion task=%s outcome=%s successor=%s",
-            job.task_id,state,outcome.successor_id)
-
     def _process_final_verification(self, redis_id: str, job: PromptJob, name: str, started) -> None:
         try:
             candidate = validate_final_candidate(json.loads(job.prompt))
@@ -1600,10 +1556,7 @@ class PromptWorker:
         artifact_state = self._final_artifact_state(candidate)
         n1_result, n1_processing_failed = self._n1_final_verification(job, candidate, artifact_state)
         if n1_result is None:
-            verification = self._structured_verifier_result(
-                self._final_verification_prompt(job, candidate, artifact_state)
-            )
-            n1_processing_failed = False
+            raise VerifierProtocolError("N1 final reviewer is unavailable; final acceptance cannot be delegated")
         elif n1_processing_failed:
             verification = None
         else:
@@ -1618,35 +1571,15 @@ class PromptWorker:
         metadata = dict(job.metadata or {})
         if n1_processing_failed:
             failures = max(0, int(metadata.get("n1_processing_failures", 0))) + 1
-            if failures >= 2:
-                if not artifact_state:
-                    raise VerifierProtocolError("N1 final review failed twice and required artifact verification is not satisfied; review-failure pass cannot override deterministic artifact safety.")
-                gate = self.n1_gatekeeper
-                if gate is not None and hasattr(gate, "record_final_review_failure_pass"):
-                    gate.record_final_review_failure_pass()
-                summary = json.dumps({
-                    "schema_version": PROTOCOL_VERSION, "kind": "final_verification", "verdict": "accept",
-                    "schema_complete": True, "requirements_complete": True, "artifact_verified": True,
-                    "issues": [], "repair_scope": "none",
-                    "n1_review_status": "unavailable_after_2_processing_attempts",
-                }, ensure_ascii=False)
-                result = StepResult(
-                    task_id=job.task_id, step_id=job.step_id, name=name, status=StepStatus.COMPLETED,
-                    summary=summary, verification="n1-final-review:failure-pass",
-                    started_at=started, completed_at=_utc_now(),
+            max_failures = max(2, int((self._runtime_config().get("worker") or {}).get(
+                "n1_final_processing_retry_limit", 8)))
+            if failures >= max_failures:
+                # The candidate remains in the queued/durable final review envelope.
+                # Failure to process a review is NOT acceptance.
+                raise VerifierProtocolError(
+                    f"N1 could not review the unchanged final candidate after {failures} "
+                    "processing attempts; candidate must be recovered, not approved."
                 )
-                if self.durable:
-                    self.durable.checkpoint_step(result)
-                    if not self.durable.all_steps_completed(job.task_id):
-                        raise RuntimeError("N1 review-failure pass reached before all planned steps completed")
-                    self.durable.finalize_task(job.task_id, candidate["user_reply"], "completed")
-                    if not self.durable.terminal_summary_verified(job.task_id):
-                        raise RuntimeError("durable terminal summary verification failed")
-                self.live.step_completed(job.task_id, job.step_id, summary, result.verification)
-                self.live.finish(job.task_id, candidate["user_reply"])
-                self._clear_terminal_redis(job.task_id)
-                logging.warning("N1 final review failed twice; passed structurally valid N2 candidate task=%s", job.task_id)
-                return
 
             # N1's model failed, not N2's verified candidate. Requeue the SAME
             # candidate for an N1-only retry; do not rewrite it via N2.
@@ -1669,7 +1602,7 @@ class PromptWorker:
                 ))
             self.queue.ack(redis_id)
             self.queue.enqueue(job)
-            logging.warning("N1 final review processing failure; same candidate checkpointed and requeued for N1-only review task=%s failure=%s/2", job.task_id, failures)
+            logging.warning("N1 final review processing failure; same candidate checkpointed and requeued task=%s failure=%s/%s", job.task_id, failures, max_failures)
             return
 
         # A successful N1 review resets the processing-failure streak for this candidate cycle.
@@ -1702,18 +1635,53 @@ class PromptWorker:
             self._clear_terminal_redis(job.task_id)
             logging.info("N1 final verification accepted task=%s cycle=%s", job.task_id, cycle)
             return
-        if cycle >= 3:
-            raise VerifierProtocolError("final candidate remained rejected after three N1 verification cycles: " + "; ".join(verification["issues"]))
-        if verification["repair_scope"] not in {"response", "requirements"}:
-            raise VerifierProtocolError("final verification found a non-text repair requirement: " + "; ".join(verification["issues"]))
-        candidate["user_reply"] = self._repair_final_reply(job, candidate, verification)
-        candidate = validate_final_candidate(candidate)
+        max_cycles = max(3, int((self._runtime_config().get("worker") or {}).get(
+            "n1_final_verification_cycle_limit", 8)))
+        if cycle >= max_cycles:
+            raise VerifierProtocolError("N1 did not accept the final candidate after "
+                + str(cycle) + " correction cycles: " + "; ".join(verification["issues"]))
+        if verification["repair_scope"] not in {"response", "requirements", "artifact"}:
+            raise VerifierProtocolError("final verifier requested an unsupported repair scope: " + "; ".join(verification["issues"]))
+        # N1 rejects the result; send a bounded corrective conclusion to the actual
+        # N2 worker, retaining the active voice, plugins, tool policies and evidence.
+        # The model-free final-review job must NOT generate replacement prose.
         metadata = dict(job.metadata or {})
         metadata["verification_cycle"] = cycle + 1
         metadata["last_verification"] = verification
-        job.metadata = metadata
-        job.prompt = json.dumps(candidate, ensure_ascii=False)
-        job.created_at = __import__("time").time()
+        source_request = str(metadata.get("task_user_prompt") or metadata.get("original_user_prompt") or "")
+        repair = (
+            "[N1 REJECTED FINAL CANDIDATE — N2 CORRECTION ONLY]\n"
+            "This is not a new user request. Resolve ONLY the N1 issues below using "
+            "the existing verified task steps and native tools. Do not repeat completed "
+            "mutations or replan the original request. Self-verify and resubmit to N1.\n"
+            "N1 issues: " + json.dumps(verification["issues"], ensure_ascii=False) + "\n"
+            "Previous N2 candidate (for revision, not authoritative evidence):\n"
+            + str(candidate.get("user_reply") or "")[:18000]
+            + "\nOriginal intent is retained in the user-role reference and metadata."
+        )
+        step_id = str(metadata.get("n2_conclusion_step_id") or "")
+        if not step_id:
+            raise VerifierProtocolError("Cannot route final correction to N2: original conclusion step id missing")
+        task_uuid = str(metadata.get("task_uuid") or job.task_uuid or job.chain_uuid or job.chain_id)
+        new_node = str(uuid.uuid4())
+        n2_meta = dict(metadata)
+        n2_meta.update({
+            "prompt_origin": "runtime_final_n2_repair", "is_final_candidate": True,
+            "step_name": "N2 correction of N1-rejected final answer",
+            "verification": "N2 self-verifies and N1 accepts the corrected final reply",
+            "n2_conclusion_step_id": step_id,
+            "final_verification_node_id": job.message_id,
+            "node_id": new_node,
+        })
+        n2_job = PromptJob(
+            message_id=new_node, task_id=job.task_id, step_id=step_id,
+            prompt=repair, project_id=job.project_id, context="",
+            attempt=0, created_at=time(), metadata=n2_meta,
+            chain_id=task_uuid, previous_prompt_id="", next_prompt_id="",
+            chain_index=job.chain_index, recovery_attempted=False,
+            request_type="conclusion", task_uuid=task_uuid, node_id=new_node,
+            chain_uuid=task_uuid,
+        )
         retry_summary = json.dumps({
             "schema_version": PROTOCOL_VERSION, "kind": "final_verification_retry",
             "cycle": cycle, "next_cycle": cycle + 1, "issues": verification["issues"],
@@ -1725,8 +1693,8 @@ class PromptWorker:
                 started_at=started, completed_at=_utc_now(),
             ))
         self.queue.ack(redis_id)
-        self.queue.enqueue(job)
-        logging.info("Requeued N1-rejected final candidate task=%s cycle=%s", job.task_id, cycle + 1)
+        self.queue.enqueue(n2_job)
+        logging.info("Routed N1-rejected final candidate back to full N2 execution task=%s cycle=%s", job.task_id, cycle + 1)
 
     @staticmethod
     def _is_literal_request(text: str) -> bool:
@@ -1802,6 +1770,14 @@ class PromptWorker:
     def _clear_terminal_redis(self, task_id: str) -> None:
         if not self.durable or not self.durable.terminal_summary_verified(task_id):
             raise RuntimeError(f"refusing Redis cleanup before durable terminal summary verification: {task_id}")
+        if self.durable.task_status(task_id) == "passed_to":
+            # A recovery successor REQUIRES the old task's model buffers, SOS,
+            # Redis state/evidence and intermediate files. Do not soft-delete,
+            # condense/purge old raw thinking, or clear the old live history.
+            # Only remove stale QUEUED jobs that could resurrect the parent.
+            self.queue.cleanup_task(task_id)
+            logging.info("Retained recovery parent evidence/SOS/temporary assets task=%s", task_id)
+            return
         self._ensure_effectiveness_note(task_id)
         context = self.durable.task_terminal_context(task_id) if hasattr(self.durable, "task_terminal_context") else {}
         request = str((context or {}).get("original_request") or "").strip()
@@ -1900,7 +1876,7 @@ class PromptWorker:
                 else:
                     held += 1
                 continue
-            if status in {"completed", "failed", "cancelled"}:
+            if status in {"completed", "failed", "cancelled", "passed_to"}:
                 if not self.durable.terminal_summary_verified(task_id):
                     self.durable.ensure_terminal_summary(task_id)
                 if self.durable.terminal_summary_verified(task_id):
@@ -2019,6 +1995,170 @@ class PromptWorker:
         )
         (self._runtime_root() / "SOS.readme").write_text(body, encoding="utf-8")
 
+    def _handoff_failed_task_to_recovery(
+        self, job: PromptJob, *, stage: str, error: str, checkpoint: str = ""
+    ) -> str:
+        """Promote a terminal failure to a *designated* recovery task.
+
+        Do not restart the operator's original request. N2 must first inventory
+        existing work and let N1 approve each recovery stage; full historical
+        evidence remains available by ID, not copied wholesale into the prompt.
+        SOS, durable failures and chunk archives are intentionally left intact.
+        """
+        if not self.durable or not hasattr(self.durable, "start_child_task"):
+            raise RuntimeError("durable recovery-task lineage is unavailable")
+        if self._task_suppressed(job.task_id):
+            raise RuntimeError("suppressed tasks must never be resumed automatically")
+        # An unbounded succession of crashing recovery children is not progress.
+        lineage = self.durable.task_lineage(job.task_id) if hasattr(self.durable, "task_lineage") else None
+        depth = int((lineage or {}).get("task_depth") or 0)
+        max_depth = max(1, int(self._runtime_config().get("worker", {}).get("max_subtask_depth", 4)))
+        if depth >= max_depth:
+            raise RuntimeError(f"recovery lineage reached maximum depth {max_depth}")
+        source = self.durable.task_plan_snapshot(job.task_id) if hasattr(self.durable, "task_plan_snapshot") else None
+        original = str(
+            (source or {}).get("original_request")
+            or (job.metadata or {}).get("original_user_prompt")
+            or (job.metadata or {}).get("task_user_prompt")
+            or ""
+        ).strip()
+        if not original:
+            raise RuntimeError("no authoritative original user request; refusing invented recovery prompt")
+
+        child_id = "recovery-" + uuid.uuid5(
+            uuid.NAMESPACE_URL, "norm:recovery:" + job.task_id + ":" + job.step_id
+        ).hex[:20]
+        prior_steps = list((source or {}).get("steps") or [])
+        # This compact inventory is a POINTER, not an adjudication of success.
+        # N2 must independently check anything reported as completed.
+        prior_index = [{"step_id": str(x.get("id") or ""),
+                        "status": str(x.get("status") or "unknown"),
+                        "name": str(x.get("name") or "")[:100]}
+                       for x in prior_steps if isinstance(x, dict)]
+        info = {
+            "kind": "recovery_handoff", "task_kind": "recovery",
+            "concluding_from_task_id": job.task_id, "failed_step_id": job.step_id,
+            "failure_stage": str(stage)[:100], "failure_reason": redact(str(error))[:900],
+            "saved_checkpoint": redact(str(checkpoint))[:2200],
+            "prior_step_index": prior_index[:120],
+            "full_history_location": "PostgreSQL task_runs/task_steps/task_evidence, original task ID above",
+            "context_policy": "This is a summary/index, not the complete history. Look up archived evidence selectively.",
+        }
+        compact = json.dumps(info, ensure_ascii=False)
+        steps = (
+            TaskStep("plan-breakdown", "Recovery lineage", "Existing failed task referenced; no new user request.",
+                     "Lineage is recorded."),
+            TaskStep("verify-plan", "Recovery scope", "Original task was handed off as recovery.",
+                     "Prior work remains available for selective readback.", depends_on=("plan-breakdown",)),
+            TaskStep("step-01", "N2 recovery check plan",
+                     "RECOVERY MODE (NOT A NEW USER REQUEST). Review the compact handoff and the "
+                     "original request solely as intent. Propose specific READ-ONLY checks for "
+                     "each claimed completed artifact/step; identify uncertain or missing evidence. "
+                     "Never execute the original task or re-create a file in this phase. "
+                     "N1 must approve this plan before verification proceeds.",
+                     "Plan includes concrete checks and preserves completed work.", depends_on=("verify-plan",)),
+            TaskStep("step-02", "N2 verify surviving work",
+                     "Execute the N1-approved recovery checks using the NORMAL N2 tools and "
+                     "file access rules. Verify files and durable step evidence, then write an "
+                     "evidence-backed completed/pending/unknown report to Redis via the ordinary "
+                     "task evidence/checkpoint machinery. Do not treat an old summary as proof. "
+                     "If insufficient evidence, state UNKNOWN rather than making duplicate files.",
+                     "Every recovered claim has direct evidence; N1 checks N2's report.", depends_on=("step-01",)),
+            TaskStep("step-03", "N2 plan remaining recovery",
+                     "Use N1-reviewed surviving-work checks to propose only missing work. "
+                     "Do NOT parse the original user prompt as a new assignment. Reconcile "
+                     "completed/unknown targets and specify a bounded execution sequence "
+                     "for what truly remains. N1 reviews this recovery plan before execution.",
+                     "Recovery plan contains only grounded missing work.", depends_on=("step-02",)),
+            TaskStep("step-04", "N2 complete missing work",
+                     "Follow the reviewed recovery plan, executing ONLY demonstrably missing "
+                     "work through the normal N2 tools. Prefer safe read-only rechecks for "
+                     "UNKNOWN targets. Preserve original artifacts, use checkpoints/chunks and "
+                     "existing bounded child-task mechanisms if necessary. N1 verifies outcomes.",
+                     "Missing work verified; no completed work needlessly redone.", depends_on=("step-03",)),
+            TaskStep("step-05", "N2 recovery conclusion",
+                     "Write the full user-facing result in the active N2 voice with normal "
+                     "plugins, citing recovered and newly finished work accurately. Self-verify "
+                     "before submitting the final candidate to N1; do not claim uncertain "
+                     "checks passed.",
+                     "N2 self-check and N1 final acceptance required.", depends_on=("step-04",)),
+            TaskStep("final-verify", "N1 recovery acceptance",
+                     "Review N2's final candidate against the original request and evidence.",
+                     "N1 accepts only when requirements and artifact proof are satisfied.",
+                     depends_on=("step-05",)),
+        )
+        # Stable node IDs are essential: a crash between durable child creation
+        # and Redis enqueue must retry the SAME child without duplicating work.
+        steps = tuple(TaskStep(x.id, x.name, x.description, x.verify,
+            depends_on=x.depends_on,
+            node_id=str(uuid.uuid5(uuid.NAMESPACE_URL, child_id + ":" + x.id)))
+            for x in steps)
+        plan = TaskPlan(
+            task_id=child_id, title="Recovery attempt concluding from " + job.task_id,
+            task_uuid=str(uuid.uuid5(uuid.NAMESPACE_URL, child_id + ":task")),
+            steps=steps, original_request=original,
+            source_prompt_id=str((job.metadata or {}).get("source_prompt_id") or ""),
+            source_user_message_id=str((job.metadata or {}).get("original_user_message_id") or ""),
+        )
+        # Persist a useful summary *before* creating runnable work. Failure to
+        # enqueue is recoverable: the same deterministic ID can be retried.
+        if hasattr(self.queue, "r"):
+            self.queue.r.setex("norm:recovery:handoff:" + child_id, 30 * 86400, compact)
+        if hasattr(self.durable, "record_maintenance_note"):
+            self.durable.record_maintenance_note("recovery", "Compact handoff and old history index retained.",
+                task_id=job.task_id, details=info)
+        existing = self.durable.task_status(child_id)
+        if existing is None:
+            self.durable.start_child_task(plan, job.task_id, job.step_id,
+                original_request=original, task_kind="recovery")
+            self.live.start_task(child_id, plan.title, plan.as_dict())
+            now = _utc_now()
+            for step in steps[:2]:
+                self.durable.checkpoint_step(StepResult(child_id, step.id, step.name,
+                    StepStatus.COMPLETED, "Recovery handoff recorded: " + job.task_id,
+                    verification=step.verify, started_at=now, completed_at=now))
+                self.live.step_started(child_id, step.id, step.name)
+                self.live.step_completed(child_id, step.id, "Recovery lineage recorded", step.verify)
+        elif existing not in {"running", "passed_to", "completed"}:
+            raise RuntimeError("existing recovery task is not safely resumable: " + existing)
+        # Do not enqueue duplicate or already-completed recovery work.
+        if existing in {"completed", "passed_to"}:
+            return child_id
+        if not self.queue.contains_message_id(steps[2].node_id):
+            jobs = []
+            active = steps[2:-1]
+            for index, step in enumerate(active):
+                meta = dict(job.metadata or {})
+                meta.update({
+                    "step_name": step.name, "verification": step.verify,
+                    "prompt_origin": "runtime_recovery_attempt", "recovery_mode": True,
+                    "recovery_parent_task_id": job.task_id,
+                    "recovery_failed_step_id": job.step_id,
+                    "task_user_prompt": original, "original_user_prompt": original,
+                    "compact_resume_context": False, "allow_subtask": index >= 3,
+                    "is_final_candidate": index == len(active)-1,
+                    "generated_step_index": index + 1, "generated_step_count": len(active),
+                    "final_verification_node_id": steps[-1].node_id,
+                    "command_envelope": {**self._command_from_job(job),
+                        "intent": original[:500]},
+                })
+                # Avoid injecting unrelated *old* task injections and checkpoints
+                # when the new task's first step starts.
+                meta.pop("applied_context_injections", None)
+                meta.pop("context_injection_cursor", None)
+                jobs.append(PromptJob(
+                    message_id=step.node_id, task_id=child_id, step_id=step.id,
+                    prompt=step.description, project_id=job.project_id,
+                    context=compact if index == 0 else "",
+                    attempt=0, created_at=time(), metadata=meta,
+                    chain_id=plan.task_uuid, previous_prompt_id="", next_prompt_id="",
+                    chain_index=index, recovery_attempted=False,
+                    request_type="conclusion" if index == len(active)-1 else "step",
+                    task_uuid=plan.task_uuid, node_id=step.node_id, chain_uuid=plan.task_uuid,
+                ))
+            self.queue.enqueue_chain(jobs)
+        return child_id
+
     def _handle_pathological_failure(
         self, redis_id: str, job: PromptJob, name: str, started, stage: str, error: str,
         *, resume_checkpoint: str = "",
@@ -2083,6 +2223,21 @@ class PromptWorker:
                     resumable=resumable,
                 )
         self.live.step_failed(job.task_id, job.step_id, error[:2000])
+        try:
+            successor = self._handoff_failed_task_to_recovery(
+                job, stage=stage, error=error, checkpoint=checkpoint
+            )
+        except Exception:
+            logging.exception("Recovery handoff unavailable; leaving durable failure and SOS intact task=%s", job.task_id)
+        else:
+            self.durable.finalize_task(job.task_id,
+                f"PASSED_TO:{successor} — recovery after {stage}; original progress retained.", "passed_to")
+            if hasattr(self.live, "transfer_task"):
+                self.live.transfer_task(job.task_id, successor,
+                    f"PASSED_TO:{successor} — recovery attempt; original request is reference only.")
+            self.queue.cleanup_task(job.task_id)
+            logging.warning("Failure handed off task=%s successor=%s", job.task_id, successor)
+            return
 
         if resumable:
             # Keep durable task artifacts/history intact for an explicit operator resume,
@@ -3711,16 +3866,23 @@ class PromptWorker:
         total = int(metadata.get("generated_step_count") or 0)
         is_planned_step = str(metadata.get("prompt_origin") or "") in {
             "norm_generated_step", "runtime_child_subtask", "runtime_oversize_recovery_analysis",
-            "runtime_oversize_recovery_unit",
+            "runtime_oversize_recovery_unit", "runtime_recovery_attempt",
+            "runtime_final_n2_repair",
         } or request_type in {"step", "task_step", "conclusion"}
         if is_planned_step:
             stage = f"Step {index}/{total}" if index and total else f"step_id={job.step_id}"
-            return (
+            recovery_directive = (
+                "[RECOVERY TASK — INVENTORY FIRST]\nThe old task is not an unexecuted user request. "
+                "Follow the approved recovery phase ONLY; verify existing artifacts and Redis/durable "
+                "checkpoints before deciding anything needs redoing. Request archived evidence selectively.\n"
+                if metadata.get("recovery_mode") else ""
+            )
+            return recovery_directive + (
                 "[NORM EXECUTION PHASE — ACTIVE STEP, NOT TASK PLANNING]\n"
                 f"Current execution target: {stage}.\n"
-                "The original user request remains in the user role and defines the "
-                "overall purpose, constraints, and meaning of success. It is NOT a "
-                "new request to start planning or restart the parent task.\n"
+                "The original user request remains in the user role ONLY as reference "
+                "for overall purpose, constraints, and success criteria. DO NOT execute "
+                "that user-role text as a new task, nor replan/restart it.\n"
                 "Planning and N1 plan verification have ALREADY occurred. Actively "
                 "PROSECUTE the CURRENT work_request.instruction and its verification "
                 "requirement, using the current continuation, task memory, and "
@@ -4688,6 +4850,13 @@ class PromptWorker:
             if judgment.get("processing_failed"):
                 meta["n1_step_review_status"] = "unavailable_after_2_attempts"
                 job.metadata = meta
+                if meta.get("recovery_mode"):
+                    # A recovery audit/check plan MUST be approved by N1 before
+                    # N2 can act on unverified claims of surviving or missing work.
+                    raise VerifierProtocolError(
+                        "Recovery stage requires independent N1 acceptance; "
+                        "two N1 processing failures are not approval."
+                    )
                 logging.warning("N1 review failed twice; passing through independently N2-verified candidate task=%s step=%s (NOT an N1 acceptance)", job.task_id, job.step_id)
                 return True, []
         if str(judgment.get("decision")) == "accept":
@@ -4982,41 +5151,12 @@ class PromptWorker:
                 self.queue.max_attempts,
             )
             return False
-        if job.recovery_attempted:
-            count = self.queue.escalate_chain(job.chain_id, job.message_id)
-            logging.error("Recovery failed; escalated prompts count=%s", count)
-            return True
-        try:
-            revised = self._troubleshoot(job, error)
-            count = self.queue.revise_retry(
-                job.chain_id,
-                job.message_id,
-                revised,
-                recovery_context=error,
-            )
-        except Exception:
-            logging.exception("Norm troubleshooting failed")
-            count = 0
-        if not count:
-            escalated = self.queue.escalate_chain(job.chain_id, job.message_id)
-            logging.error("Could not revise retry; escalated prompts count=%s", escalated)
-            return True
-        else:
-            logging.info("Norm revised parked prompt for one recovery attempt")
-            return False
-
-    def _troubleshoot(self, job: PromptJob, error: str) -> str:
-        prompt = (
-            "Hidden recovery task. Revise the failed prompt so it can succeed on one final attempt. "
-            "Return only the complete revised prompt, with no commentary.\n\n"
-            f"Original prompt:\n{job.prompt}\n\n"
-            f"Existing context:\n{job.context}\n\n"
-            f"Failure:\n{error}"
-        )
-        revised = self.client.generate(prompt, think=True, temperature=0.2)
-        if not revised or not revised.strip():
-            raise ValueError("Norm returned a blank recovery prompt")
-        return revised.strip()
+        # Finite retries exhausted. Do not rewrite the task prompt using a
+        # stripped-down model call: hand off to a *recovery*-kind task after SOS.
+        count = self.queue.escalate_chain(job.chain_id, job.message_id)
+        logging.error("Retries exhausted; recovery successor required task=%s step=%s escalated=%s",
+                      job.task_id, job.step_id, count)
+        return True
 
     def _handle_blank(self, redis_id: str) -> None:
         self.queue.ack(redis_id)

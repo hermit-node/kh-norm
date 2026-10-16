@@ -24,7 +24,9 @@
     "max_oversize_recovery_cycles": 3,
     "task_round_progress_review": 96,
     "task_round_extension": 36,
-    "task_round_hard_limit": 384
+    "task_round_hard_limit": 384,
+    "n1_final_processing_retry_limit": 8,
+    "n1_final_verification_cycle_limit": 8
   },
   "context_budget": {
     "enabled": true,

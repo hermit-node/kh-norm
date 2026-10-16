@@ -1,3 +1,31 @@
+# Norm 0.55.8r9 — restore native N2 conclusion and N1 final acceptance
+
+**Source release (not a precompiled EXE), based on the user-supplied 0.55.8r8 ZIP.**
+Celery workers and the DB5 terminal pipeline have been removed. All AI-generated
+user-facing output uses the normal N2 worker with its active voice, native tools,
+Nabler, context and N1 tool gate. N2 self-checks, submits the final candidate,
+and N1 must explicitly accept; unavailable or rejected N1 review cannot be
+silently substituted with an unrestricted model call or an automatic acceptance.
+
+N2 execution keeps the unchanged original request in the Ollama `user` role as
+*intent/constraints reference*, never as a second instruction to restart the
+original task. Only the currently approved N2 step is executable.
+
+A genuinely terminal failure retains SOS, Redis/PG checkpoints and the prior
+history, then attempts a **`task_kind=recovery`** successor with a stable new task
+ID and parent pointer. Recovery proceeds through N2's check planning, N1
+step review, N2 evidence verification, N1 review, N2 remaining-work planning,
+execution, and a fresh N2→N1 final. Compact task metadata is carried forward;
+full archived evidence is fetched selectively. A recoverable normal round yield
+continues on the existing ID, without manufacturing a recovery task.
+
+Celery for approved CPU-side disk/DB tools is deferred in
+`docs/FUTURE_IMPLEMENTATION_NOTES.md`. The original compiled StegoSplit
+modules are unchanged. Tests are offline and cannot prove Windows/Redis/Ollama
+integration until installed and smoke-tested. No live `C:\Norm` was modified.
+
+---
+
 ## Norm 0.55.8r8: DB5 Celery terminal conclusion
 
 Five independent Windows Celery workers handle atomic read-only file checks and short paragraph jobs. Redis DB5 holds broker, result and report card state. Installer-owned norm.exe build, source zip only. See TERMINAL_CONCLUSION_R8.md.
