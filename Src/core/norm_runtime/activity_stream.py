@@ -91,6 +91,7 @@ def _activity_app(
     memory_condense: Callable[[bool, bool], dict] | None,
     switch_model: Callable[[str | None], dict] | None,
     busy_status: Callable[[], dict] | None,
+    queue_full_status: Callable[[], dict] | None,
     context_status: Callable[[], dict] | None,
     inject_context: Callable | None,
     health_status: Callable[[], dict] | None,
@@ -116,6 +117,15 @@ def _activity_app(
             except Exception:
                 logging.exception("Busy status computation failed")
                 return web.json_response({"error": "busy status probe failed"}, status=500)
+
+        async def queue_full(_request: web.Request) -> web.Response:
+            if queue_full_status is None:
+                return web.json_response({"error": "queue-full unavailable"}, status=503)
+            try:
+                return web.json_response(await _call(queue_full_status))
+            except Exception:
+                logging.exception("Full queue computation failed")
+                return web.json_response({"error": "queue-full probe failed"}, status=500)
 
         async def context(request: web.Request) -> web.Response:
             if context_status is None:
@@ -309,6 +319,7 @@ def _activity_app(
 
         app.router.add_get("/health", health)
         app.router.add_get("/status/busy", busy)
+        app.router.add_get("/status/queue-full", queue_full)
         app.router.add_get("/status-context", status_context)
         app.router.add_get("/status/context", context)
         app.router.add_get("/status/context.md", context)
@@ -360,6 +371,7 @@ def start_activity_server(
     memory_condense: Callable[[bool, bool], dict] | None = None,
     switch_model: Callable[[str | None], dict] | None = None,
     busy_status: Callable[[], dict] | None = None,
+    queue_full_status: Callable[[], dict] | None = None,
     context_status: Callable[[], dict] | None = None,
     inject_context: Callable | None = None,
     injection_control: Callable | None = None,
@@ -386,6 +398,7 @@ def start_activity_server(
             memory_condense=memory_condense,
             switch_model=switch_model,
             busy_status=busy_status,
+            queue_full_status=queue_full_status,
             context_status=context_status,
             inject_context=inject_context,
             injection_control=injection_control,

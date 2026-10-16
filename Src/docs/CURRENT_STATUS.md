@@ -54,7 +54,7 @@ StegoSplit Message 0.4.3, Auth 0.1.0, and Key 0.2.0a1 now carry CPython 3.14 nat
 
 # Norm current status
 
-Current package: **Norm 0.55.7** portable source with compiled StegoSplit internals; verified external installer: **1.6.12-unified**.
+Current package: **Norm 0.55.8** portable source with compiled StegoSplit internals; verified external installer: **1.6.12-unified**.
 
 ### Changes added in 0.55.1
 

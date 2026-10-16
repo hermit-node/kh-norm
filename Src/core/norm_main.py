@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 from runtime_bootstrap import build_conversation_service, build_deletion_queue, build_prompt_queue, build_runtime, healthcheck, load_config
 from norm_runtime.activity_stream import ActivityHub, ActivityLogHandler, start_activity_server
 from norm_runtime.busy_status import collect_busy_status
+from norm_runtime.queue_visibility import collect_queue_full
 from norm_runtime.context_snapshot import collect_context_snapshot
 from norm_runtime.context_injections import ContextInjections
 from norm_runtime.http_api import start_chat_api
@@ -899,6 +900,15 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             result["delivery_errors"] = errors
         return result
 
+    def request_queue_full() -> dict:
+        worker_obj = resources.get("worker")
+        maintenance = worker_obj.maintenance_status() if worker_obj is not None and hasattr(worker_obj, "maintenance_status") else {}
+        return collect_queue_full(
+            prompt_queue=resources.get("prompt_queue"),
+            durable=resources.get("durable"),
+            maintenance=maintenance,
+        )
+
     def request_failed_tasks(limit: int = 25) -> dict:
         worker_obj = resources.get("worker")
         durable = resources.get("durable")
@@ -1044,6 +1054,7 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             inject_context=request_inject_context,
             injection_control=request_injection_control,
             busy_status=request_busy_status,
+            queue_full_status=request_queue_full,
             context_status=request_context_status,
             health_status=request_activity_health,
         )

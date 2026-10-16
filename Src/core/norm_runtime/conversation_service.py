@@ -1403,8 +1403,13 @@ class ConversationService:
                     "Original user requirements, factuality, and safety always outrank style.\n\n"
                     + voice
                 )
+        # Provenance alone does not route a model call. Formal review belongs to
+        # the actual N1 client (same Ollama model, independent agent policy).
+        target = self.ollama
+        if invoke_target == "n1" and self.n1_gatekeeper is not None:
+            target = self.n1_gatekeeper.client
         try:
-            raw = self.ollama.generate(
+            raw = target.generate(
                 prompt, think=think, num_predict=num_predict, temperature=0.0,
                 response_format=schema, emit_stream=emit_stream,
                 system_context=voice_system,
@@ -1422,11 +1427,11 @@ class ConversationService:
                 kwargs["system_context"] = voice_system
             if "emit_stream" not in message:
                 kwargs["emit_stream"] = emit_stream
-            raw = self.ollama.generate(prompt, **kwargs)
+            raw = target.generate(prompt, **kwargs)
         limit = max(1, int(max_chars))
         if len(raw) > limit:
             raise ValueError(f"structured output exceeded {limit} characters")
-        return self.ollama.parse_json(raw)
+        return target.parse_json(raw)
 
     @staticmethod
     def _normalize_plan(parsed: dict) -> dict:
@@ -1472,7 +1477,10 @@ class ConversationService:
             "Independently verify this proposed task plan before execution. Reject only for BLOCKING defects: a dropped or changed "
             "user constraint; unauthorized or unsafe action; a materially contradictory or impossible design; missing concrete verification "
             "for a material output; an action too large for a bounded worker slice; or, for a MULTI-STEP plan, no final synthesis step capable "
-            "of answering the user from prior results. Do NOT reject for advisory style, naming, organization, or merely because a step contains "
+            "of answering the user from prior results. If a plan depends on specific historical labels, dedicated commits, "
+            "or a named data source that has NOT been confirmed to exist, insist on an evidence-based fallback "
+            "(general history, tags, source artifacts, or structural comparison) rather than repeatedly querying the absent label. "
+            "Do NOT reject for advisory style, naming, organization, or merely because a step contains "
             "multiple tightly coupled subcomponents. A multi-part step is an opaque catch-all only when it is vague/generic or hides materially "
             "distinct phases that cannot reasonably complete in one bounded slice. Explicitly named related modules/functions may share one step "
             "when their roles are clear and the verification independently covers them. Redundant mechanisms are not a blocking defect unless they "
@@ -1488,7 +1496,7 @@ class ConversationService:
         for _ in range(2):
             try:
                 parsed = self._structured_generate(
-                    prompt, self._plan_verifier_schema(), num_predict=384, think=False,
+                    prompt, self._plan_verifier_schema(), num_predict=1600, think=True,
                     invoke_source="n2", invoke_target="n1", invocation_kind="plan_submission_for_review"
                 )
                 accepted = parsed.get("accepted")

@@ -113,31 +113,39 @@ def _nvidia_smi_path() -> str | None:
     return None
 
 
-def _gpu_utilization() -> float | None:
+def _gpu_activity() -> tuple[float | None, float | None]:
+    """GPU compute and memory-controller utilization, NOT allocated VRAM."""
     exe = _nvidia_smi_path()
     if not exe:
-        return None
+        return None, None
     try:
         completed = subprocess.run(
-            [exe, "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"],
+            [exe, "--query-gpu=utilization.gpu,utilization.memory", "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=2.0,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if completed.returncode != 0:
-            return None
-        values = [float(line.strip()) for line in completed.stdout.splitlines() if line.strip()]
-        return max(values) if values else None
+            return None, None
+        rows = [list(map(float, line.split(","))) for line in completed.stdout.splitlines() if line.strip()]
+        return (max(row[0] for row in rows), max(row[1] for row in rows)) if rows else (None, None)
     except (OSError, ValueError, subprocess.SubprocessError):
-        return None
+        return None, None
+
+
+def _gpu_utilization() -> float | None:
+    """Legacy helper for callers wanting only GPU compute utilization."""
+    return _gpu_activity()[0]
 
 
 def _resource_snapshot() -> dict[str, Any]:
     table = _process_table()
     related, model_processes = _related_pids(table)
+    gpu_pct, gpu_memory_activity_pct = _gpu_activity()
     return {
         "monotonic": time.monotonic(),
         "cpu_times": _cpu_times(related),
-        "gpu_pct": _gpu_utilization(),
+        "gpu_pct": gpu_pct,
+        "gpu_memory_activity_pct": gpu_memory_activity_pct,
         "related_process_count": len(related),
         "model_processes": model_processes,
     }
@@ -153,13 +161,18 @@ def _interval_vote(previous: dict[str, Any], current: dict[str, Any]) -> dict[st
     )
     cpu_core_pct = (cpu_ticks / 10_000_000.0) / dt * 100.0
     gpu_pct = current.get("gpu_pct")
+    gpu_memory_pct = current.get("gpu_memory_activity_pct")
     model_present = bool(current.get("model_processes"))
     cpu_active = cpu_core_pct >= _CPU_ACTIVE_CORE_PCT
-    gpu_active = gpu_pct is not None and float(gpu_pct) >= _GPU_ACTIVE_PCT and model_present
+    gpu_active = model_present and (
+        (gpu_pct is not None and float(gpu_pct) >= _GPU_ACTIVE_PCT)
+        or (gpu_memory_pct is not None and float(gpu_memory_pct) >= _GPU_ACTIVE_PCT)
+    )
     return {
         "active": bool(cpu_active or gpu_active),
         "cpu_core_pct": round(cpu_core_pct, 2),
         "gpu_pct": None if gpu_pct is None else round(float(gpu_pct), 2),
+        "gpu_memory_activity_pct": None if gpu_memory_pct is None else round(float(gpu_memory_pct), 2),
         "cpu_active": cpu_active,
         "gpu_active": gpu_active,
         "model_processes": current.get("model_processes", []),
@@ -170,15 +183,13 @@ def _interval_vote(previous: dict[str, Any], current: dict[str, Any]) -> dict[st
 def sample_resource_activity(interval_seconds: float = _SAMPLE_INTERVAL_SECONDS) -> dict[str, Any]:
     previous = _resource_snapshot()
     votes: list[dict[str, Any]] = []
-    for _ in range(2):
+    # 3 consecutive intervals (~750ms) instead of a two-vote 500ms probe;
+    # one transient GPU/CPU spike cannot by itself claim resource-only busy.
+    for _ in range(3):
         time.sleep(interval_seconds)
         current = _resource_snapshot()
         votes.append(_interval_vote(previous, current))
         previous = current
-    if votes[0]["active"] != votes[1]["active"]:
-        time.sleep(interval_seconds)
-        current = _resource_snapshot()
-        votes.append(_interval_vote(previous, current))
     active_votes = sum(1 for vote in votes if vote["active"])
     return {
         "busy": active_votes > len(votes) // 2,

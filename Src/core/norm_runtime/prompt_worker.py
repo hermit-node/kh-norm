@@ -999,7 +999,7 @@ class PromptWorker:
                 name=name,
                 status=StepStatus.COMPLETED,
                 summary=structured_summary,
-                verification=str(metadata.get("verification") or ""),
+                verification=(str(metadata.get("verification") or "") + (" | n1-step-review:unavailable-pass" if (job.metadata or {}).get("n1_step_review_status") == "unavailable_after_2_attempts" else "")),
                 started_at=started,
                 completed_at=_utc_now(),
             )
@@ -1554,7 +1554,8 @@ class PromptWorker:
                 logging.warning("N1 final review failed twice; passed structurally valid N2 candidate task=%s", job.task_id)
                 return
 
-            candidate["user_reply"] = self._repair_final_reviewability(job, candidate)
+            # N1's model failed, not N2's verified candidate. Requeue the SAME
+            # candidate for an N1-only retry; do not rewrite it via N2.
             candidate = validate_final_candidate(candidate)
             metadata["n1_processing_failures"] = failures
             metadata["last_n1_processing_failure"] = str((n1_result or {}).get("reason") or "N1 could not process final candidate")
@@ -1564,7 +1565,7 @@ class PromptWorker:
             retry_summary = json.dumps({
                 "schema_version": PROTOCOL_VERSION, "kind": "n1_final_review_processing_retry",
                 "processing_failure": failures, "next_review_try": failures + 1,
-                "instruction": "Check formatting, structure, wording, nesting, and unnecessary complexity; preserve the same semantic work.",
+                "instruction": "Retry the N1 evaluation of this unchanged validated candidate; do not regenerate N2 work.",
             }, ensure_ascii=False)
             if self.durable:
                 self.durable.checkpoint_step(StepResult(
@@ -1574,7 +1575,7 @@ class PromptWorker:
                 ))
             self.queue.ack(redis_id)
             self.queue.enqueue(job)
-            logging.warning("N1 final review processing failure; N2 reviewability repair queued task=%s failure=%s/2", job.task_id, failures)
+            logging.warning("N1 final review processing failure; same candidate checkpointed and requeued for N1-only review task=%s failure=%s/2", job.task_id, failures)
             return
 
         # A successful N1 review resets the processing-failure streak for this candidate cycle.
@@ -2091,6 +2092,8 @@ class PromptWorker:
         mutations = 0
         verified_mutations = 0
         distinct_targets: set[str] = set()
+        distinct_observations: set[str] = set()
+        repeated_observations = 0
         for item in evidence:
             if not isinstance(item, dict):
                 continue
@@ -2100,6 +2103,17 @@ class PromptWorker:
             path = str(result.get("path") or arguments.get("path") or "").strip()
             if path:
                 distinct_targets.add(path)
+            if result.get("ok"):
+                # An unchanged observation repeated ten times is one piece of
+                # evidence, not ten advancements. Include content/hash and the
+                # request so changed files or distinct offsets count separately.
+                observation_args = {k: v for k, v in arguments.items() if k not in {"n1_need", "n1_target"}}
+                digest = json.dumps({"tool": tool, "arguments": observation_args, "result": result},
+                                    sort_keys=True, default=str, ensure_ascii=False)
+                key = __import__("hashlib").sha256(digest.encode("utf-8")).hexdigest()
+                if key in distinct_observations:
+                    repeated_observations += 1
+                distinct_observations.add(key)
             if result.get("ok") and (tool in {"write_file", "replace_text"} or result.get("file_mutation")):
                 mutations += 1
             if bool(item.get("deterministic_verification")) and result.get("ok"):
@@ -2112,6 +2126,8 @@ class PromptWorker:
             "verified_mutations": verified_mutations,
             "mutations": mutations,
             "distinct_targets": len(distinct_targets),
+            "distinct_observations": len(distinct_observations),
+            "repeated_observations": repeated_observations,
         }
         start = max(0, min(len(evidence), int(previous_evidence_count or 0)))
         recent = evidence[start:]
@@ -2133,7 +2149,7 @@ class PromptWorker:
         )
         delta = {
             key: int(metrics.get(key) or 0) - int(previous_metrics.get(key) or 0)
-            for key in ("evidence_count", "completed_steps", "verified_mutations", "mutations", "distinct_targets")
+            for key in ("evidence_count", "completed_steps", "verified_mutations", "mutations", "distinct_targets", "distinct_observations", "repeated_observations")
         }
         proposed_limit = min(hard_limit, current_limit + int(policy["extension"]))
         if self.n1_gatekeeper is None or not hasattr(self.n1_gatekeeper, "review_task_round_progress"):
@@ -2671,6 +2687,7 @@ class PromptWorker:
         return (
             f"PARENT TASK: {job.task_id}\nPARENT STEP: {job.step_id}\n\n"
             f"PARENT STEP INSTRUCTION:\n{job.prompt}\n\n"
+            f"CUMULATIVE PARENT CONTINUATION CHECKPOINT:\n{str(job.context or '')[-14000:]}\n\n"
             f"VERIFIED PRIOR STEP CONTEXT:\n{str(prior or '')[-32000:]}\n\n"
             f"COMPACT UNFINISHED THINKING NOTES:\n" + ("\n\n".join(thinking_notes) if thinking_notes else "(none)") + "\n\n"
             f"DURABLE OVERSIZED STEP SEGMENTS:\n" + ("\n\n".join(rendered) if rendered else "(no emitted answer segment was available)")
@@ -4105,17 +4122,45 @@ class PromptWorker:
                 checkpoint=budget_checkpoint, step_rounds=step_rounds, task_rounds=task_rounds,
             )
         reason = "step_round_limit"
-        checkpoint = self._continuation_checkpoint(
-            job, prompt, messages, reason, step_rounds, task_rounds
+        checkpoint, resume_metadata = self._distilled_continuation_checkpoint(
+            job, prompt, messages, reason=reason,
+            headroom={"remaining_fraction": 0.0, "prompt_eval_count": 0, "eval_count": 0, "context_limit_tokens": 0},
+            chunk_manager=chunk_manager, step_rounds=step_rounds, task_rounds=task_rounds,
         )
+        yield_count = int((job.metadata or {}).get("continuation_count", 0)) + 1
+        # At the second ordinary step yield, ask N1 whether the unresolved work
+        # merits existing sequential child-task decomposition rather than another
+        # restart. This is advisory, bounded, and never fabricates children by default.
+        if (yield_count >= 2 and yield_count % 2 == 0
+                and not (job.metadata or {}).get("stalled_decomposition_attempted")
+                and int((job.metadata or {}).get("stalled_decomposition_reviews", 0)) < 2
+                and not (job.metadata or {}).get("oversize_recovery_stage")
+                and (job.metadata or {}).get("allow_subtask", True) is not False):
+            cfg = self._runtime_config().get("worker", {}) or {}
+            depth = int((job.metadata or {}).get("subtask_depth", 0))
+            if depth < max(1, int(cfg.get("max_subtask_depth", 4))):
+                resume_metadata["stalled_decomposition_reviews"] = int((job.metadata or {}).get("stalled_decomposition_reviews", 0)) + 1
+                if self.n1_gatekeeper is not None and hasattr(self.n1_gatekeeper, "review_stalled_step"):
+                    try:
+                        decision = self.n1_gatekeeper.review_stalled_step(
+                            task_id=job.task_id, step_id=job.step_id,
+                            original_request=str((job.metadata or {}).get("original_user_prompt") or job.prompt),
+                            step_request=job.prompt, checkpoint=checkpoint,
+                            round_count=task_rounds,
+                        )
+                        if decision.get("decompose") and self.durable is not None:
+                            resume_metadata["stalled_decomposition_attempted"] = True
+                            resume_metadata["oversize_recovery_stage"] = "analysis_pending"
+                            resume_metadata["stalled_decomposition_reason"] = str(decision.get("reason") or "")[:1200]
+                            checkpoint += "\n\nN1 DECOMPOSITION DECISION: Existing sequential child-task analysis is required for the unresolved work."
+                        elif decision.get("next_action"):
+                            checkpoint += "\n\nN1 NEXT-ACTION CORRECTION: " + str(decision["next_action"])[:1500]
+                    except Exception:
+                        logging.exception("N1 stalled-step review unavailable; retain ordinary continuation")
         return {
-            "yielded": True,
-            "checkpoint": checkpoint,
-            "reason": reason,
-            "step_rounds": step_rounds,
-            "task_rounds": task_rounds,
-            "evidence": evidence,
-            "resume_metadata": {"chunked_evidence_streams": chunk_manager.snapshot_streams()},
+            "yielded": True, "checkpoint": checkpoint, "reason": reason,
+            "step_rounds": step_rounds, "task_rounds": task_rounds,
+            "evidence": evidence, "resume_metadata": resume_metadata,
         }
 
     def _verify_pending(self, job: PromptJob, pending: dict[str, str], tools) -> list[dict]:
@@ -4267,8 +4312,10 @@ class PromptWorker:
             f"structured step verifier failed after 3 attempts: {last_error}"
         )
 
-    def _n1_step_alignment(self, job: PromptJob, answer: str, evidence: list[dict]) -> tuple[bool, list[str]]:
-        """N1 independently checks user/task/step fidelity after N2's verifier passes."""
+    def _n1_step_alignment(
+        self, job: PromptJob, answer: str, evidence: list[dict], *, verified_by_n2: bool = False,
+    ) -> tuple[bool, list[str]]:
+        """N1 checks scope; fail-open only for a previously N2-verified candidate."""
         gate = getattr(self, "n1_gatekeeper", None)
         if gate is None or not hasattr(gate, "judge_step_answer"):
             return True, []
@@ -4282,8 +4329,91 @@ class PromptWorker:
             evidence=self._evidence_text(evidence),
         )
         if judgment.get("processing_failed"):
-            # Do not silently mark a step accepted when its required N1 gate failed.
-            raise VerifierProtocolError("N1 step alignment check could not complete; submission has not been accepted")
+            if not verified_by_n2:
+                raise VerifierProtocolError("N1 step alignment unavailable without prior N2 verification")
+            # Archive the entire known review state in the existing lossless
+            # PostgreSQL context-slice store BEFORE any retry model generation.
+            # Keep the small task-step checkpoint as an index, not a second
+            # truncated copy of the evidence.
+            durable = getattr(self, "durable", None)
+            if durable is None or not hasattr(durable, "record_context_slice") or not hasattr(durable, "context_slice"):
+                raise VerifierProtocolError("N1 review retry requires the existing durable context-slice store")
+            prior_progress = ""
+            if hasattr(durable, "completed_step_context"):
+                prior_progress = durable.completed_step_context(job.task_id, job.step_id, max_chars=None)
+            archived_state = [
+                {"role": "user", "invoke_source": "user", "kind": "original_request",
+                 "content": str(meta.get("original_user_prompt") or "")},
+                {"role": "system", "invoke_source": "system", "kind": "task_and_step",
+                 "content": json.dumps({
+                     "primary_task": str(meta.get("task_user_prompt") or meta.get("original_user_prompt") or ""),
+                     "step_prompt": str(job.prompt or ""),
+                     "verification_requirement": str(meta.get("verification") or ""),
+                 }, ensure_ascii=False)},
+                {"role": "assistant", "invoke_source": "n2", "kind": "verified_candidate", "content": str(answer)},
+                {"role": "tool", "invoke_source": "system", "kind": "observed_evidence",
+                 "content": json.dumps(evidence, ensure_ascii=False, default=str)},
+                {"role": "system", "invoke_source": "system", "kind": "execution_progress",
+                 "content": json.dumps({"working_context": job.context, "job_metadata": meta,
+                                        "previous_steps": prior_progress}, ensure_ascii=False, default=str)},
+            ]
+            slice_index = durable.record_context_slice(
+                job.task_id, job.step_id, archived_state, reason="n1_step_review_processing_retry"
+            )
+            stored = durable.context_slice(job.task_id, job.step_id, slice_index)
+            if not isinstance(stored, dict) or stored.get("messages") != archived_state:
+                raise VerifierProtocolError("N1 retry context-slice readback did not match the archived state")
+            checkpoint = {
+                "kind": "n1_step_review_processing_retry",
+                "n2_structured_verifier": "accepted",
+                "context_slice_index": slice_index,
+                "n1_first_failure": str(judgment.get("reason") or "review unavailable"),
+                "attempts": 1,
+            }
+            durable.checkpoint_step(StepResult(
+                task_id=job.task_id, step_id=job.step_id,
+                name=str((job.metadata or {}).get("step_name") or job.step_id),
+                status=StepStatus.RUNNING, summary=json.dumps(checkpoint, ensure_ascii=False),
+                verification="n1-step-review:processing-retry",
+                started_at=_utc_now(), completed_at=_utc_now(),
+            ))
+            # Summarize the *read-back*, not an uncommitted in-memory candidate.
+            # This is deterministic and bounded: a malfunctioning N1 need not
+            # perform another expensive model generation just to summarize its
+            # own failure. N1 performs the substantive judgment on the fresh call.
+            source = stored["messages"]
+            saved_request = source[0]["content"]
+            saved_scope = json.loads(source[1]["content"])
+            saved_candidate = source[2]["content"]
+            saved_evidence = json.loads(source[3]["content"])
+            progress = json.loads(source[4]["content"])
+            tool_names = [str(item.get("tool") or "") for item in saved_evidence if isinstance(item, dict)]
+            handoff = (
+                "This is attempt 2 of the same N1 step review after a model-processing failure. "
+                "Do not repeat N2's completed work. The N2 structured verifier already accepted this exact candidate; "
+                "that does NOT constitute N1 approval. Independently compare the original request, step criteria, "
+                "candidate and evidence supplied above. Return ACCEPT or specific actionable RETRY instructions.\n"
+                f"First review failure: {checkpoint['n1_first_failure']}\n"
+                f"Lossless PostgreSQL archive: task_context_slices task_id={job.task_id} "
+                f"step_id={job.step_id} slice_index={slice_index}\n"
+                f"Previous-step progress summary: {str(progress.get('previous_steps') or '')[:1600]}\n"
+                f"Saved working context: {str(progress.get('working_context') or '')[:1600]}\n"
+                f"Observed evidence records: {len(saved_evidence)}; tool names: {', '.join(tool_names[-18:])[:850]}\n"
+                f"N2 candidate: archived in full, {len(saved_candidate)} characters, unchanged."
+            )
+            logging.warning("N1 step review failed; checkpointed verified candidate and retrying N1 only task=%s step=%s", job.task_id, job.step_id)
+            judgment = gate.judge_step_answer(
+                original_request=saved_request,
+                task_request=str(saved_scope["primary_task"]),
+                step_prompt=str(saved_scope["step_prompt"]),
+                verification_requirement=str(saved_scope["verification_requirement"]),
+                candidate=saved_candidate, evidence=self._evidence_text(saved_evidence), review_handoff=handoff,
+            )
+            if judgment.get("processing_failed"):
+                meta["n1_step_review_status"] = "unavailable_after_2_attempts"
+                job.metadata = meta
+                logging.warning("N1 review failed twice; passing through independently N2-verified candidate task=%s step=%s (NOT an N1 acceptance)", job.task_id, job.step_id)
+                return True, []
         if str(judgment.get("decision")) == "accept":
             return True, []
         correction = str(judgment.get("retry_instruction") or "").strip()
@@ -4297,7 +4427,7 @@ class PromptWorker:
         for cycle in range(1, 4):
             accepted, issues, report = self._request_verdict(original_prompt, answer, [])
             if accepted:
-                accepted, issues = self._n1_step_alignment(job, answer, [])
+                accepted, issues = self._n1_step_alignment(job, answer, [], verified_by_n2=True)
             self._record_verifier_attempt(job, cycle, answer, report, accepted)
             if accepted:
                 return answer
@@ -4325,7 +4455,7 @@ class PromptWorker:
         for cycle in range(1, 4):
             accepted, issues, report = self._request_verdict(original_prompt, answer, evidence)
             if accepted:
-                accepted, issues = self._n1_step_alignment(job, answer, evidence)
+                accepted, issues = self._n1_step_alignment(job, answer, evidence, verified_by_n2=True)
             self._record_verifier_attempt(job, cycle, answer, report, accepted)
             if accepted:
                 self._retire_verified_injections(job, report, evidence)
@@ -4392,7 +4522,10 @@ class PromptWorker:
         """Archive lossless recent context in PostgreSQL, then ask N1 for the applicable continuation."""
         cfg = self._runtime_config().get("context_budget", {}) or {}
         tail_count = max(1, min(32, int(cfg.get("checkpoint_archive_messages", 8))))
-        tail = list(archived_messages[-tail_count:])
+        # Save the complete slice losslessly, not merely its last few messages.
+        # Only the bounded *model view* is reduced; PostgreSQL remains recoverable.
+        full_slice = list(archived_messages)
+        tail = full_slice[-tail_count:]
         archive_reference = ""
         slice_index = 0
         source_messages = tail
@@ -4400,7 +4533,7 @@ class PromptWorker:
             slice_index = self.durable.record_context_slice(
                 job.task_id,
                 job.step_id,
-                tail,
+                full_slice,
                 reason=reason,
                 prompt_eval_count=int(headroom.get("prompt_eval_count") or 0),
                 eval_count=int(headroom.get("eval_count") or 0),
@@ -4413,7 +4546,7 @@ class PromptWorker:
             if hasattr(self.durable, "context_slice"):
                 archived = self.durable.context_slice(job.task_id, job.step_id, slice_index)
                 if isinstance(archived, dict) and isinstance(archived.get("messages"), list):
-                    source_messages = list(archived["messages"])
+                    source_messages = list(archived["messages"])[-tail_count:]
 
         retained = chunk_manager.retained_summary()
         checkpoint = ""
@@ -4425,6 +4558,7 @@ class PromptWorker:
                     archived_messages=source_messages,
                     retained_evidence=retained,
                     archive_reference=archive_reference,
+                    prior_checkpoint=str(job.context or "")[:14000],
                 ).strip()
             except Exception:
                 logging.exception(
@@ -4435,6 +4569,10 @@ class PromptWorker:
             checkpoint = self._continuation_checkpoint(
                 job, prompt, source_messages, reason, step_rounds, task_rounds
             )
+            # A failed distillation must not erase the checkpoint from a prior
+            # slice. Preserve it alongside the observed new material.
+            if str(job.context or "").strip():
+                checkpoint += "\n\nPRIOR VERIFIED CONTINUATION STATE:\n" + str(job.context)[-14000:]
         if retained and "Retained chunk evidence:" not in checkpoint:
             checkpoint += "\n\nRetained chunk evidence:\n" + retained
         resume_metadata = {

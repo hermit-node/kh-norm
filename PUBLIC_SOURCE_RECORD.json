@@ -1,12 +1,14 @@
 {
-  "version": "0.55.7",
-  "variant": "",
-  "tag": "v0.55.7",
-  "source_archive_sha256": "bd27b80a7db7a36e5520f7ca61b3deb0997e9a00f5f8f60a04a28960813781e7",
-  "source_archive": "0.55.7--release--bd27b80a7db7.zip",
+  "version": "0.55.8",
+  "variant": "continuity r3",
+  "tag": "v0.55.8-continuity-r3",
+  "source_archive_sha256": "1fc499346d708defedbbd1aed7d574561baefdc3371bf57f826972fc303b9404",
+  "source_archive": "0.55.8--continuity_r3--1fc499346d70.zip",
   "quality": "static/CLI PASS, historical",
-  "known_issues": [],
-  "published_source_files": 236,
+  "known_issues": [
+    "source-only"
+  ],
+  "published_source_files": 239,
   "omitted_paths": [
     "config/network-map.json",
     "config/plugins.ini",

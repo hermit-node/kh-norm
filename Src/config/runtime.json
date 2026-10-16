@@ -63,7 +63,13 @@
         "temperature": 0.0,
         "timeout_seconds": 720
       },
-      "final_review": {
+      "step_review": {
+      "num_predict": 6000,
+      "think": true,
+      "temperature": 0.0,
+      "timeout_seconds": 300
+    },
+    "final_review": {
         "num_predict": 7500,
         "think": true,
         "temperature": 0.0,

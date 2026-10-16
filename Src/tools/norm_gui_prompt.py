@@ -674,8 +674,14 @@ def main() -> int:
                     live_items, runtime_phase = enrich_queue_with_runtime(ep, live_items)
                     items = dispatcher.uncertain_snapshot()
                 except Exception as exc:
-                    print(f"Cannot read the full queue: {exc}")
+                    print(f"Cannot read the GUI delivery queue: {exc}")
                     continue
+                queue_url = ep["busy"].rsplit("/status/busy", 1)[0] + "/status/queue-full"
+                try:
+                    durable_queue = get_json(queue_url, timeout=20)
+                except Exception as exc:
+                    durable_queue = {"status": "partial", "count": 0, "tasks": [],
+                                     "errors": [f"Norm worker/durable inventory unavailable: {type(exc).__name__}: {exc}"]}
                 print(f"LIVE QUEUE: {len(live_items)} queued/in-flight entry(s)  runtime_phase={runtime_phase}")
                 for item in live_items:
                     print(json.dumps(item, indent=2, ensure_ascii=False))
@@ -683,7 +689,12 @@ def main() -> int:
                 print(f"PARKED / UNCERTAIN: {len(items)} delivery record(s)")
                 for item in items:
                     print(json.dumps(item, indent=2, ensure_ascii=False))
-                print("Read-only snapshot; nothing retried or changed. Repeated prompt IDs are delivery attempts for the same prompt.")
+                print(f"NORM WORKER/DURABLE TASKS: {durable_queue.get('count', 0)} task(s) status={durable_queue.get('status')}")
+                for item in durable_queue.get("tasks", []):
+                    print(json.dumps(item, indent=2, ensure_ascii=False))
+                for issue in durable_queue.get("errors", []):
+                    print(f"WARNING: queue inventory incomplete: {issue}")
+                print("Read-only snapshot of GUI ingress, parked/uncertain delivery, all worker queue streams, and durable running/failed/suppressed tasks; nothing retried or changed.")
                 continue
             if lowered == "/queue" or lowered.startswith("/queue "):
                 parts = text.split()

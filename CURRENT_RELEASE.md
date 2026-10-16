@@ -1,6 +1,6 @@
-# Norm 0.55.7
+# Norm 0.55.8 - continuity r3
 
-Original archive SHA-256: bd27b80a7db7a36e5520f7ca61b3deb0997e9a00f5f8f60a04a28960813781e7
+Original archive SHA-256: 1fc499346d708defedbbd1aed7d574561baefdc3371bf57f826972fc303b9404
 
 Historical assessment: static/CLI PASS, historical
 
@@ -8,6 +8,6 @@ Omitted private paths: config/network-map.json, config/plugins.ini, config/setti
 
 Sanitized paths: core/norm_main.py, core/norm_runtime/aiohttp_host.py
 
-Historical caveats: 
+Historical caveats: source-only
 
 Public source snapshot is not identical to the original ZIP or guaranteed installable.

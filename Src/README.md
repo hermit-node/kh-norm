@@ -1,3 +1,31 @@
+### 0.55.8 continuity/supervision update (2026-10-09; source-only, not live-validated)
+
+- Ordinary 16-round step yields now use the existing PostgreSQL context-slice archive and N1 compact continuation handoff, preserving the previous cumulative checkpoint and negative findings across successive slices. The original task stays authoritative and raw execution remains recoverable.
+- Formal plan verification routes through the existing N1 Ollama client (same loaded model, N1 agent policy). N2 still drafts and performs its bounded pre-submission plan check.
+- Repeated identical file/directory reads and equivalent simple `git log` investigations are bounded by N1 per task/step; distinct file offsets and other Git queries remain usable. Repeated tool observations are reported separately from distinct evidence during task-budget reviews.
+- Repeated ordinary step-round yields prompt a bounded N1 stalled-step check. Only a positive substantive decomposition decision invokes the existing oversize-recovery child-task machinery; the default remains simple continuation.
+- **Important diagnostic caveat:** the observed ineffective run used Laguna, whereas restarting Norm returns the canonical `norm` model. Model quality and reset working state were uncontrolled variables. The observed loop does NOT independently prove these orchestrator changes are needed or effective. Run the same task on both models under controlled conditions before attributing causality.
+- Does not change installed configuration, model selection, installer, plug-in files, or compiled StegoSplit. Tests are offline/mock tests, not a live Windows end-to-end validation.
+
+### 0.55.8 review-retry checkpoint-handoff revision (2026-10-09)
+
+- The N1 step-alignment retry now archives original request, primary task, step acceptance criteria, **unchanged N2-verified candidate**, full observed evidence, job metadata/working context, and previously completed-step progress in the existing PostgreSQL `task_context_slices` store.
+- The existing `checkpoint_step()` records its archive pointer and first failure before the retry. The review reconstructs its inputs from the saved PostgreSQL slice and receives a compact, deterministic handoff (including progress and archive reference). No additional summarizer-model call or second Python agent is started.
+- N1's actual accept/retry decision remains independent; after a second *processing* failure, pass-through retains the `n1_step_review_status=unavailable_after_2_attempts` marker. Failure to persist/read back the checkpoint is a checkpoint failure, **not** grounds for silently reporting N1 approval.
+- This is a synchronous fresh N1 model invocation using a persisted/reloaded snapshot, not an independent crash-proof review-only queue consumer. A hard process crash during this retry still relies on the broader existing queue recovery path; that path is not modified here.
+- `agents.n1.task_budget_review.num_predict` controls N1's progress-extension review (fallback 900); `agents.n1.step_review.num_predict` controls step alignment (default 6000, capped at 10000); the 900-token command classifier is a distinct hardcoded call. No existing runtime config budgets were modified for this revision.
+
+## Norm 0.55.8 — N1 bounded-review recovery, queue-full visibility, and richer idle detection (2026-10-09)
+
+- Based solely on the user-supplied 0.55.7 CLEAN portable source. The original compiled StegoSplit/Auth/Key binaries, their plugin manifests, and plugin catalog identities remain unchanged.
+- N1 step alignment remains `think=true`; default generation is 6,000 tokens with a 10,000-token hard cap and 300-second timeout cap, even if a preserved local configuration requests 86,000 output tokens. These are output/time bounds, NOT a change to the Ollama context window.
+- Only AFTER the original N2 structured step verifier accepts a candidate: N1 processing failure checkpoints the exact candidate and evidence in existing PostgreSQL task-step storage, retries N1 once, then passes through the original N2-verified candidate if N1 remains unavailable. This is a synchronous review restart following the durable checkpoint, not a second worker or process. The step verification record indicates N1 was unavailable; a real N1 rejection still returns specific repairs to N2.
+- N1 final verification now requeues the SAME candidate for its one existing processing-failure retry instead of asking N2 to rewrite it merely to make the failed review easier. The pre-existing deterministic artifact-safety precondition for review-failure pass-through remains intact.
+- `/queue-full` now merges GUI ingress and uncertain deliveries with an explicit worker/Redis + PostgreSQL read-only inventory (live/pending, parked retries, escalations, dead letters, running, failed and suppressed; flags resumability and partial probe failures). New endpoint: `/status/queue-full` on Norm's activity API.
+- Idle/resource observation now uses three intervals and measures CPU, GPU compute and GPU memory-controller activity; tracked HTTP/model/worker/queue signals retain priority. Pure external resource activity retains its existing 30-second grace rule and suppression checks.
+- Preserved the shared-model N1/N2 setup, first accepted answer, existing recovery framework, voice profile and all compiled plugins. No new Python verifier/agent, no installer changes.
+- Tests: focused isolated source tests. NO live Windows/Ollama/PostgreSQL/Redis execution, no rebuilt Norm EXE or Installer EXE; do not describe this as live-validated. A sudden process crash during the synchronous N1 retry is handled by existing queue recovery, not a new N1-only replay-after-process-loss guarantee.
+
 ## Norm 0.55.7 — explicit N1/N2 invoke-source provenance (2026-10-08)
 
 - Every typed work-request JSON includes `invoke_source` and `invoke_target`; only genuine operator-ingress prompts are attributed to `user`. Internal generated steps remain `n1`, `n2`, or `system`, regardless of quoted text.

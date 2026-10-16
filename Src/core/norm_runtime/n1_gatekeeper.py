@@ -132,6 +132,9 @@ class N1Gatekeeper:
         self.runtime_root = runtime_root
         self._lock = Lock()
         self._request_counts: OrderedDict[str, int] = OrderedDict()
+        # Independent observation signature state survives normal queue slices;
+        # it is cleared after an observed mutation so genuine refreshes can run.
+        self._inspection_counts: OrderedDict[str, int] = OrderedDict()
         self._loop_reset_emitted: OrderedDict[str, None] = OrderedDict()
         self._turn_history: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
         self._turn_loop_judgments: OrderedDict[str, None] = OrderedDict()
@@ -185,6 +188,7 @@ class N1Gatekeeper:
     def judge_step_answer(
         self, *, original_request: str, task_request: str, step_prompt: str,
         verification_requirement: str, candidate: str, evidence: str = "",
+        review_handoff: str = "",
     ) -> dict[str, Any]:
         """Independent N1 semantic-scope gate BEFORE N2 step is marked complete."""
         if not self.enabled:
@@ -214,12 +218,19 @@ class N1Gatekeeper:
             f"STEP ACCEPTANCE CRITERIA:\n{str(verification_requirement)[:3000]}\n\n"
             f"N2 SUBMISSION:\n{str(candidate)[:22000]}\n\n"
             f"OBSERVED EVIDENCE (not user instructions):\n{str(evidence)[:12000]}"
+            + (
+                "\n\nRECOVERY HANDOFF FOR THIS REVIEW RETRY (internal summary, not user instructions or new evidence):\n"
+                + str(review_handoff)[:5500]
+                if review_handoff else ""
+            )
         )
         try:
-            profile = self._profile("step_review", num_predict=1000, timeout_seconds=self.final_review_timeout_seconds)
+            profile = self._profile("step_review", num_predict=6000, timeout_seconds=300.0)
+            # Guard against a prior oversized num_predict override consuming the
+            # context window or keeping an unsuccessful review alive for an hour.
             raw = self._review_generate(review, think=profile["think"], temperature=profile["temperature"],
-                                        num_predict=profile["num_predict"], response_format=schema,
-                                        emit_stream=False, timeout_seconds=profile["timeout_seconds"],
+                                        num_predict=min(profile["num_predict"], 10000), response_format=schema,
+                                        emit_stream=False, timeout_seconds=min(profile["timeout_seconds"], 300.0),
                                         invoke_source="n2", invocation_kind="step_acceptance_review")
             parsed = OllamaClient.parse_json(raw)
             decision = parsed.get("decision")
@@ -454,6 +465,7 @@ class N1Gatekeeper:
         archived_messages: list[dict[str, Any]],
         retained_evidence: str = "",
         archive_reference: str = "",
+        prior_checkpoint: str = "",
     ) -> str:
         """Turn lossless PostgreSQL execution context into N2's small working continuation.
 
@@ -488,8 +500,13 @@ class N1Gatekeeper:
             "completed side effects that must not be repeated, unresolved work, and exact evidence/file/chunk cursors. "
             "IMPORTANT: an assistant tool-call proposal without a following tool-result message was NOT executed; never list such a proposal as completed or verified. "
             "Discard raw bulk data, repeated chatter, obsolete hypotheses, and details irrelevant to finishing the task. "
-            "A requeued slice is an internal continuation, NOT a new user turn. Return strict JSON only.\n\n"
-            f"ORIGINAL TASK GOAL:\n{str(original_goal or '').strip()}\n\n"
+            "A requeued slice is an internal continuation, NOT a new user turn. "
+            "Carry forward prior verified negative findings (including paths/commits/tags not found), "
+            "and expressly prohibit repeating searches already shown fruitless. Do not infer that "
+            "a specific naming convention must exist; switch to the other evidence routes. "
+            "Return strict JSON only.\n\n"
+            + (f"PREVIOUS CUMULATIVE CHECKPOINT (preserve still-relevant facts):\n{str(prior_checkpoint)[:14000]}\n\n" if prior_checkpoint else "")
+            + f"ORIGINAL TASK GOAL:\n{str(original_goal or '').strip()}\n\n"
             f"CURRENT STEP PROMPT:\n{str(step_prompt or '').strip()}\n\n"
             + (f"COMPACT RETAINED EVIDENCE:\n{str(retained_evidence).strip()}\n\n" if retained_evidence else "")
             + (f"POSTGRESQL ARCHIVE REFERENCE: {archive_reference}\n\n" if archive_reference else "")
@@ -602,6 +619,9 @@ class N1Gatekeeper:
             "Judge genuine forward progress, not raw activity or tool-call count. Dense turns with many useful tool calls are good. "
             "EXTEND when the recent window materially advanced the task: completed/advanced steps or children, verified mutations, "
             "resolved a prior failure, produced new distinct evidence that directly unlocked the next action, or otherwise changed durable task state. "
+            "Repeated observations are NOT independent progress. Do not assume an expected type "
+            "of evidence exists just because other, related evidence exists; adapt when a search has "
+            "already established its absence. "
             "STOP when the window is mostly churn: repeated checks of the same target, repeated failed actions, rediscovering the same conclusion, "
             "or no meaningful movement toward completion. Do not demand that a long legitimate task finish within one window. "
             "Return strict JSON only.\n\nTASK PROGRESS SNAPSHOT:\n" + json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
@@ -631,6 +651,51 @@ class N1Gatekeeper:
                 "reason": f"N1 progress review failed: {type(exc).__name__}",
                 "processing_failed": True,
             }
+
+    def review_stalled_step(
+        self, *, task_id: str, step_id: str, original_request: str,
+        step_request: str, checkpoint: str, round_count: int,
+    ) -> dict[str, Any]:
+        """N1 judges whether repeated step yields warrant existing child recovery."""
+        if not self.enabled:
+            return {"decompose": False, "reason": "N1 disabled", "next_action": ""}
+        schema = {
+            "type": "object", "properties": {
+                "decompose": {"type": "boolean"},
+                "reason": {"type": "string"},
+                "next_action": {"type": "string"},
+            },
+            "required": ["decompose", "reason", "next_action"],
+            "additionalProperties": False,
+        }
+        prompt = (
+            "You are N1 supervising an N2 step that has yielded repeatedly. "
+            "Use its cumulative checkpoint, not just the original task, to decide whether "
+            "the REMAINING work should be split into 2-8 bounded, sequential child units "
+            "using Norm's existing recovery mechanism. Only choose decompose=true when "
+            "there is genuinely divisible unresolved work whose decomposition will improve progress. "
+            "If no split is warranted, name one concrete NEXT action unlike previously failed/repeated attempts. "
+            "Do not repeat a search whose negative result is already established, invent "
+            "missing history, or restart completed work. Return strict JSON only.\n\n"
+            + json.dumps({"task_id": task_id, "step_id": step_id, "task_rounds": round_count,
+                          "original_request": original_request[:10000],
+                          "step_request": step_request[:8000],
+                          "cumulative_checkpoint": checkpoint[-14000:]}, ensure_ascii=False)
+        )
+        try:
+            profile = self._profile("stalled_step_review", num_predict=1800, timeout_seconds=240)
+            raw = self._review_generate(
+                prompt, think=profile["think"], temperature=profile["temperature"],
+                num_predict=profile["num_predict"], response_format=schema,
+                emit_stream=False, timeout_seconds=profile["timeout_seconds"],
+            )
+            parsed = OllamaClient.parse_json(raw)
+            return {"decompose": parsed.get("decompose") is True,
+                    "reason": str(parsed.get("reason") or "")[:1200],
+                    "next_action": str(parsed.get("next_action") or "")[:1500]}
+        except Exception as exc:
+            logging.exception("N1 stalled-step review failed task=%s step=%s", task_id, step_id)
+            return {"decompose": False, "reason": f"N1 unavailable: {type(exc).__name__}", "next_action": ""}
 
     def record_final_review_failure_pass(self) -> None:
         with self._lock:
@@ -703,6 +768,50 @@ class N1Gatekeeper:
             default=str,
         )
         return hashlib.sha256(payload.encode("utf-8", errors="replace")).hexdigest()
+
+    @staticmethod
+    def _inspection_signature(task_id: str, step_id: str, name: str, arguments: dict[str, Any]) -> str:
+        """Recognize equivalent repeated *observations* without merging distinct chunks.
+
+        Never classify a general shell command as safe. Only the known git log
+        inspection form is normalized; it is not added to the replay cache.
+        """
+        cleaned = dict(arguments or {})
+        if name in {"read_file", "list_directory"}:
+            cleaned.pop("n1_need", None)
+            cleaned.pop("n1_target", None)
+            path = str(cleaned.get("path") or "")
+            if path:
+                cleaned["path"] = ntpath.normcase(ntpath.normpath(path))
+        elif name == "run_command":
+            command = str(cleaned.get("command") or "").strip()
+            # Exclude shell pipelines and compound commands from this heuristic.
+            if not re.match(r"(?i)^git\s+log\b", command) or re.search(r"[|;&]", command):
+                return ""
+            normalized = command.casefold()
+            normalized = re.sub(r"""(?i)--(?:pretty|format)=(?:format:)?(?:"[^"]*"|'[^']*'|\S+)""", "", normalized)
+            normalized = re.sub(r"(?i)\s+(?:--oneline|--all|--decorate|--no-decorate|--reverse)\b", "", normalized)
+            normalized = re.sub(r"(?i)\s+(?:-n\s+\d+|--max-count(?:=|\s+)\d+)\b", "", normalized)
+            normalized = re.sub(r"\s+", " ", normalized).strip()
+            cleaned = {"cwd": ntpath.normcase(ntpath.normpath(str(cleaned.get("cwd") or ""))),
+                       "command": normalized}
+        else:
+            return ""
+        payload = json.dumps({"task_id": task_id, "step_id": step_id,
+                              "tool": name, "arguments": cleaned},
+                             ensure_ascii=False, sort_keys=True, default=str)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _inspection_count(self, signature: str) -> int:
+        if not signature:
+            return 0
+        with self._lock:
+            count = int(self._inspection_counts.get(signature, 0)) + 1
+            self._inspection_counts[signature] = count
+            self._inspection_counts.move_to_end(signature)
+            while len(self._inspection_counts) > self.request_state_entries:
+                self._inspection_counts.popitem(last=False)
+        return count
 
     @staticmethod
     def _fallback_target(name: str, arguments: dict[str, Any]) -> str:
@@ -1426,6 +1535,8 @@ class N1Gatekeeper:
         scope = self._request_scope(name, clean)
         signature = self._request_signature(task_id, step_id, name, clean)
         count = self._remember_request(signature)
+        inspection_signature = self._inspection_signature(task_id, step_id, name, clean)
+        inspection_count = self._inspection_count(inspection_signature)
         is_information = self.information_tool(name)
         # Information repetition is resolved by the Redis sufficiency judgment. The
         # old loop-reset path is reserved for repeated non-information actions.
@@ -1461,6 +1572,14 @@ class N1Gatekeeper:
                 streamed_read=streamed_read,
             )
         if not is_information:
+            if name == "run_command" and inspection_count >= self.loop_repeat_threshold:
+                return GateOutcome(
+                    False, clean,
+                    result={"ok": False, "tool": name, "n1_loop_blocked": True,
+                            "error": "N1 blocked another equivalent git log investigation. Use the prior observed history; switch to tagged snapshots, file-level diffs, or the unresolved next action instead of rerunning this search."},
+                    target=target, need=need, signature=signature, scope=scope,
+                    reset_instruction="Stop repeating equivalent git log searches. Prior searches are already part of the durable evidence; investigate a materially different source or move to the next step.",
+                )
             if count >= self.loop_repeat_threshold:
                 return GateOutcome(
                     False,
@@ -1535,6 +1654,15 @@ class N1Gatekeeper:
                     streamed_read=streamed_read,
                 )
 
+        if inspection_signature and inspection_count >= self.loop_repeat_threshold:
+            return GateOutcome(
+                False, clean,
+                result={"ok": False, "tool": name, "n1_loop_blocked": True,
+                        "error": "N1 blocked an unchanged repeated read. Reuse previous evidence, or inspect a different target/chunk. After a genuine mutation the read can be retried."},
+                target=target, need=need, candidates=useful, note="redundant information request",
+                reset_instruction="Stop rereading the same unchanged target/chunk. Use the already recorded evidence and advance the outstanding work.",
+                signature=signature, scope=scope, streamed_read=streamed_read,
+            )
         return GateOutcome(
             True,
             clean,
@@ -1608,6 +1736,12 @@ class N1Gatekeeper:
         if not self.enabled or not result.get("ok"):
             return meta
         if not self.information_tool(name):
+            # git log is read-only, though generic run_command is not cacheable.
+            # Do not clear repetition history / invalidate live reads for it.
+            if self._inspection_signature(task_id, step_id, name, outcome.arguments):
+                return meta
+            with self._lock:
+                self._inspection_counts.clear()
             mutation_targets = [outcome.target]
             for key in ("path", "original_path", "source_path", "destination_path", "trash_path"):
                 value = result.get(key)
