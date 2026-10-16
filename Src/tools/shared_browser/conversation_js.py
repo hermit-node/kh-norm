@@ -30,8 +30,8 @@ START = r'''(() => {
     for (const a of Array.isArray(meta.attachments)?meta.attachments:[]) {
       if (!a||typeof a!=='object') continue;
       attachments.push({kind:(a.mime_type||'').startsWith('image/')?'image':'file',
-        name:a.name||a.file_name||'attachment',id:a.id||a.file_id||null,
-        url:a.download_url||a.url||null,mime:a.mime_type||null});
+        name:a.name||a.file_name||'attachment',id:String(a.id||a.file_id||a.asset_pointer||'').replace(/^sediment:\/\//,'')||null,
+        url:a.download_url||a.downloadUrl||a.url||a.public_url||null,mime:a.mime_type||a.mime||null});
     }
     for (const p of parts) {
       if (p&&typeof p==='object'&&p.content_type==='image_asset_pointer') {
@@ -39,11 +39,26 @@ START = r'''(() => {
           url:p.download_url||null,mime:'image/png'});
       }
     }
+    // ChatGPT commonly lists the same image twice: metadata file_... and
+    // multimodal sediment://file_... . Preserve one asset per distinct ID.
+    const canonical = new Map(), anonymous = [];
+    for (const a of attachments) {
+      const key=String(a.id||'').replace(/^sediment:\/\//,'').split(/[?#]/)[0];
+      if (!key) {anonymous.push(a);continue;}
+      a.id=key;
+      const prev=canonical.get(key);
+      if (!prev) {canonical.set(key,a);continue;}
+      if (a.kind==='image') prev.kind='image';
+      if (!prev.url && a.url) prev.url=a.url;
+      if ((!prev.mime||prev.mime==='image/png') && a.mime) prev.mime=a.mime;
+      if ((!prev.name||prev.name==='Image') && a.name) prev.name=a.name;
+    }
+    const distinctAttachments=[...canonical.values(),...anonymous];
     let content=parts.map(formatPart).filter(Boolean).join('\n\n');
     if (!content) content=text(body.text)||text(body.content)||text(body.result)||text(body.summary);
     return {id:m.id||nodeId||String(idx),role:(m.author||{}).role||'unknown',
       model:meta.model_slug||meta.resolved_model_slug||'',timestamp:m.create_time||null,
-      text:content,attachments,content_type:body.content_type||'text',position:idx};
+      text:content,attachments:distinctAttachments,content_type:body.content_type||'text',position:idx};
   };
   const domFallback = () => {
     // ChatGPT can render both traditional message nodes and turn-based layouts.
@@ -157,17 +172,41 @@ START = r'''(() => {
       if (!live()) return;
       snap.messages=result.messages;snap.title=result.title||document.title;
       snap.source=result.source;snap.complete=result.complete;
-      // Resolve optional attachments in bounded batches; failure remains visible in export manifest.
-      const assets=snap.messages.flatMap(m=>m.attachments).filter(a=>a.id&&!a.url).slice(0,1500);
-      for (let start=0;start<assets.length;start+=6) {
+      // Resolve every distinct attachment once. This endpoint generally returns
+      // {url: 'https://files.oaiusercontent.com/...'}, NOT download_url.
+      // Keep signed URLs ephemeral; Python strips them from the saved JSON.
+      const groups=new Map();
+      for (const a of snap.messages.flatMap(m=>m.attachments)) {
+        const fileId=String(a.id||'').replace(/^sediment:\/\//,'').split(/[?#]/)[0];
+        if (!fileId||a.url) continue;
+        if (!groups.has(fileId)) groups.set(fileId,[]);
+        groups.get(fileId).push(a);
+      }
+      snap.attachmentResolution={requested:groups.size,resolved:0,failed:0,
+        failures:[],limited:groups.size>1500};
+      const entries=Array.from(groups.entries());
+      for (let start=0;start<entries.length;start+=4) {
         if (!live()) return;
-        await Promise.all(assets.slice(start,start+6).map(async a=>{
+        await Promise.all(entries.slice(start,start+4).map(async ([fileId,aliases])=>{
           try {
-            const fileId=String(a.id).replace(/^sediment:\/\//,'').split('?')[0];
             const info=await getJSON('/backend-api/files/download/'+encodeURIComponent(fileId)+
               '?conversation_id='+encodeURIComponent(id),headers);
-            if (typeof info.download_url==='string') a.url=info.download_url;
-          } catch (_) {}
+            const candidate=info?.download_url||info?.url||info?.downloadUrl||info?.public_url;
+            if (typeof candidate!=='string'||!candidate.trim()) throw Error('No signed asset URL');
+            const parsed=new URL(candidate,location.origin);
+            const host=parsed.hostname.toLowerCase();
+            if (parsed.protocol!=='https:' || parsed.username || parsed.password ||
+                !(['chatgpt.com','chat.openai.com','openai.com','oaistatic.com','oaiusercontent.com']
+                  .includes(host) || ['openai.com','oaistatic.com','oaiusercontent.com']
+                  .some(base=>host.endsWith('.'+base))))
+              throw Error('Unrecognized asset host');
+            aliases.forEach(a=>a.url=parsed.href);
+            snap.attachmentResolution.resolved++;
+          } catch (error) {
+            snap.attachmentResolution.failed++;
+            if (snap.attachmentResolution.failures.length<30)
+              snap.attachmentResolution.failures.push({id:fileId,reason:String(error).slice(0,160)});
+          }
         }));
       }
       if (live()) snap.state='ready';
@@ -183,7 +222,8 @@ STATUS = r'''(() => {
   const s=window.__normConversation;
   if(!s)return {state:'none'};
   return {state:s.state,source:s.source,complete:s.complete,error:s.error,
-    title:s.title,url:s.url,count:s.messages.length,pages:s.pages};
+    title:s.title,url:s.url,count:s.messages.length,pages:s.pages,
+    attachment_resolution:s.attachmentResolution||null};
 })()'''
 
 ITEM = r'''((index,start,length) => {
@@ -228,3 +268,49 @@ EARLY_AUTH_HOOK = r'''(() => {
     return original.apply(this,arguments);
   };
 })()'''
+
+# Browser-local transfer fallback for ChatGPT assets when a signed URL cannot
+# be fetched in the Python worker. Transfers are capped and chunked over the
+# existing authenticated localhost RPC; no bearer token or persistent blob.
+ASSET_START = r'''((raw) => {
+  if (!['chatgpt.com','chat.openai.com'].includes(location.hostname)) return {ok:false,error:'Wrong origin'};
+  if (!window.__normConversation || window.__normConversation.state!=='ready')
+    return {ok:false,error:'No conversation snapshot'};
+  let url;
+  try {url=new URL(raw,location.href)} catch (_) {return {ok:false,error:'Invalid URL'}}
+  const host=url.hostname.toLowerCase();
+  const safe=['chatgpt.com','chat.openai.com','openai.com','oaistatic.com','oaiusercontent.com'].includes(host) ||
+    ['openai.com','oaistatic.com','oaiusercontent.com'].some(base=>host.endsWith('.'+base));
+  if (url.protocol!=='https:' || !safe || url.username || url.password)
+    return {ok:false,error:'Asset host not permitted'};
+  if (window.__normAssetTransfer?.state==='loading') return {ok:false,error:'Asset transfer busy'};
+  const transfer={state:'loading',data:null,length:0,error:null,url:url.href};
+  window.__normAssetTransfer=transfer;
+  (async()=>{
+    try {
+      const resp=await fetch(url.href,{credentials:url.origin===location.origin?'same-origin':'omit',cache:'no-store'});
+      if (!resp.ok) throw Error('Asset HTTP '+resp.status);
+      if (Number(resp.headers.get('content-length')||0)>24*1024*1024) throw Error('Asset exceeds 24 MiB');
+      const bytes=new Uint8Array(await resp.arrayBuffer());
+      if (!bytes.length || bytes.length>24*1024*1024) throw Error('Invalid asset size');
+      if (window.__normAssetTransfer!==transfer) return;
+      transfer.data=bytes;transfer.length=bytes.length;transfer.state='ready';
+    } catch(e) {if(window.__normAssetTransfer===transfer){transfer.state='failed';transfer.error=String(e).slice(0,220)}}
+  })();
+  return {ok:true,state:'loading'};
+})'''
+ASSET_STATUS = r'''(() => {
+  const a=window.__normAssetTransfer;
+  return a?{state:a.state,length:a.length,error:a.error}:{state:'none'};
+})()'''
+ASSET_CHUNK = r'''((start,length) => {
+  const a=window.__normAssetTransfer;
+  if (!a||a.state!=='ready'||!a.data) return {error:'Asset bytes unavailable'};
+  const from=Math.max(0,Math.floor(start));
+  const size=Math.max(1,Math.min(24576,Math.floor(length)));
+  const bytes=a.data.subarray(from,from+size);
+  let raw='';for(let i=0;i<bytes.length;i+=8192)
+    raw+=String.fromCharCode(...bytes.subarray(i,i+8192));
+  return {start:from,length:a.length,base64:btoa(raw)};
+})'''
+ASSET_DROP = r'''(() => {window.__normAssetTransfer=null;return {dropped:true};})()'''

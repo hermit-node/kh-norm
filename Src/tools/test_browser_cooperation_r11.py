@@ -60,7 +60,7 @@ with tempfile.TemporaryDirectory(prefix='norm-js-r11-') as d:
         subprocess.run(['node','--check',str(file)],check=True,capture_output=True)
     test='''const fs=require('fs'),vm=require('vm'),assert=require('assert');
 const source=fs.readFileSync(process.argv[2],'utf8');
-const context={window:{},document:{title:'Test page'},
+const context={window:{},URL:URL,document:{title:'Test page'},
  location:{hostname:'chatgpt.com',origin:'https://chatgpt.com',
  href:'https://chatgpt.com/c/11111111-1111-1111-1111-111111111111',
  pathname:'/c/11111111-1111-1111-1111-111111111111'},

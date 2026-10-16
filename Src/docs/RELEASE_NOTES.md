@@ -1,3 +1,11 @@
+## 0.55.10r12a — normalized release label (2026-10-16)
+
+Renamed the existing r11r10 no-Celery browser/attachment-fidelity build to **0.55.10r12a**. No runtime, browser, installer, plugin, test or export behavior changed. Older `r11r8`, `r11r9`, and `r11r10` labels below remain historical lineage, not part of the new version. Subsequent patches should use `r12b`, `r12c`, etc., without chaining revision strings. All source integrity ledgers were rebuilt.
+
+## 0.55.10r11r10 — Local attachment export fix (2026-10-16)
+
+Based on the r11r9 no-Celery Browser Compatibility source. Resolved ChatGPT `url` vs `download_url` metadata mismatch, deduplicated multimodal image pointers, added authenticated Qt-local asset-fetch fallback, and made missing attachments explicit. Local ZIP and ReportLab PDF exports now carry actual image/files in synthetic 531-message/38-image tests. Live Qt ChatGPT verification pending. See `docs/R11R10_LOCAL_ATTACHMENT_EXPORT.md`.
+
 ## 0.55.10r11r9 — Shared browser ChatGPT compatibility (2026-10-16)
 
 Based on the exact uploaded r11r8 no-Celery portable source. Qt shared browser now starts on demand, supports sign-in popups, ChatGPT contenteditable input, conversation-focused scrolling, read-only UI diagnostics, and lazy legacy visual-PDF loading. Existing no-Celery recovery, installer and user-plugin preservation are unchanged. See `docs/R11R9_SHARED_BROWSER_COMPAT.md`. Source-only; live ChatGPT Qt session unverified.

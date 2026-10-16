@@ -64,6 +64,41 @@ def _download(url: str, destination: Path):
     return total
 
 
+def _asset_suffix(raw: bytes, mime: str | None, url: str) -> str:
+    """Name downloaded media from actual bytes rather than image pointer hints."""
+    if raw.startswith(b'\xff\xd8\xff'):return '.jpg'
+    if raw.startswith(b'\x89PNG\r\n\x1a\n'):return '.png'
+    if raw.startswith((b'GIF87a',b'GIF89a')):return '.gif'
+    if len(raw)>=12 and raw[:4]==b'RIFF' and raw[8:12]==b'WEBP':return '.webp'
+    if raw.startswith(b'%PDF-'):return '.pdf'
+    ext=Path(urlsplit(url).path).suffix.lower()
+    if ext in {'.png','.jpg','.jpeg','.gif','.webp','.svg','.pdf','.txt','.md','.zip',
+               '.docx','.xlsx','.csv','.pptx','.json'}:return ext
+    guess=mimetypes.guess_extension(str(mime or '').split(';')[0])
+    if guess in {'.png','.jpg','.jpeg','.gif','.webp','.svg','.pdf','.txt','.md','.zip',
+               '.docx','.xlsx','.csv','.pptx','.json'}:return guess
+    return '.bin'
+
+
+def _unique_attachments(message: dict) -> list[dict]:
+    """Collapse metadata and multimodal pointers to a single file per ID."""
+    unique={};anonymous=[]
+    for entry in message.get('attachments') or []:
+        a=dict(entry)
+        ident=str(a.get('id') or '').removeprefix('sediment://').split('?')[0].split('#')[0]
+        if not ident:
+            anonymous.append(a);continue
+        a['id']=ident
+        if ident not in unique:
+            unique[ident]=a;continue
+        prev=unique[ident]
+        if a.get('kind')=='image':prev['kind']='image'
+        if not prev.get('url') and a.get('url'):prev['url']=a['url']
+        if not prev.get('mime') and a.get('mime'):prev['mime']=a['mime']
+        if prev.get('name') in (None,'','Image') and a.get('name'):prev['name']=a['name']
+    return list(unique.values())+anonymous
+
+
 def _date(value) -> str:
     if value is None or value=='':return ''
     try:return datetime.fromtimestamp(float(value), tz=timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
@@ -147,7 +182,9 @@ def _pdf(messages, title: str, destination: Path, options: dict, asset_dir: Path
 
 def export_conversation(messages: list[dict], *, root: Path, title: str,
                         fmt: str='zip', options: dict | None=None,
-                        source_url: str='',complete: bool=False,source: str='dom') -> dict:
+                        source_url: str='',complete: bool=False,source: str='dom',
+                        asset_fetcher=None, allow_incomplete_assets: bool=True,
+                        attachment_resolution: dict | None=None) -> dict:
     """Create one export atomically. Caller must supply explicitly selected messages.
 
     No source credentials or tokens are included. Never claims DOM-only data is complete.
@@ -163,36 +200,83 @@ def export_conversation(messages: list[dict], *, root: Path, title: str,
     temp=Path(tempfile.mkdtemp(prefix='.norm-export-',dir=str(out)))
     asset_dir=temp/'assets';asset_dir.mkdir()
     items=json.loads(json.dumps(messages,ensure_ascii=False))
+    original_references=sum(len(m.get('attachments') or []) for m in items)
+    for message in items:
+        message['attachments']=_unique_attachments(message)
+    unique_refs=sum(len(m.get('attachments') or []) for m in items)
     manifest={'title':title,'source_url':source_url,'source':source,'complete':bool(complete),
               'selected_count':len(items),'created_at':datetime.now(timezone.utc).isoformat(),
-              'format':fmt,'options':options,'missing_assets':[],'saved_assets':[]}
+              'format':fmt,'options':options,'missing_assets':[],'saved_assets':[],
+              'history_complete':bool(complete),'attachment_references':unique_refs,
+              'duplicate_references_removed':original_references-unique_refs,
+              'attachment_resolution':attachment_resolution or {},
+              'assets_complete':None,'warnings':[]}
     try:
         seen={};count_bytes=0
         if options.get('attachments',True):
             for i,message in enumerate(items):
                 for j,a in enumerate(message.get('attachments') or []):
-                    url=a.get('url') or ''
+                    url=str(a.get('url') or '').strip()
+                    asset_id=str(a.get('id') or '')
                     if not url:
-                        manifest['missing_assets'].append({'message':i,'asset':j,'name':a.get('name'),'reason':'No resolved URL'})
+                        manifest['missing_assets'].append({'message':i+1,'asset':j+1,
+                            'id':asset_id,'name':a.get('name'),'reason':'ChatGPT did not resolve an asset URL'})
                         continue
-                    if url in seen:
-                        a['local_path']=seen[url];continue
-                    suffix=Path(urlsplit(url).path).suffix.lower()
-                    if suffix not in {'.png','.jpg','.jpeg','.gif','.webp','.svg','.pdf','.txt','.md','.zip','.docx','.xlsx'}:
-                        suffix=mimetypes.guess_extension(a.get('mime') or '') or '.bin'
+                    # A signed URL can differ for two references to the same file.
+                    # Asset ID, rather than URL, is the primary deduplication key.
+                    key='id:'+asset_id if asset_id else 'url:'+url
+                    if key in seen:
+                        a['local_path']=seen[key];continue
+                    suffix=_asset_suffix(b'',a.get('mime'),url)
                     local=f'assets/{i+1:05d}_{j+1:02d}{suffix}'
                     file=temp/local
                     try:
                         if count_bytes>=MAX_TOTAL_ASSETS:raise ValueError('Export asset budget exhausted')
-                        size=_download(url,file)
+                        try:
+                            size=_download(url,file)
+                        except Exception as direct_error:
+                            file.unlink(missing_ok=True)
+                            if asset_fetcher is None:raise
+                            try:
+                                size=asset_fetcher(url,file)
+                            except Exception as browser_error:
+                                raise RuntimeError('Direct fetch: '+str(direct_error)[:100]+
+                                                   '; browser fetch: '+str(browser_error)[:110]) from browser_error
+                        if size<=0 or size>MAX_ASSET:raise ValueError('Asset size outside 1–24 MiB range')
                         count_bytes+=size
                         if count_bytes>MAX_TOTAL_ASSETS:raise ValueError('Export asset budget exceeded')
-                        a['local_path']=local;seen[url]=local
-                        manifest['saved_assets'].append({'path':local,'bytes':size})
+                        with file.open('rb') as probe: signature=probe.read(24)
+                        expected_image=a.get('kind')=='image' or str(a.get('mime') or '').startswith('image/')
+                        # The API's MIME hint is not proof the response contains an image.
+                        # In particular a 403/HTML error body must never be packaged as PNG.
+                        image_signature=(signature.startswith(b'\xff\xd8\xff') or
+                            signature.startswith(b'\x89PNG\r\n\x1a\n') or
+                            signature.startswith((b'GIF87a',b'GIF89a')) or
+                            (len(signature)>=12 and signature[:4]==b'RIFF' and signature[8:12]==b'WEBP'))
+                        svg_signature=signature.lstrip().lower().startswith((b'<svg',b'<?xml')) and \
+                            'svg' in str(a.get('mime') or '').lower()
+                        if expected_image and not (image_signature or svg_signature):
+                            raise ValueError('Image URL returned bytes without a recognized image signature')
+                        inferred=_asset_suffix(signature,a.get('mime'),url)
+                        if inferred!=suffix:
+                            updated=file.with_suffix(inferred)
+                            file.rename(updated);file=updated
+                            local='assets/'+file.name
+                        a['local_path']=local;seen[key]=local
+                        manifest['saved_assets'].append({'path':local,'bytes':size,'id':asset_id,'kind':a.get('kind')})
                     except Exception as exc:
                         file.unlink(missing_ok=True)
-                        manifest['missing_assets'].append({'message':i,'asset':j,
-                            'name':a.get('name'),'reason':str(exc)[:180]})
+                        manifest['missing_assets'].append({'message':i+1,'asset':j+1,
+                            'id':asset_id,'name':a.get('name'),'reason':str(exc)[:260]})
+        manifest['assets_complete']=not manifest['missing_assets'] if options.get('attachments',True) else None
+        if manifest['missing_assets']:
+            missing=len(manifest['missing_assets'])
+            manifest['warnings'].append(f'{missing} attachment(s) not embedded; text coverage does not imply visual completeness')
+            if options.get('attachments',True) and not allow_incomplete_assets:
+                first=manifest['missing_assets'][0]
+                raise RuntimeError(f'{missing} of {unique_refs} attachments could not be included. '+
+                                   'First: '+str(first.get('id') or first.get('name'))+' — '+str(first.get('reason'))+
+                                   '. Enable Allow incomplete attachments only if a partial export is acceptable.')
         # Do not publish temporary signed asset URLs in durable JSON exports.
         for message in items:
             for a in message.get('attachments') or []:
@@ -234,6 +318,8 @@ def export_conversation(messages: list[dict], *, root: Path, title: str,
                 path.write_text(json.dumps(record,ensure_ascii=False,indent=2),encoding='utf8')
         return {'path':str(path),'format':fmt,'message_count':len(items),
                 'saved_assets':len(manifest['saved_assets']),
+                'expected_assets':unique_refs if options.get('attachments',True) else 0,
+                'assets_complete':manifest['assets_complete'],
                 'missing_assets':len(manifest['missing_assets']),
                 'coverage':'api-selected-branch' if complete else 'partial-unverified'}
     finally:

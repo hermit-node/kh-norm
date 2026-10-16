@@ -96,7 +96,9 @@ class ExportPanel(QWidget):
         self.timestamps=QCheckBox('Include timestamps');self.timestamps.setChecked(True)
         self.models=QCheckBox('Include model names')
         self.attachments=QCheckBox('Include images and attachments');self.attachments.setChecked(True)
-        for control in [self.timestamps,self.models,self.attachments]:settings.addWidget(control)
+        self.allow_incomplete=QCheckBox('Allow export when attachments cannot be included')
+        self.allow_incomplete.setChecked(False)
+        for control in [self.timestamps,self.models,self.attachments,self.allow_incomplete]:settings.addWidget(control)
         size=QHBoxLayout();size.addWidget(QLabel('Paper'))
         self.paper=QComboBox();self.paper.addItems(['Letter','A4']);size.addWidget(self.paper)
         size.addWidget(QLabel('Spacing'))
@@ -167,12 +169,15 @@ class ExportPanel(QWidget):
         self._work('export',self._exported,selected_indices=selected,
                    fmt=self.format.currentData(),title=self.title.text().strip(),timestamps=self.timestamps.isChecked(),
                    models=self.models.isChecked(),attachments=self.attachments.isChecked(),
-                   page_size=self.paper.currentText(),density=self.density.currentText().lower())
+                   allow_incomplete_assets=self.allow_incomplete.isChecked(),page_size=self.paper.currentText(),density=self.density.currentText().lower())
 
     def _exported(self,result):
         self.notice.setText('Export saved: '+str(result.get('path'))+
            '\nMessages: '+str(result.get('message_count'))+
-           ' · Missing attachments: '+str(result.get('missing_assets')))
+           ' | Attachments: '+str(result.get('saved_assets'))+' / '+
+           str(result.get('expected_assets'))+
+           ' | Missing: '+str(result.get('missing_assets'))+
+           (' | INCOMPLETE' if result.get('assets_complete') is False else ''))
         self.last_export_path=result.get('path')
         self.open_folder.setEnabled(bool(self.last_export_path))
         self.export_button.setEnabled(True)

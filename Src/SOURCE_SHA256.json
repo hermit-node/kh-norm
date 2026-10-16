@@ -1,6 +1,6 @@
 {
-  "package": "Norm-0.55.10r11r9-Strict-Recovery-No-Celery-Browser-Compat-Portable-Source",
-  "source_baseline": "User-uploaded Norm-0.55.10r11r8-Strict-Recovery-No-Celery-Portable-Source.zip",
+  "package": "Norm-0.55.10r12a-No-Celery-Browser-Assets-Portable-Source",
+  "source_baseline": "Norm-0.55.10r11r10-Strict-Recovery-No-Celery-Local-Attachment-Export-Portable-Source.zip",
   "files": [
     {
       "file": ".gitattributes",
@@ -39,8 +39,8 @@
     },
     {
       "file": "SOURCE_PACKAGE.md",
-      "bytes": 37824,
-      "sha256": "28622d974ef0ee14507cafda8e30e71d7531a1b780c2f01fc234483d6401e4a6"
+      "bytes": 38787,
+      "sha256": "ad91204d7ee2b103e2b463085f43c535be64e459a2e46e59b3e95a1c0119995f"
     },
     {
       "file": "Safe-Shutdown-Norm.bat",
@@ -423,6 +423,11 @@
       "sha256": "d7156c56cae494ec40d4eaa1f79ebef08a6cb31aee1d79b0f8b73859df611d4b"
     },
     {
+      "file": "docs/R11R10_LOCAL_ATTACHMENT_EXPORT.md",
+      "bytes": 4504,
+      "sha256": "2fcd854306e5c840ba399638e11d366e1be16a687362dd5d02c3ca69d95b53c9"
+    },
+    {
       "file": "docs/R11R3_VALIDATION.md",
       "bytes": 2567,
       "sha256": "5f88ba87ee3b1e5d1e2f931e28819614ef947f5cbd487a3325273291c5f9c81c"
@@ -464,8 +469,8 @@
     },
     {
       "file": "docs/RELEASE_NOTES.md",
-      "bytes": 169859,
-      "sha256": "b49fb846297915bd9368dbe8b2279cd3ea8b9bbb8c7b31740fc5117bd7136ce5"
+      "bytes": 170822,
+      "sha256": "a390cdc3ba07c30e066e6569ef5dc02bd1cd002d9434a324b029c919067fec84"
     },
     {
       "file": "docs/SHARED_BROWSER.md",
@@ -724,8 +729,8 @@
     },
     {
       "file": "package-manifest.json",
-      "bytes": 40016,
-      "sha256": "1396acc48204ec1e10ea334ab109371143d01ab825b58256ad481e344243b6ab"
+      "bytes": 40597,
+      "sha256": "285fea9577fd9b276fe7b92595df180227a7932d62aa59932b62d21b043d6ca6"
     },
     {
       "file": "plugins/README.md",
@@ -939,28 +944,28 @@
     },
     {
       "file": "plugins/norm_browser/README.md",
-      "bytes": 1183,
-      "sha256": "57e95ed7a7c2f01fde822d5c964322230dae0baec3d63d59a3dbf0f4d915eac2"
+      "bytes": 1722,
+      "sha256": "67c37d0f37b933f7af663c14c37d20472a0068874e4d620fe774692e78e0ed5a"
     },
     {
       "file": "plugins/norm_browser/help.txt",
-      "bytes": 475,
-      "sha256": "e46597d224140aa98e0e67777c1a04ac7816b048765b8a7839893d112685012b"
+      "bytes": 768,
+      "sha256": "fa767654f048d8bb0693ca838c16a03a77c0d2354bcbbea41758dcb42c9a15ee"
     },
     {
       "file": "plugins/norm_browser/plugin.json",
       "bytes": 631,
-      "sha256": "a1a7c4e6aaf95d4b6d58d2b1df1e3f37c8e3234f78f7244747717dd92adb2c55"
+      "sha256": "f384f1c98ce045ac12b3785bfcee3de5c0c26407f1b91056d2c33026d54822f4"
     },
     {
       "file": "plugins/norm_browser/src/extensions/convo_export/exporter.py",
-      "bytes": 12656,
-      "sha256": "33dfda37fb5ac2e1161ba252dd50564e96f0d4b2bbc84d16fd604f9d13207f8d"
+      "bytes": 18259,
+      "sha256": "8beb62521f4e104074e74b90dae5f25eb46c5bd77d8ae06ba9c774a20dea3414"
     },
     {
       "file": "plugins/norm_browser/src/main.py",
-      "bytes": 8485,
-      "sha256": "d8d07ff071a2c252df9980e100363c6a4e10ef7eb2d8dc83612542aec4d38e3a"
+      "bytes": 10562,
+      "sha256": "21aa3228a6cb19605779960081551462f6e5ff1a52bb865255b26353b6f8e326"
     },
     {
       "file": "plugins/opencode/README.md",
@@ -1569,8 +1574,8 @@
     },
     {
       "file": "tools/shared_browser/app.py",
-      "bytes": 31987,
-      "sha256": "096ce13091382144fa3e05b1408207a1fe14d019c27cc29b925f8ccba86ef9b3"
+      "bytes": 33085,
+      "sha256": "16ee8d4fe7f25f92cab8ae27d62323bb4e8a16c9991f56cda507ff478431d048"
     },
     {
       "file": "tools/shared_browser/browser_cooperation.py",
@@ -1579,13 +1584,13 @@
     },
     {
       "file": "tools/shared_browser/browser_ui.py",
-      "bytes": 11806,
-      "sha256": "e88f5da69ffc547d6a786f29271ea3e8821766d05e77b284c5e72b9d0542bb47"
+      "bytes": 12209,
+      "sha256": "95e28d7c0b70a6d7415acdacee558a89470d0c7fad623ae04032da79122e6e8c"
     },
     {
       "file": "tools/shared_browser/conversation_js.py",
-      "bytes": 11740,
-      "sha256": "78564dbeac84712a174a425c285c20fe8c03177df1664d02ffb0f6fce3fb8c6c"
+      "bytes": 16782,
+      "sha256": "5b63972379630839f1909692cf3795d753cf5dbfd8c95793cef547c76eb89876"
     },
     {
       "file": "tools/shared_browser/hybrid_ocr_pdf.py",
@@ -1674,8 +1679,8 @@
     },
     {
       "file": "tools/test_browser_cooperation_r11.py",
-      "bytes": 5496,
-      "sha256": "2ab9dfc8d41dcb7d8d95dfff340c31ecfb0a54b0610ac0f10122c3e43c11c345"
+      "bytes": 5504,
+      "sha256": "87b72dbd30cb155b647caae59c45dcc201b93f46553cd5371e561a34739d6324"
     },
     {
       "file": "tools/test_chunked_evidence.py",
@@ -1978,9 +1983,14 @@
       "sha256": "5a1f6adc4e3f5c3f306a01d9f409b459b2db16160abaa4373d7943ebd272b85e"
     },
     {
+      "file": "tools/test_shared_browser_assets_r11r10.py",
+      "bytes": 8188,
+      "sha256": "5b63d751e5cfc40aec1d222df3c0572bdef352893290e0c5d6684227d6950f59"
+    },
+    {
       "file": "tools/test_shared_browser_chatgpt_r11r9.py",
-      "bytes": 1635,
-      "sha256": "b5549d96a0576af0e199f7e66586400f59fd8c6a677f70dd11aeac6a14148530"
+      "bytes": 1667,
+      "sha256": "98b2f17776e126f1ca2bf2b65a0b19ed3a6aad5ca40b4348541c6358ac3c2114"
     },
     {
       "file": "tools/test_shared_browser_controls_r11.py",
@@ -2098,6 +2108,11 @@
       "sha256": "c990975804a4aa56e9c16a6353fedc251fd19a85a41dc02ccbdebe439e678e27"
     },
     {
+      "file": "tools/weasyprint.cmd",
+      "bytes": 336,
+      "sha256": "41716ef6dfd0a7ed044fdc4bf55ce6bd18b4919bc8b3909e855ef569cbd88f37"
+    },
+    {
       "file": "tools/weasyprint/LICENSE",
       "bytes": 1563,
       "sha256": "4746f7a77019f83d6d3f0efb5bb0a4d4e23f3ea8d8ef48981d413be0cdc5099e"
@@ -2111,11 +2126,6 @@
       "file": "tools/weasyprint/UPSTREAM_README.rst",
       "bytes": 1670,
       "sha256": "81d863bc7b936f6869cfdb79ce7e44abcb71bbcff694676bca4a9cc01e7b450a"
-    },
-    {
-      "file": "tools/weasyprint.cmd",
-      "bytes": 336,
-      "sha256": "41716ef6dfd0a7ed044fdc4bf55ce6bd18b4919bc8b3909e855ef569cbd88f37"
     },
     {
       "file": "tools/weasyprint_smoke.py",

@@ -31,7 +31,9 @@ from PySide6.QtWebEngineCore import QWebEnginePage,QWebEngineProfile,QWebEngineS
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from browser_cooperation import ScriptRegistry,origin_from_url
 from conversation_js import (START as CONVO_START,STATUS as CONVO_STATUS,
-    PREVIEW as CONVO_PREVIEW,ITEM as CONVO_ITEM,EARLY_AUTH_HOOK)
+    PREVIEW as CONVO_PREVIEW,ITEM as CONVO_ITEM,EARLY_AUTH_HOOK,
+    ASSET_START as CONVO_ASSET_START,ASSET_STATUS as CONVO_ASSET_STATUS,
+    ASSET_CHUNK as CONVO_ASSET_CHUNK,ASSET_DROP as CONVO_ASSET_DROP)
 from browser_ui import ExportPanel,AskNormPanel
 
 TOKEN=ROOT/"state"/"shared_browser_token"
@@ -351,7 +353,8 @@ class Browser(QMainWindow):
         act=str(job.get("action") or "");args=job.get("args") or {}
         safe_when_manual={"status","show","hide","take_control","release","visual_pdf_status",
                           "visual_pdf_cancel","quit","cooperation_status","chatgpt_diagnostics","convo_start",
-                          "convo_status","convo_preview","convo_item"}
+                          "convo_status","convo_preview","convo_item",
+                          "convo_asset_start","convo_asset_status","convo_asset_chunk","convo_asset_drop"}
         if self.manual and act not in safe_when_manual:
             self.done(job,error="Human controls this page; return control to Norm")
             return
@@ -448,6 +451,18 @@ class Browser(QMainWindow):
                     login_control_visible:login,challenge_detected:challenge};
                 })()"""
                 self.script(job,script)
+            elif act=='convo_asset_start':
+                url=json.dumps(str(args.get('url') or '')[:3500])
+                self.script(job,CONVO_ASSET_START+'('+url+')',world=int(QWebEngineScript.ScriptWorldId.MainWorld))
+            elif act=='convo_asset_status':
+                self.script(job,CONVO_ASSET_STATUS,world=int(QWebEngineScript.ScriptWorldId.MainWorld))
+            elif act=='convo_asset_chunk':
+                start=max(0,int(args.get('start') or 0))
+                length=max(1,min(24576,int(args.get('length') or 24576)))
+                self.script(job,CONVO_ASSET_CHUNK+'('+str(start)+','+str(length)+')',
+                    world=int(QWebEngineScript.ScriptWorldId.MainWorld))
+            elif act=='convo_asset_drop':
+                self.script(job,CONVO_ASSET_DROP,world=int(QWebEngineScript.ScriptWorldId.MainWorld))
             elif act=="messages":
                 start=max(0,int(args.get("start") or 0))
                 count=max(1,min(40,int(args.get("count") or 20)))

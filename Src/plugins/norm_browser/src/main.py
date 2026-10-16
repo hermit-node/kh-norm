@@ -5,6 +5,7 @@
 from __future__ import annotations
 import json
 import time
+import base64
 from pathlib import Path
 from urllib.request import Request,urlopen
 from urllib.error import HTTPError
@@ -115,10 +116,50 @@ def _collect_one(index: int, expected_id: str) -> dict:
     return metadata
 
 
+def _asset_via_browser(url: str, destination: Path) -> int:
+    """Fetch into the already-authenticated Qt page, then stream bounded base64 chunks.
+
+    This is a fallback for ChatGPT-origin assets not accessible to Python's
+    unauthenticated HTTPS client. Bytes never go to an external PDF service.
+    """
+    started=_rpc('convo_asset_start',url=url)
+    if not started.get('ok'):
+        raise RuntimeError(str(started.get('error') or 'Browser asset fetch rejected'))
+    try:
+        deadline=time.monotonic()+45.0
+        status={}
+        while time.monotonic()<deadline:
+            status=_rpc('convo_asset_status')
+            if status.get('state') in ('ready','failed'):
+                break
+            time.sleep(.15)
+        if status.get('state')!='ready':
+            raise RuntimeError(str(status.get('error') or 'Browser asset fetch timeout'))
+        total=int(status.get('length') or 0)
+        if not 0<total<=24*1024*1024:
+            raise RuntimeError('Browser asset exceeds size limit')
+        written=0
+        with destination.open('wb') as file:
+            while written<total:
+                part=_rpc('convo_asset_chunk',start=written,length=24576)
+                if part.get('error') or int(part.get('start',-1))!=written or int(part.get('length',-1))!=total:
+                    raise RuntimeError('Browser asset transfer failed continuity check')
+                decoded=base64.b64decode(part.get('base64') or '',validate=True)
+                if not decoded or len(decoded)>min(24576,total-written):
+                    raise RuntimeError('Browser asset transfer returned invalid chunk')
+                file.write(decoded)
+                written+=len(decoded)
+        return written
+    finally:
+        try:_rpc('convo_asset_drop')
+        except Exception:pass
+
+
 def conversation_export(selected_indices: list[int], fmt: str='zip',
                         title: str='', timestamps: bool=True, models: bool=False,
                         attachments: bool=True,page_size: str='Letter',
-                        density: str='comfortable') -> dict:
+                        density: str='comfortable',
+                        allow_incomplete_assets: bool=True) -> dict:
     """Export selected conversation turns locally with assets, PDF/MD/JSON/ZIP.
 
     Requires an already-prepared browser snapshot. The user may choose any
@@ -152,7 +193,10 @@ def conversation_export(selected_indices: list[int], fmt: str='zip',
          fmt=fmt,options={'timestamps':timestamps,'models':models,'attachments':attachments,
                           'page_size':page_size,'density':density},
          source_url=status.get('url',''),complete=bool(status.get('complete')),
-         source=status.get('source','dom'))
+         source=status.get('source','dom'),
+         asset_fetcher=_asset_via_browser if attachments else None,
+         allow_incomplete_assets=allow_incomplete_assets,
+         attachment_resolution=status.get('attachment_resolution'))
 
 
 def browser_open(url: str, mode: str='shared') -> dict:

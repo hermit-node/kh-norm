@@ -1,15 +1,15 @@
 {
-  "version": "0.55.10r20",
-  "variant": "Strict-Recovery-No-Celery-Browser-Compat",
-  "tag": "v0.55.10r20",
-  "source_archive_sha256": "0dfaf7c401150d06262035d83b41d40b71c67b5e21258cd0ece6bf4c915a241e",
-  "source_archive": "0.55.10r20--Strict-Recovery-No-Celery-Browser-Compat--0dfaf7c40115.zip",
+  "version": "0.55.10r12a",
+  "variant": "No-Celery-Browser-Assets",
+  "tag": "v0.55.10r12a",
+  "source_archive_sha256": "657ff2121b8ea5ceedeb09f9b9269c60242a6a6209c0104769a7d1e7db8ba73b",
+  "source_archive": "0.55.10r12a--No-Celery-Browser-Assets--657ff2121b8e.zip",
   "quality": "source-inventory-verified",
   "known_issues": [
-    "An older r11 browser-controls test expects an outdated diagnostics field; r20 targeted source test passes, but live Qt/attachment behavior remains unverified.",
-    "Normalized from 0.55.10r11r9-strict-recovery-no-celery-browser-compat; old ZIP and mapping retained in the installer kit."
+    "Independent legacy r11r10 branch, NOT derived from archived sequential r20 or r22.",
+    "Live signed-in Qt export behavior unverified."
   ],
-  "published_source_files": 369,
+  "published_source_files": 371,
   "omitted_paths": [
     "backups/plugins-ini/plugins-20261014-151017-561326+0000-72956dfad8bb.ini",
     "config/plugins.ini",
