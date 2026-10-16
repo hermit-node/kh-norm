@@ -1488,7 +1488,6 @@ class PostgresTaskLog:
         tool = str(record.get("tool") or "").strip()
         target = str(record.get("target") or "").strip()
         description = str(record.get("description") or "").strip()
-        scope = str(record.get("scope") or "").strip()
         value = str(record.get("value") or "").strip()
         num_checks = max(1, int(record.get("num_checks") or 1))
         previous_value = str(record.get("previous_value") or "")
@@ -1510,10 +1509,7 @@ class PostgresTaskLog:
                 WHERE record_id=%s
             """).format(sql.Identifier(self.schema)), (incoming_id,))
             existing = cur.fetchone()
-            if existing is None and not scope:
-                # Scoped hot records (for example distinct file chunks) deliberately
-                # keep their record IDs separate. Unscoped facts retain the historical
-                # semantic-folding behavior used before scoped replay payloads existed.
+            if existing is None:
                 cur.execute(sql.SQL("""
                     SELECT record_id,tool,target,description,value,num_checks,previous_value,
                            changed_at,last_verified_at,first_migrated_at,last_migrated_at

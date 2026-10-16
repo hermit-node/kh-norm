@@ -1,22 +1,3 @@
-0.54.2 — 2026-10-07 — Recovery scope and action-boundary protected-literal guard
-
-- Removed the oversize-recovery fallback that converted every unnumbered task into synthetic `scope_items=[1]`. Ordinary unscoped work now stays unscoped, while real single-item scopes retain the existing maximum of four semantic subchecks.
-- Recovery-analysis child instructions now show the actual parent scope and state the four-subcheck limit only when the parent is genuinely scoped to one numbered item.
-- The existing upstream protected-literal transformation is unchanged. N1 no longer uses `observe_n2_turn()` for this policy; that observer is reserved for genuine reasoning/tool loops.
-- Protected-literal checks now occur only at the concrete tool-action boundary. The first denied action returns only `The Bird says No. The Worm won't Go.`; a later retry may receive a short goal-preserving alternative. Direct PostgreSQL pool/query/execute tools remain allowed.
-- The guard uses a cheap local prefilter before its semantic N1 judgment, and its counters/history are process-local RAM only; they are never restored from Redis or PostgreSQL after restart.
-
-0.54.2b — 2026-10-06 — Redis verification-pool evidence replay
-
-- Made the existing Redis live verification pool the sole hot reusable-evidence cache; removed the redundant process-local raw-result cache.
-- N1 now judges evidence sufficiency rather than using age/duplicate-call rules: source volatility, requested freshness, known mutations, scope, contradictions, and completeness determine whether prior observations are sufficient.
-- A reuse decision now returns the actual selected Redis replay payload to N2. N2 is no longer told to "use prior evidence" that may have been evicted from its active context.
-- Information-only repeats bypass the generic loop-reset blocker. Repeated non-information/reasoning paths retain the existing loop protections.
-- Added private, bounded replay payloads in a companion Redis hash plus scoped observation IDs in the verification metadata. N1 sees only bounded metadata/canonical values during its decision; payloads are fetched afterward.
-- Preserved the one-large-chunk-per-N2-turn rule. Chunk reads may replay exactly one previously observed raw chunk when N1 judges it sufficient; otherwise the source is read fresh.
-- Kept PostgreSQL as durable validation/history/checkpoint storage; Redis replay payloads remain hot evidence and are not copied into long-term validation history.
-- Added regression coverage for Redis replay semantics, same-value refresh/change invalidation, multi-observation sufficiency, mutation invalidation, and chunk replay after a same-step requeue.
-
 0.54.2a — 2026-10-06 — Adaptive single-chunk evidence context
 
 - Added runtime-owned context budgeting for large default text `read_file` results. Before the read executes, Norm estimates current N2 system/message/tool-schema usage, reserves the current N2 output allowance plus a safety margin, and targets 20% of the remaining usable input budget for one raw evidence chunk.

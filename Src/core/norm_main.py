@@ -1031,7 +1031,6 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             activity_source="n1-gatekeeper",
             **n1_model_client_kwargs,
         )
-        validation_cfg = dict(config.get("validation_pool", {}) or {})
         n1_gatekeeper = N1Gatekeeper(
             n1_client,
             live,
@@ -1048,8 +1047,6 @@ def run_host(root: Path, ollama_process: subprocess.Popen | None, ollama_url: st
             ingress_review_timeout_seconds=float(n1_cfg.get("ingress_review_timeout_seconds", (n1_cfg.get("ingress", {}) or {}).get("timeout_seconds", 720))),
             final_num_predict=int(n1_cfg.get("final_num_predict", (n1_cfg.get("final_review", {}) or {}).get("num_predict", 5000))),
             final_review_timeout_seconds=float(n1_cfg.get("final_review_timeout_seconds", (n1_cfg.get("final_review", {}) or {}).get("timeout_seconds", 720))),
-            replay_payload_max_bytes=int(validation_cfg.get("replay_payload_max_bytes", 393216)),
-            max_replay_records=int(validation_cfg.get("max_replay_records", 3)),
             profiles=n1_cfg,
         )
         resources["n1_client"] = n1_client

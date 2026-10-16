@@ -1,14 +1,6 @@
 # Norm current status
 
-Current package: **Norm 0.54.2** with **Installer 1.6.12-unified**.
-
-### Recovery scope + action-boundary protected-literal guard (0.54.2)
-
-Oversize recovery preserves an empty/unscoped parent scope instead of manufacturing item 1, so the single-item four-subcheck limit is applied only to genuinely numbered atomic work. Protected literals are still transformed upstream exactly as before. N1 no longer watches N2's ambient reasoning for credential language: it evaluates only a concrete proposed action that plausibly tries to recover or bypass a transformed literal. Ordinary file inspection, code tracing, refactoring, and credential-usage analysis proceed normally. The first blocked recovery action receives only `The Bird says No. The Worm won't Go.`; a repeated attempt may receive a short goal-preserving workaround, including direct PostgreSQL query access when that satisfies the task. This guard state is process-local RAM only and is not persisted to Redis or PostgreSQL.
-
-### Redis verification-pool replay (0.54.2b)
-
-The live Redis verification pool is the only hot evidence-reuse cache. N1 judges whether relevant prior observation(s) are sufficiently applicable/current for the present N2 information request; age alone is not a staleness rule. If sufficient, Norm fetches the exact bounded replay payload from the companion Redis replay hash after N1's decision and returns that evidence to N2. If insufficient or unavailable, the source executes fresh and Redis is refreshed. Information-only repeats are not blocked by the generic loop-reset path. The former process-local raw-result cache has been removed. PostgreSQL remains the durable history/checkpoint authority.
+Current package: **Norm 0.54.2a** with **Installer 1.6.12-unified**.
 
 ### Adaptive chunked evidence context (0.54.2a)
 
@@ -39,7 +31,7 @@ This file is a current-state snapshot only.
 - N1 is the boundary critic/gatekeeper. N1 reviews the exact user turn before N2, judges N2's subject-routing proposal, gates/reuses model-requested tool evidence, watches repeated reasoning/tool loops, judges maintenance candidates, and accepts/retries the final user-facing answer.
 - N1 does not rewrite the authoritative user text or final answer itself. A retry sends bounded review feedback back to N2 for repair/resubmission.
 - User-ingress, routing, final-answer, and maintenance N1 reviews use operator-configurable model budgets/timeouts from `agents.n1`; maintenance defaults remain 5000 tokens / 720 seconds.
-- N1 owns verified-result reuse/check-in for model-requested information tools. Relevant prior Redis observations may be replayed when N1 judges them sufficient; otherwise the source is queried fresh.
+- N1 owns verified-result reuse/check-in for model-requested information tools. Exact same-step requests can reuse the raw prior executor result rather than calling the tool again.
 - Successful mutations invalidate affected validation/cache targets. Deterministic post-write verification remains a runtime safety invariant outside model approval.
 
 ## Subject-bound conversation routing

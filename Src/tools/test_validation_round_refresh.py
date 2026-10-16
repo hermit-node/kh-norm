@@ -30,16 +30,7 @@ class Live:
             "changed_at": "2026-10-04T12:00:00+00:00",
             "description_match": 0.98,
             "storage": "redis_live",
-            "last_verified_at": "2026-10-06T20:00:00+00:00",
-            "age_seconds": 60,
-            "replay_available": True,
-            "replay_bytes": 100,
         }]
-
-    def validation_replay(self, record_id):
-        if record_id != self.record_id:
-            return None
-        return {"ok": True, "tool": "read_file", "path": r"C:\Norm\Norm.exe", "content": self.value}
 
     def record_global_validations(self, task_id, step_id, items):
         self.recorded.append((task_id, step_id, copy.deepcopy(items)))
@@ -56,14 +47,13 @@ class Client:
         self.decision_calls = 0
 
     def generate(self, prompt, **_kwargs):
-        if "information gatekeeper" in prompt:
+        if "Decide whether the existing LIVE Redis verification record" in prompt:
             self.decision_calls += 1
             assert '"num_checks": 45' in prompt
-            assert '"age_seconds": 60' in prompt
             return json.dumps({
                 "decision": "reuse",
-                "record_ids": ["version-record"],
-                "reason": "same deployed-version fact remains sufficient",
+                "record_id": "version-record",
+                "reason": "same deployed-version fact already has repeated live verification",
             })
         if "fresh information tool just returned" in prompt:
             return json.dumps({"value": "0.53.14"})
@@ -84,6 +74,7 @@ outcome = gate.before_tool(
     },
 )
 assert outcome.execute is False
-assert outcome.result["content"] == "0.53.14"
-assert "n1_reused" not in outcome.result
-print("PASS: N1 sees Redis verification age/count metadata, judges sufficiency, and replays the prior observed result without invoking the source")
+assert outcome.result["n1_reused"] is True
+assert outcome.result["value"] == "0.53.14"
+assert outcome.result["num_checks"] == 45
+print("PASS: N1 sees the live Redis count before deciding and returns the existing verified answer without invoking N2's proposed tool")

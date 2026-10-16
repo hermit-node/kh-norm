@@ -2095,10 +2095,7 @@ class PromptWorker:
         scope = self._scope_items_from_text(job.prompt)
         if not scope:
             scope = self._scope_items_from_text(str(metadata.get("step_name") or ""))
-        # No numbered scope is still a valid recovery scope. Do not manufacture
-        # item 1: doing so falsely turns ordinary unscoped work into an atomic
-        # item and activates single-item recovery limits that the user never set.
-        return scope
+        return scope or [1]
 
     @staticmethod
     def _step_result_content(text: str) -> str:
@@ -2317,12 +2314,6 @@ class PromptWorker:
         feedback = str((job.metadata or {}).get("oversize_analysis_feedback") or "").strip()
         if feedback:
             material += "\nRECOVERY ANALYSIS FEEDBACK FROM PRIOR INVALID CHILD:\n" + feedback
-        scope_example = parent_scope[:1] if parent_scope else []
-        unit_limit_instruction = (
-            "Because this parent is explicitly scoped to one numbered item, use at most 4 semantic subchecks. "
-            if len(parent_scope) == 1
-            else "Use 2-8 remaining_units when decomposition is warranted. "
-        )
         instruction = (
             "Analyze the durable work from an oversized parent step and design a recovery decomposition. "
             "Do not redo the parent task. Identify what useful work is already complete, what remains unresolved, "
@@ -2331,10 +2322,9 @@ class PromptWorker:
             "Do not end with progress commentary, an intention to inspect more material, or a statement of what you will do next. "
             "Use the available tools first if needed, then finish by returning JSON only with this shape: "
             '{"useful_points":["..."],"completed_work":["..."],'
-            f'"remaining_units":[{{"name":"...","instruction":"...","verify":"...","scope_items":{json.dumps(scope_example)}}}],'
+            '"remaining_units":[{"name":"...","instruction":"...","verify":"...","scope_items":[17]}],'
             '"merge_requirements":["..."]}. '
-            + unit_limit_instruction
-            + "Units must be semantically meaningful, not arbitrary token ranges. "
+            "Use 2-8 remaining_units when decomposition is warranted. Units must be semantically meaningful, not arbitrary token ranges. "
             "If IMMUTABLE PARENT SCOPE ITEMS are present, EVERY work unit must include scope_items and those items must be a subset of the parent scope. "
             "Never move later workflow into a child: no global selection, final synthesis, or sibling-range work unless it is already inside this parent's own instruction and scope. "
             "When a range is too large, prefer processing the earliest unresolved item or a smaller prefix first; the owning parent can advance its cursor afterward. "
@@ -3131,13 +3121,6 @@ class PromptWorker:
                 )
             if content:
                 last_content = content
-            if not calls and turn_reset.startswith("The Bird says No."):
-                # A sensitive-value probe can end as prose instead of another tool
-                # call. Give N1's opaque redirect back to N2 rather than accepting
-                # that dead-end as the step result. Do not explain the boundary.
-                messages.append(redact({"role": "assistant", "content": content}))
-                messages.append({"role": "user", "content": "[N1 INTERVENTION]\n" + turn_reset})
-                continue
             if not calls:
                 if done_reason == "length":
                     evidence.extend(self._verify_pending(job, pending_verification, tools))
