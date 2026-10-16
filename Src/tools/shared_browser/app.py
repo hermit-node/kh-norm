@@ -140,13 +140,9 @@ class Browser(QMainWindow):
         for button in self.nav_buttons:
             button.setEnabled(not busy)
         self.address.setReadOnly(busy)
-        if result['state']=='seeking_top':
-            self.label.setText("Visual PDF: "+str(result.get('message','Finding the oldest conversation turn')))
-        elif result['state']=='capturing':
-            status=str(result.get('message') or '').strip()
-            self.label.setText(("Visual PDF: "+status) if status else (
-                 f"Visual PDF: {result.get('frames',0)} frames | "+
-                 f"{result.get('scroll_y',0)} / {result.get('max_scroll',0)} px"))
+        if result['state']=='capturing':
+            self.label.setText(f"Visual PDF: {result.get('frames',0)} frames | "+
+                               f"{result.get('scroll_y',0)} / {result.get('max_scroll',0)} px")
         elif result['state']=='assembling':
             self.label.setText("Visual PDF: assembling and paginating...")
         elif result['state']=='complete':

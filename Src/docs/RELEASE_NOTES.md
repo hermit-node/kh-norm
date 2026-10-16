@@ -1,29 +1,7 @@
-## Norm 0.55.10r5 — Unified PDF formatting and direct PDF slash shortcuts (2026-10-13)
-
-- Consolidates **text**, **visual**, and **rich-dialogue** export under the existing shared_browser plugin.
-- New direct Norm Prompt shortcuts: /pdf, /pdf-chat, /pdf-dialogue, /pdf-name, /pdf-verify, /pdf-text, /pdf-visual, /pdf-status, /pdf-cleanup.
-- Rich dialogue preserves native vector typography, original image bytes, source code panels, chat bubbles and list formatting while compacting whitespace. Includes date/user bookmarks and an optional original-page appendix.
-- Filename convention `{title} - Rich Dialogue.pdf`; optional human-readable title; source, existing outputs and verification reports are never overwritten.
-- Independent source-to-output comparison, SHA-256 verification sidecar, and dry-run-first cleanup limited to stale formatter temporary files.
-- Standalone Python command: `python tools/shared_browser/rich_dialogue_pdf.py "original.pdf" --title "topic"`.
-- Existing browser tools, JSONL archive/text exporter, Qt visual exporter, settings, plugins and runtime state preserved. No installer or runtime executable compilation in this source release.
-
-## Norm 0.55.10r4 — restore the actual 2026-10-11 Qt Focus workspace (2026-10-12)
-
-- The user-selected authoritative workspace is N_Workspace/NormWorkspace-Qt-Focus, not fonts-v3, Geometry-v4 or Triad-v5. Original app.py from NormWorkspace-Qt-Focus-source.zip (18:29, Oct 11) is preserved byte-identical as tools/workspace/qt_focus_original_source.py, with original icon and user-saved Qt Focus layout/active-role preferences.
-- Default Run-Norm.bat now launches the Qt Focus source via C:/Norm/.venv/Scripts/pythonw.exe, not the previously selected C++ workspace. The QT Focus window immediately runs current start_roles.py, which invokes the existing Run-Norm.bat --service-only branch and the file-locked, idempotent operator launcher. Already-existing sessions are reused; only missing roles are launched.
-- Removed the erroneous suppression of all bootstrapping when one operator PID exists but zero of three expected HWNDs are attachable. Unknown independent duplicates remain controlled by start_operator_consoles.py, not blindly spawned by UI.
-- Preserve the original Qt Focus Win32 child-window embedding, native mouse-hook focus restoration, freeform draggable overlapping panes, card z-order, selected role, and Unicode UTF-8 window title. The original October 11 focus regression suite passes unchanged except an isolate-safe source path update.
-- Added explicit Quit Norm button and close-interception using safe_shutdown_norm.py. Shutdown failures keep the UI open. A new normal service/BAT shutdown marker closes the workspace, while older markers are ignored. Operator/trash cleanup semantics are delegated to the existing shutdown helper; soft-delete queue is not purged.
-- Added native-platform Qt font picker with Workspace UI, Runtime, Replies and Prompt options. Fonts are persisted through the existing workspace INI updater; terminal role settings apply to new WT sessions and do not restart active terminals.
-- Added Win64-safe named-mutex guard to prevent multiple Qt Focus containers. The old C++ binaries remain in the source tree for historical rollback only and are not launched by default. Unrelated Norm modules and all user-increased conversation-service budgets are retained.
-- Offline tests: original Qt Focus focus/geometry regression, partial-role/idempotent startup, shutdown success/failure, external signal, celery worker inventory, reversible-trash handling, Verbatim Lines write protections and r3 hybrid Visual PDF all passed. No live Norm install/service, authenticated browser, cookies, or user data modified to produce this release.
-
 ## Norm 0.55.10r3 — hybrid Visual PDF and browser-preserving scroll capture (2026-10-12)
 
 - Based on 0.55.10r2 native C++ workspace and normal startup/shutdown, unchanged. All user conversation generation budgets preserved.
 - Discover the true oldest currently accessible conversation turn by repeatedly scrolling upward, checking scrollbar position, first message fingerprint, loaded count and scrollable height. If the user starts at the top, use a five-second stable fast path; otherwise require sixty seconds without new history before beginning capture.
-- The visible browser toolbar reports top-search and loader sampling progress rather than appearing idle while the document is being discovered.
 - Detect possible loading-icon regions and compare one initial screenshot with five additional samples at randomized 1–3-second intervals; when the loader animates, wait five seconds and retry the scroll. Stationary decorative icons are ignored temporarily. Same policy for upward and downward navigation.
 - Capture and overlap successive scrolling screenshots from top to bottom; take slightly delayed alternate screenshots and choose the globally most consistent overlapping sequence before stitching. Stop only after the scrollbar and last-turn metadata remain stable; do not assume three identical screenshots prove completeness.
 - Produce a HYBRID PDF: OCR text is rendered once as selectable, visible native PDF text (built-in Helvetica where possible); original image/code/math/table/diagram regions are retained at screenshot pixel resolution as raster cutouts. No invisible OCR layer over a full-page raster, so there is no duplicate printed text. Photographic crops use JPEG when smaller, sharp artwork lossless PNG.

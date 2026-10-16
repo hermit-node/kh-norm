@@ -1,4 +1,4 @@
-"""Launch the original October 11 Qt Focus window with Norm Pythonw."""
+"""Launch the existing native C++ Norm workspace (one-instance Win32 mutex)."""
 from __future__ import annotations
 import ctypes,os,subprocess,sys,time,configparser
 from ctypes import wintypes
@@ -23,20 +23,19 @@ def main():
         result=subprocess.run([str(python),"-B",str(console_launcher)],
                               cwd=str(ROOT),timeout=90,check=False)
         return result.returncode
-    app=ROOT/"tools/workspace/app.py"
-    python=ROOT/".venv/Scripts/pythonw.exe"
-    if not app.is_file() or not python.is_file():
-        raise FileNotFoundError("Oct 11 Qt Focus source or Pythonw interpreter is missing")
+    native=ROOT/"tools/workspace/native/NormWorkspace.exe"
+    if not native.is_file():
+        raise FileNotFoundError("Native workspace build is missing: "+str(native))
     if not interactive():
-        print("No interactive desktop: Qt Focus workspace startup skipped.")
+        print("No interactive desktop: workspace startup skipped.")
         return 0
-    proc=subprocess.Popen([str(python),"-B",str(app)],
+    proc=subprocess.Popen([str(native),"--root",str(ROOT)],
         cwd=str(ROOT),stdin=subprocess.DEVNULL,
         creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
-    time.sleep(0.8)
+    time.sleep(1.0)
     if proc.poll() not in (None,0):
-        raise RuntimeError(f"Qt Focus workspace exited {proc.returncode}; check NormWorkspace-Qt-startup.log")
-    print("Original Qt Focus window started (or existing instance retained by mutex).")
+        raise RuntimeError(f"Native workspace failed, exit {proc.returncode}; check native/NormWorkspace.log")
+    print("Workspace open or attached; existing instance prevents duplicate UI.")
     return 0
 if __name__=="__main__":
     try:raise SystemExit(main())

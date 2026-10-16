@@ -1,4 +1,4 @@
-﻿"""NormWorkspace Qt: freeform PySide6 shell around *real* Windows console HWNDs.
+"""NormWorkspace Qt: freeform PySide6 shell around *real* Windows console HWNDs.
 
 No pseudo-terminal widgets; actual operator processes remain unmodified.
 """
@@ -15,7 +15,10 @@ import time
 
 from PySide6.QtCore import QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QIcon, QPainter, QPen
-from PySide6.QtWidgets import QApplication, QWidget, QPushButton, QLabel, QFontDialog, QInputDialog, QMessageBox
+from PySide6.QtWidgets import (QApplication, QWidget, QPushButton, QLabel, QDialog, QVBoxLayout,
+    QFormLayout, QHBoxLayout, QFontComboBox, QSpinBox, QComboBox, QDialogButtonBox, QMessageBox)
+
+from workspace_settings import Settings, ROLES, VALID_WEIGHTS
 
 if os.name != "nt":
     raise SystemExit("NormWorkspace Qt requires Windows.")
@@ -116,6 +119,8 @@ kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 kernel32.CloseHandle.restype = wintypes.BOOL
 kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
 kernel32.CreateMutexW.restype = wintypes.HANDLE
+kernel32.GetLastError.argtypes = []
+kernel32.GetLastError.restype = wintypes.DWORD
 
 def wintext(hwnd: int) -> str:
     n = user32.GetWindowTextLengthW(hwnd)
@@ -155,81 +160,6 @@ def is_live_process(pid: int) -> bool:
         return Path(name.value).name.casefold() in ("python.exe", "pythonw.exe")
     finally:
         kernel32.CloseHandle(h)
-
-DEFAULTS: dict = {
-    "schema": 1,
-    "norm": {
-        "root": "C:\\Norm",
-        "startup_script": "Run-Norm.bat",
-        "operator_registry": "state\\operator-consoles.json",
-        "start_if_missing": True,
-        "launch_when_partial": False,
-    },
-    "capture": {
-        "match": "exact",
-        "release_previous_workspace": True,
-        "poll_interval_ms": 700,
-        "windows": {
-            "runtime": "Norm Runtime",
-            "replies": "Norm Replies",
-            "prompt": "Norm Prompt",
-        },
-    },
-    "workspace": {
-        "x": 180, "y": 120, "width": 1490, "height": 880, "maximized": False,
-        "panes": {
-            "runtime": {"x": 130, "y": 20, "width": 810, "height": 480, "z": 1},
-            "replies": {"x": 685, "y": 40, "width": 640, "height": 400, "z": 2},
-            "prompt": {"x": 325, "y": 430, "width": 870, "height": 385, "z": 3},
-        },
-    },
-}
-ROLES = ("runtime", "replies", "prompt")
-
-def merge_dict(defaults: dict, supplied: dict) -> dict:
-    result = {}
-    for key, value in defaults.items():
-        if isinstance(value, dict):
-            result[key] = merge_dict(value, supplied.get(key, {}) if isinstance(supplied.get(key), dict) else {})
-        else:
-            result[key] = supplied.get(key, value)
-    for key, value in supplied.items():
-        if key not in result:
-            result[key] = value
-    return result
-
-class Settings:
-    def __init__(self) -> None:
-        if getattr(sys, "frozen", False):
-            self.root = Path(sys.executable).resolve().parent
-        else:
-            self.root = Path(__file__).resolve().parent
-        self.path = self.root / "NormWorkspace-Qt.json"
-        if self.path.is_file():
-            raw = json.loads(self.path.read_text(encoding="utf-8-sig"))
-            if not isinstance(raw, dict):
-                raise ValueError("Settings root must be an object")
-            self.data = merge_dict(DEFAULTS, raw)
-        else:
-            self.data = merge_dict(DEFAULTS, {})
-            self.save()
-
-    def norm_root(self) -> Path:
-        # Absolute configured path is independent of the workspace's EXE folder.
-        p = Path(os.path.expandvars(str(self.data["norm"]["root"]))).expanduser()
-        if not p.is_absolute():
-            p = self.root / p
-        return p.resolve()
-
-    def registry_path(self) -> Path:
-        p = Path(os.path.expandvars(str(self.data["norm"]["operator_registry"])))
-        return p if p.is_absolute() else self.norm_root() / p
-
-    def save(self) -> None:
-        text = json.dumps(self.data, indent=2, ensure_ascii=False) + "\n"
-        pending = self.path.with_suffix(".json.tmp")
-        pending.write_text(text, encoding="utf-8")
-        pending.replace(self.path)
 
 class TerminalCard(QWidget):
     changed = Signal()
@@ -336,7 +266,7 @@ class TerminalCard(QWidget):
         painter.setPen(QPen(QColor("#49d5d2") if self.active else QColor("#7187a3"), 2))
         painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
         painter.setPen(QColor("#eef5fb"))
-        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
+        painter.setFont(QFont(self.parent().settings.fonts["ui"]["face"], self.parent().settings.fonts["ui"]["size"], QFont.Weight.DemiBold))
         painter.drawText(13, 23, self.label)
         painter.setPen(QColor("#88c2d0"))
         painter.drawText(self.width()-65, 23, f"z:{self.z}")
@@ -347,7 +277,7 @@ class TerminalCard(QWidget):
             painter.drawLine(x-5-i*6, y, x, y-5-i*6)
         if not self.console:
             painter.setPen(QColor("#a7b7ca"))
-            painter.setFont(QFont("Segoe UI", 10))
+            painter.setFont(QFont(self.parent().settings.fonts["ui"]["face"], self.parent().settings.fonts["ui"]["size"]))
             painter.drawText(14, HEADER+32, "Waiting for existing terminal window…")
         painter.end()
 
@@ -458,7 +388,7 @@ class ResizeEdge(QWidget):
         super().mouseReleaseEvent(event)
 
 class Workspace(QWidget):
-    def __init__(self, settings: Settings, *, demo: bool=False, attach_only: bool=False):
+    def __init__(self, settings: Settings, *, demo: bool=False, attach_only: bool=False, test_mode: bool=False):
         super().__init__()
         self.settings = settings
         self.demo = demo
@@ -470,14 +400,18 @@ class Workspace(QWidget):
         self.status_text = ""
         self.attached: dict[str, int] = {}
         self._closing = False
-        self._shutdown_started = False
-        self._shutdown_proc = None
         self._shutdown_complete = False
+        self._shutdown_started = False
+        # Watch the EXISTING terminal shutdown signal. Ignore stale signals
+        # from before this workspace instance started.
         self._external_shutdown_signal = self.settings.norm_root() / "state/operator-console-shutdown.json"
         try:
             self._external_shutdown_baseline = self._external_shutdown_signal.stat().st_mtime_ns
         except OSError:
             self._external_shutdown_baseline = 0
+        self._shutdown_proc = None
+        self._shutdown_log = None
+        self._test_mode = test_mode
         self._setup_finished = False
         self._outer_dragging = False
         self._outer_resize = False
@@ -489,7 +423,7 @@ class Workspace(QWidget):
         self.mouse_hook = None
         self._mouse_callback = None
 
-        self.setWindowTitle("NormWorkspace Qt Focus — Native Terminal Container")
+        self.setWindowTitle("Norm Workspace 0.55.10r1 — Native Terminal Container")
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
         self.setWindowFlag(Qt.WindowType.Window)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
@@ -517,27 +451,28 @@ class Workspace(QWidget):
         self.sidebar.setStyleSheet("background:#172639;border-right:1px solid #365b6f;")
         self.buttons = {}
         self.title_label = QLabel("N / Q", self.sidebar)
-        self.title_label.setStyleSheet("color:#5de6de;font-size:18px;font-weight:bold;background:transparent;")
+        self.title_label.setStyleSheet("color:#5de6de;font-weight:bold;background:transparent;")
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         commands = [
             ("Attach", self.attach_existing), ("Start Norm", self.start_norm),
-            ("Fonts", self.choose_font), ("Release", self.release_all),
-            ("Minimize", self.showMinimized), ("Maximize", self.toggle_max),
-            ("Quit Norm", self.quit_norm),
+            ("Release", self.release_all), ("Minimize", self.showMinimized),
+            ("Maximize", self.toggle_max), ("Fonts", self.edit_fonts),
+            ("Quit Norm", self.request_quit),
         ]
         for key, fn in commands:
             btn = QPushButton(key, self.sidebar)
             btn.setStyleSheet(
                 "QPushButton{background:#30445b;color:#f2f6fc;border:1px solid #46637d;"
-                "border-radius:6px;padding:7px;font-size:11px}"
+                "border-radius:6px;padding:7px;}"
                 "QPushButton:hover{background:#246a81}"
                 "QPushButton:pressed{background:#1d5068}")
             btn.clicked.connect(fn)
             self.buttons[key] = btn
         self.status = QLabel("", self.sidebar)
-        self.status.setStyleSheet("color:#72ddd2;font-size:10px;background:transparent;")
+        self.status.setStyleSheet("color:#72ddd2;background:transparent;")
         self.status.setWordWrap(True)
         self.status.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.apply_ui_font()
         self.layout_sidebar()
         self.resize_handles = [
             ResizeEdge(self, edges) for edges in (
@@ -565,8 +500,9 @@ class Workspace(QWidget):
         else:
             self.show()
         self._setup_finished = True
-        self._install_focus_listener()
-        self._install_native_mouse_listener()
+        if not self._test_mode:
+            self._install_focus_listener()
+            self._install_native_mouse_listener()
         QTimer.singleShot(300, self.startup)
 
     def layout_sidebar(self) -> None:
@@ -576,9 +512,8 @@ class Workspace(QWidget):
         self.title_label.setGeometry(10, 14, LEFT_RAIL-20, 52)
         for i, (_, button) in enumerate(self.buttons.items()):
             button.setGeometry(9, 79 + 51*i, LEFT_RAIL-18, 43)
-        status_y = 79 + 51*len(self.buttons) + 10
-        self.status.setGeometry(10, status_y, LEFT_RAIL-19,
-                                max(36,self.sidebar.height()-status_y-12))
+        self.status.setGeometry(10, 399, LEFT_RAIL-19,
+                                max(80,self.sidebar.height()-420))
         self._layout_resize_handles()
 
     def _layout_resize_handles(self) -> None:
@@ -825,6 +760,9 @@ class Workspace(QWidget):
             return -1
 
     def startup(self) -> None:
+        if self._test_mode:
+            self.capture_enabled=False
+            return
         if self.demo:
             self.start_demo()
             return
@@ -835,151 +773,76 @@ class Workspace(QWidget):
             self.start_norm()
 
     def start_norm(self) -> None:
-        """Bootstrap CURRENT Norm service and create only missing operator roles.
-
-        The existing start_roles.py owns duplicate-role avoidance and file locks.
-        A stale or partially populated registry is not a reason to suppress the
-        idempotent launcher; nor is it permission to spawn a second Prompt.
-        """
-        if self.demo or self.attach_only:
-            self.set_status("Demo/attach-only mode: Norm startup disabled.")
-            return
-        if self._shutdown_started:
-            self.set_status("Norm shutdown in progress; startup disabled.")
+        if self.demo:
+            self.set_status("Demo mode: Norm startup disabled.")
             return
         self.attach_existing()
         if len(self.attached) == 3:
             return
         if self.launcher and self.launcher.poll() is None:
-            self.set_status("Norm bootstrap running; waiting for terminal windows.")
+            self.set_status("Norm launcher already running; waiting for terminal windows.")
             return
+        if self.attached and not self.settings.data["norm"].get("launch_when_partial", False):
+            self.set_status("Partial terminal set detected; launcher will recheck process ownership before filling missing roles.")
+        alive = self.registered_hosts_alive()
+        if alive < 0:
+            self.set_status("Operator registry unreadable; refusing new terminal launch.")
+            return
+        if alive:
+            self.set_status(f"{alive} existing terminal host(s); role-specific launcher will verify/attach before adding any missing role.")
         root = self.settings.norm_root()
-        python = root / ".venv/Scripts/python.exe"
-        launcher = root / "tools/workspace/start_roles.py"
-        if not python.is_file() or not launcher.is_file():
-            self.set_status(f"Required Norm interpreter or startup helper missing: {launcher}")
+        startup = root / "tools/workspace/start_roles.py"
+        if not root.is_dir() or not startup.is_file():
+            self.set_status(f"Norm startup not found: {startup}. Check norm.root in NormWorkspace-Qt.json.")
             return
         self.started = True
         log = self.settings.root / "NormWorkspace-Qt-startup.log"
         try:
             with log.open("ab") as output:
                 self.launcher = subprocess.Popen(
-                    [str(python), "-B", str(launcher)], cwd=str(root),
-                    stdin=subprocess.DEVNULL, stdout=output,
-                    stderr=subprocess.STDOUT,
+                    [str(root/".venv/Scripts/python.exe"), "-B", str(startup)], cwd=str(root),
+                    stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
                     creationflags=subprocess.CREATE_NO_WINDOW,
                 )
-            self.set_status(
-                "Booting Norm and finding missing operator windows; "
-                "existing sessions will be reused.")
-        except OSError as exc:
-            self.set_status(f"Norm startup failed to launch: {exc}")
+            self.set_status(f"Starting Norm via {startup.name}; waiting for operator windows.")
+        except OSError as e:
+            self.set_status(f"Couldn't launch Norm: {e}")
 
-    def _external_normal_exit(self) -> bool:
-        """Recognize only a NEW normal service exit, never a stale marker."""
-        marker = self._external_shutdown_signal
+    def _check_external_shutdown(self) -> bool:
+        """Close only on a fresh, normal Norm exit signaled by BAT/service.
+
+        Do not launch a second shutdown or purge any database/trash state.
+        Workspace's own Quit helper remains authoritative if already running.
+        """
+        if self._test_mode or self._shutdown_started:
+            return False
+        signal = self._external_shutdown_signal
         try:
-            stat = marker.stat()
-            if stat.st_mtime_ns <= self._external_shutdown_baseline:
+            state = signal.stat()
+            if state.st_mtime_ns <= self._external_shutdown_baseline:
                 return False
-            value = json.loads(marker.read_text(encoding="utf-8-sig"))
-        except (OSError, ValueError, TypeError):
+            payload = json.loads(signal.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
             return False
-        if not isinstance(value, dict) or value.get("reason") != "normal-service-exit":
+        if payload.get("reason") != "normal-service-exit":
             return False
-        self._external_shutdown_baseline = stat.st_mtime_ns
+        self._external_shutdown_baseline = state.st_mtime_ns
+        self._shutdown_complete = True
+        self.set_status("Norm exited through the service/BAT. Closing workspace.")
+        self.close()
         return True
 
-    def quit_norm(self) -> None:
-        """Use Norm's VERIFIED shutdown; leave the workspace open on failure."""
-        if self.demo or self.attach_only:
-            self._shutdown_complete = True
-            self.close()
-            return
-        if self._shutdown_started:
-            self.set_status("Waiting for the existing Norm shutdown process.")
-            return
-        root = self.settings.norm_root()
-        python = root / ".venv/Scripts/python.exe"
-        script = root / "tools/safe_shutdown_norm.py"
-        if not python.is_file() or not script.is_file():
-            self.set_status("Norm shutdown helper unavailable; no processes stopped.")
-            return
-        self._shutdown_started = True
-        try:
-            with (self.settings.root / "NormWorkspace-Qt-shutdown.log").open("ab") as output:
-                self._shutdown_proc = subprocess.Popen(
-                    [str(python), "-B", str(script), "--wait-seconds", "300"],
-                    cwd=str(root), stdin=subprocess.DEVNULL,
-                    stdout=output, stderr=subprocess.STDOUT,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                )
-        except OSError as exc:
-            self._shutdown_started = False
-            self._shutdown_proc = None
-            self.set_status(f"Could not start verified Norm shutdown: {exc}")
-            return
-        self.set_status("Graceful Norm shutdown in progress. Reversible trash preserved.")
-
-    def choose_font(self) -> None:
-        """Native Qt font dialog; persist changes into the existing WT role INI."""
-        from workspace_settings import Settings as NormSettings
-        settings = NormSettings(self.settings.norm_root())
-        choices = ["Workspace UI", "Runtime terminal", "Replies terminal", "Prompt terminal"]
-        which, okay = QInputDialog.getItem(self,"Change font","Select window:",choices,0,False)
-        if not okay:return
-        role = {"Workspace UI":"ui","Runtime terminal":"runtime",
-                "Replies terminal":"replies","Prompt terminal":"prompt"}[which]
-        original = settings.fonts[role]
-        font = QFont(original["face"], original["size"])
-        font.setBold(original["weight"] in ("semi-bold","bold","extra-bold","black","extra-black"))
-        chosen, confirmed = QFontDialog.getFont(font,self,which)
-        if not confirmed:return
-        size=max(6,min(48,chosen.pointSize() if chosen.pointSize()>0 else original["size"]))
-        weight="bold" if chosen.bold() else "normal"
-        settings.set_fonts({role:{"face":chosen.family(),"size":size,"weight":weight}})
-        if role=="ui":
-            ui = QFont(chosen.family(),size)
-            self.setFont(ui)
-            for widget in self.buttons.values():
-                widget.setFont(ui)
-            self.title_label.setFont(ui)
-            self.status.setFont(ui)
-            self.set_status("Workspace font applied. Font settings saved.")
-        else:
-            self.set_status(
-                f"{which} font saved; applies to the next new terminal session. "
-                "Existing terminal sessions are not restarted.")
-
     def poll(self) -> None:
-        if self._closing:
-            return
-        if self._shutdown_proc is not None:
-            result = self._shutdown_proc.poll()
-            if result is not None:
-                self._shutdown_proc = None
-                if result == 0:
-                    self._shutdown_complete = True
-                    self.close()
-                else:
-                    self._shutdown_started = False
-                    self.set_status(
-                        f"Norm shutdown incomplete (exit {result}); workspace kept open. "
-                        "Check NormWorkspace-Qt-shutdown.log.")
-            return
-        if not self._shutdown_started and not self.demo and not self.attach_only and self._external_normal_exit():
-            self._shutdown_complete = True
-            self.close()
+        if self._closing or self._check_external_shutdown():
             return
         if self.capture_enabled and len(self.attached) < 3:
+            # No automatic release of previous workspaces on every poll.
             self._poll_attach_only()
         if self.launcher and self.launcher.poll() is not None:
-            result = self.launcher.returncode
+            rc = self.launcher.returncode
             self.launcher = None
-            if result:
-                self.set_status(
-                    f"Norm startup returned exit {result}; "
-                    "see NormWorkspace-Qt-startup.log.")
+            if rc:
+                self.set_status(f"Norm startup returned exit {rc}; see NormWorkspace-Qt-startup.log")
 
     def _poll_attach_only(self) -> None:
         for role in ROLES:
@@ -1110,10 +973,106 @@ class Workspace(QWidget):
                 return
         super().mousePressEvent(event)
 
+    def apply_ui_font(self):
+        spec=self.settings.fonts["ui"]
+        weight_map={"thin":QFont.Weight.Thin,"light":QFont.Weight.Light,"normal":QFont.Weight.Normal,
+                    "medium":QFont.Weight.Medium,"semi-bold":QFont.Weight.DemiBold,
+                    "bold":QFont.Weight.Bold,"black":QFont.Weight.Black}
+        self.setFont(QFont(spec["face"],spec["size"],weight_map.get(spec["weight"],QFont.Weight.Normal)))
+        if hasattr(self,"title_label"):
+            self.title_label.setFont(QFont(spec["face"],max(12,spec["size"]+4)))
+        if hasattr(self,"cards"):
+            for card in self.cards.values():card.update()
+
+    def edit_fonts(self):
+        dialog=QDialog(self)
+        dialog.setWindowTitle("Norm Workspace - Persistent font settings")
+        outer=QVBoxLayout(dialog)
+        form=QFormLayout()
+        widgets={}
+        for role in ("ui","runtime","replies","prompt"):
+            spec=self.settings.fonts[role]
+            group=QWidget(dialog);h=QHBoxLayout(group)
+            h.setContentsMargins(0,0,0,0)
+            face=QFontComboBox(group);face.setCurrentFont(QFont(spec["face"]))
+            size=QSpinBox(group);size.setRange(6,48);size.setValue(spec["size"])
+            weight=QComboBox(group);weight.addItems(sorted(VALID_WEIGHTS))
+            weight.setCurrentText(spec["weight"])
+            h.addWidget(face,1);h.addWidget(size);h.addWidget(weight)
+            form.addRow(role.title(),group)
+            widgets[role]=(face,size,weight)
+        outer.addLayout(form)
+        msg=QLabel("UI font applies immediately. Terminal fonts apply to NEW Windows Terminal sessions. "
+                   "Existing console processes will not be restarted to change fonts.")
+        msg.setWordWrap(True)
+        outer.addWidget(msg)
+        actions=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel)
+        actions.accepted.connect(dialog.accept);actions.rejected.connect(dialog.reject)
+        outer.addWidget(actions)
+        if dialog.exec()!=QDialog.DialogCode.Accepted:return
+        proposed={role:{"face":face.currentFont().family(),"size":size.value(),"weight":weight.currentText()}
+                  for role,(face,size,weight) in widgets.items()}
+        try:
+            self.settings.set_fonts(proposed)
+        except Exception as exc:
+            QMessageBox.warning(self,"Font settings were not saved",str(exc))
+            return
+        self.apply_ui_font()
+        self.set_status("Fonts saved in Norm config/settings.ini. New terminal sessions use the updated profiles.")
+
+    def request_quit(self):
+        """Graceful service exit is a precondition for destroying Qt child HWNDs."""
+        if self._test_mode:
+            self._shutdown_complete=True
+            self.close()
+            return
+        if self._shutdown_proc and self._shutdown_proc.poll() is None:
+            self.set_status("Shutting down Norm; waiting for pools, workers, and consoles.")
+            return
+        root=self.settings.norm_root()
+        python=root/".venv/Scripts/python.exe"
+        script=root/"tools/safe_shutdown_norm.py"
+        if not python.is_file() or not script.is_file():
+            self.set_status("Cannot quit: Norm shutdown helper missing; refusing to leave running processes.")
+            return
+        logs=root/"logs";logs.mkdir(parents=True,exist_ok=True)
+        try:
+            self._shutdown_log=(logs/"workspace-shutdown.log").open("ab")
+            self._shutdown_proc=subprocess.Popen([str(python),"-B",str(script),"--wait-seconds","300"],
+                cwd=str(root),stdin=subprocess.DEVNULL,stdout=self._shutdown_log,
+                stderr=subprocess.STDOUT,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+            self._shutdown_started=True
+            self.buttons["Quit Norm"].setEnabled(False)
+            self.shutdown_timer=QTimer(self)
+            self.shutdown_timer.setInterval(600)
+            self.shutdown_timer.timeout.connect(self._poll_shutdown)
+            self.shutdown_timer.start()
+            self.set_status("Graceful shutdown in progress. Norm service, pools, workers, browsers and operator consoles will close.")
+        except Exception as error:
+            self.set_status(f"Could not start verified Norm shutdown: {error}")
+            self.buttons["Quit Norm"].setEnabled(True)
+            if self._shutdown_log:self._shutdown_log.close();self._shutdown_log=None
+
+    def _poll_shutdown(self):
+        proc=self._shutdown_proc
+        if proc is None:return
+        code=proc.poll()
+        if code is None:return
+        self.shutdown_timer.stop()
+        if self._shutdown_log:self._shutdown_log.close();self._shutdown_log=None
+        self._shutdown_proc=None
+        if code==0:
+            self._shutdown_complete=True
+            self.set_status("Verified Norm shutdown complete. Closing workspace.")
+            self.close()
+        else:
+            self.buttons["Quit Norm"].setEnabled(True)
+            self.set_status(f"Shutdown incomplete (exit {code}); workspace remains open. See logs/workspace-shutdown.log. Retry Quit Norm.")
+
     def closeEvent(self, event) -> None:
-        if not (self._shutdown_complete or self.demo or self.attach_only):
+        if not (self._shutdown_complete or self._test_mode):
             event.ignore()
-            self.quit_norm()
+            self.request_quit()
             return
         self.persist()
         self._closing=True
@@ -1140,32 +1099,34 @@ def main() -> int:
     args=parser.parse_args()
     if args.offscreen_test:
         os.environ["QT_QPA_PLATFORM"]="offscreen"
+    # Single-instance guard: duplicate Run-Norm/Workspace launches cannot
+    # create another reparenting UI or another operator-console generation.
+    mutex_name="Local\\NormWorkspace-05510-test" if args.offscreen_test else "Local\\NormWorkspace-05510"
+    mutex=kernel32.CreateMutexW(None,False,mutex_name)
+    if not mutex:raise RuntimeError("Workspace mutex creation failed")
+    if kernel32.GetLastError()==183:
+        kernel32.CloseHandle(mutex)
+        print("Norm Workspace is already open; reusing the existing instance.")
+        return 0
     app=QApplication(sys.argv[:1])
     app.setStyle("Fusion")
     try:
         settings=Settings()
     except (ValueError,OSError,json.JSONDecodeError) as error:
+        if args.offscreen_test:
+            print(f"Workspace test settings error: {error}",file=sys.stderr)
+            return 2
         from PySide6.QtWidgets import QMessageBox
         QMessageBox.critical(None,"NormWorkspace settings error",
             f"NormWorkspace-Qt.json could not be loaded:\n{error}\n\n"
             "Fix or rename the settings file, then try again.")
         return 2
-    # The original Qt Focus EXE did not guard against repeated launches.
-    # A named mutex prevents a second window from claiming terminal HWNDs.
-    mutex = None
-    if not (args.demo or args.offscreen_test):
-        mutex = kernel32.CreateMutexW(None, False, "Local\\NormWorkspace-Qt-Focus-05510")
-        if mutex and ctypes.get_last_error() == 183:
-            kernel32.CloseHandle(mutex)
-            return 0
-    try:
-        win=Workspace(settings,demo=args.demo,attach_only=args.attach_only or args.offscreen_test)
-        if args.offscreen_test:
-            QTimer.singleShot(600,win.close)
-        return app.exec()
-    finally:
-        if mutex:
-            kernel32.CloseHandle(mutex)
+    win=Workspace(settings,demo=args.demo,attach_only=args.attach_only or args.offscreen_test,
+                  test_mode=args.offscreen_test)
+    if args.offscreen_test:
+        QTimer.singleShot(600,win.close)
+    try:return app.exec()
+    finally:kernel32.CloseHandle(mutex)
 
 if __name__=="__main__":
     raise SystemExit(main())
