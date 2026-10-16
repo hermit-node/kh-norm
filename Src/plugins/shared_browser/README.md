@@ -40,3 +40,7 @@ The existing **Norm Shared Browser** plugin now owns all three PDF formats:
 In Norm Prompt use `/pdf` to list shortcuts, `/pdf-chat "SOURCE.pdf" --name "TITLE"`, `/pdf-name`, `/pdf-verify`, `/pdf-visual`, `/pdf-status`, `/pdf-text`, and `/pdf-cleanup` (dry-run first). Slash operations execute locally instead of submitting model tasks. All new source file reads/writes use Norm's canonical `shared_browser` file-access policy.
 
 Naming: `{title} - Rich Dialogue.pdf` beside the original or an explicit output path. There is no silent replacement of prior exports. `/pdf-chat` now lays the reading edition out like a clearer back-and-forth chat transcript while still preserving source vectors. For better naming, ask Norm to call the title-context tool first; filenames from `/pdf-chat` default to the source's cleaned title.
+
+
+### r11r9 compatibility
+The shared Qt Chromium starts on explicit browser operations rather than at every Norm startup. `browser_shared_chatgpt_diagnostics()` checks ChatGPT UI state without modifying the session. Sign-in popups reuse the persistent NormShared profile, editable composer operations use a native edit transaction, and scroll targeting favors the conversation. Legacy visual-PDF/OCR only initializes when invoked. See `docs/R11R9_SHARED_BROWSER_COMPAT.md`.

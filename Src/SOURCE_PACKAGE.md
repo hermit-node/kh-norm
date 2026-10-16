@@ -1,3 +1,7 @@
+## 0.55.10r11r9 — Shared browser ChatGPT compatibility (2026-10-16)
+
+Based on the exact uploaded r11r8 no-Celery portable source. Qt shared browser now starts on demand, supports sign-in popups, ChatGPT contenteditable input, conversation-focused scrolling, read-only UI diagnostics, and lazy legacy visual-PDF loading. Existing no-Celery recovery, installer and user-plugin preservation are unchanged. See `docs/R11R9_SHARED_BROWSER_COMPAT.md`. Source-only; live ChatGPT Qt session unverified.
+
 ## R11R7: strict recovery scope IDs (2026-10-15)
 See docs/R11R7_STRICT_SCOPE_IDS.md. No running Norm process changed.
 

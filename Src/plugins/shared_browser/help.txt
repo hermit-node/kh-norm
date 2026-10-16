@@ -37,3 +37,5 @@ Naming convention: "{title} - Rich Dialogue.pdf" in source folder unless --outpu
 A separate .verification.json records the source and output SHA256 and PDF fidelity checks.
 Never overwrites the source, existing output, completed reports, or other plugins/settings.
 Rich dialogue requires existing original ChatGPT Exporter PDF; the visual capture is a separate live-browser workflow.
+
+ChatGPT UI checks: browser_shared_chatgpt_diagnostics() reports page/login/challenge/composer state and turn counts without exposing tokens or chat text. Browser starts on demand; visual screenshot PDF remains a legacy fallback.

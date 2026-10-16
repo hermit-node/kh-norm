@@ -1,8 +1,8 @@
 {
   "schema_version": 2,
   "name": "Norm Browser Cooperation",
-  "version": "0.1.0",
-  "date": "2026-10-14",
+  "version": "0.1.1",
+  "date": "2026-10-16",
   "entrypoint": "src/main.py",
   "description": "Extend the persistent Qt Shared Browser with scoped JavaScript, reusable adapters and the bundled convo_export extension.",
   "capabilities": [
@@ -18,5 +18,5 @@
       "enabled": true
     }
   },
-  "sha256": "ddfc62bf6c0cbb215b47bbb1a836d636366a59e1e5a355a03d3bd3e5bdfd248e"
+  "sha256": "5e371a5678369b7bc6df096644ab3cb421b12472baecb130c3081c89e4f67fec"
 }

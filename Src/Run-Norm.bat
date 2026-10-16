@@ -117,9 +117,8 @@ if exist "%ROOT%tools\start_async_workers.py" (
 if exist "%ROOT%tools\start_desktop_gui.py" (
   "%PY%" -B "%ROOT%tools\start_desktop_gui.py"
 )
-if exist "%ROOT%tools\\start_shared_browser.py" (
-  "%PY%" -B "%ROOT%tools\\start_shared_browser.py"
-)
+rem Shared Qt Chromium launches only when a browser tool or Show Shared Browser requests it.
+rem Keep the existing browser profile/cache and all launch shortcuts intact.
 echo Norm is healthy at %CHAT_HEALTH%
 if /I "%~1"=="--service-only" exit /b 0
 

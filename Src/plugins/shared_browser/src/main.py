@@ -5,16 +5,44 @@ import json
 import os
 from pathlib import Path
 from urllib.request import Request,urlopen
+from urllib.error import HTTPError
+import subprocess
 
 
 def _root():
     return Path(__file__).resolve().parents[3]
 
 
+def _start_if_needed(action: str) -> bool:
+    """Lazy-start on explicit browser operations; never on status/monitoring.
+
+    The launcher alone owns session selection and reuses the existing Qt tab.
+    """
+    if action in ('status','cooperation_status','visual_pdf_status'):
+        return False
+    # The browser token is persisted, so its presence does not mean it is running.
+    py=_root()/'.venv'/'Scripts'/'python.exe'
+    root=_root()
+    launcher=root/'tools'/'start_shared_browser.py'
+    if not py.is_file() or not launcher.is_file():
+        raise RuntimeError('Norm shared browser launcher or .venv is missing')
+    try:
+        result=subprocess.run([str(py),'-B',str(launcher)],cwd=str(root),
+                              capture_output=True,text=True,timeout=18)
+    except (OSError,subprocess.TimeoutExpired) as exc:
+        raise RuntimeError('On-demand shared browser launch failed: '+str(exc)) from exc
+    if result.returncode:
+        raise RuntimeError('On-demand shared browser launch failed: '+(result.stderr or result.stdout)[-400:])
+    return True
+
 def _rpc(action, **kwargs):
     tokenfile=_root()/"state/shared_browser_token"
     if not tokenfile.is_file():
-        raise RuntimeError("Shared browser not started in your Windows login session. Run tools/shared_browser/Launch Browser.cmd first.")
+        if action in ('status','visual_pdf_status'):
+            return {'running':False,'state':'not_started','on_demand':True}
+        _start_if_needed(action)
+    if not tokenfile.is_file():
+        raise RuntimeError('Shared browser unavailable; open Show Shared Browser in your Windows session')
     token=tokenfile.read_text("ascii").strip()
     if len(token)!=64:raise PermissionError("Invalid local browser token")
     request=Request("http://127.0.0.1:18767/rpc",
@@ -24,8 +52,23 @@ def _rpc(action, **kwargs):
     try:
         with urlopen(request,timeout=50) as response:
             obj=json.load(response)
+    except HTTPError as exc:
+        try:payload=json.load(exc)
+        except Exception:payload={}
+        raise RuntimeError(str(payload.get('error') or 'Browser HTTP '+str(exc.code))) from exc
     except OSError as exc:
-        raise RuntimeError("Browser helper unavailable. Launch it from an interactive Windows session.") from exc
+        if action in ('status','visual_pdf_status'):
+            return {'running':False,'state':'not_started','on_demand':True}
+        _start_if_needed(action)
+        try:
+            with urlopen(request,timeout=50) as response:
+                obj=json.load(response)
+        except HTTPError as second:
+            try:payload=json.load(second)
+            except Exception:payload={}
+            raise RuntimeError(str(payload.get('error') or 'Browser HTTP '+str(second.code))) from second
+        except OSError as second:
+            raise RuntimeError('Shared browser unavailable in the interactive Windows session') from second
     if not obj.get("ok"):
         raise RuntimeError(str(obj.get("error") or "Browser operation failed"))
     return obj.get("result") or {}
@@ -59,6 +102,11 @@ def browser_shared_take_control() -> dict:
 def browser_shared_release() -> dict:
     """Return page control to Norm, leaving the window visible as-is."""
     return _rpc("release")
+
+
+def browser_shared_chatgpt_diagnostics() -> dict:
+    """Read ChatGPT UI state (login/challenge/composer/turn counts), no credentials."""
+    return _rpc('chatgpt_diagnostics')
 
 
 def browser_shared_messages(start: int = 0, count: int = 20) -> dict:

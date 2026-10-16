@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBo
     QPushButton,QLineEdit,QLabel,QMessageBox)
 from PySide6.QtWebEngineCore import QWebEnginePage,QWebEngineProfile,QWebEngineSettings,QWebEngineScript
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from visual_capture import VisualCapture
 from browser_cooperation import ScriptRegistry,origin_from_url
 from conversation_js import (START as CONVO_START,STATUS as CONVO_STATUS,
     PREVIEW as CONVO_PREVIEW,ITEM as CONVO_ITEM,EARLY_AUTH_HOOK)
@@ -41,6 +40,65 @@ from norm_runtime.settings import load_path_settings
 BASE=Path(load_path_settings(ROOT)["workspace_root"])/"web"/"shared_browser"
 DISK_CACHE=2**31-1
 ARCHIVE_BUDGET=32*1024**3
+
+
+# No network calls: DOM utilities operate only in the already-approved tab.
+# Using a native browser edit transaction lets ChatGPT's ProseMirror input
+# listeners see the change. It intentionally does not press Send.
+TYPE_SCRIPT = r"""(() => {
+  const target=document.querySelector(__SELECTOR__);
+  const value=__VALUE__;
+  if (!target) return {found:false,typed:false};
+  const editor=target.isContentEditable?target:(target.closest('[contenteditable="true"]')||target.querySelector('[contenteditable="true"]'));
+  if (editor) {
+    editor.focus();
+    const sel=window.getSelection(),range=document.createRange();
+    range.selectNodeContents(editor);
+    sel.removeAllRanges();sel.addRange(range);
+    const ok=document.execCommand('insertText',false,value);
+    return {found:true,typed:!!ok,mode:'contenteditable',
+      error:ok?null:'Native insertText unavailable; no text inserted'};
+  }
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+    target.focus();
+    const proto=target instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
+    const setter=Object.getOwnPropertyDescriptor(proto,'value')?.set;
+    if(setter)setter.call(target,value);else target.value=value;
+    target.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:value}));
+    target.dispatchEvent(new Event('change',{bubbles:true}));
+    return {found:true,typed:target.value===value,mode:'input'};
+  }
+  return {found:true,typed:false,error:'Element is not editable'};
+})()"""
+
+# Prefer the scrollable ancestor of an actual chat turn; a sidebar can have
+# a larger scrollHeight than the conversation and must not win by size alone.
+SCROLL_SCRIPT = r"""(() => {
+  const delta=__DELTA__;
+  const main=document.querySelector('main,[role="main"]')||document.body;
+  const seed=document.querySelector('[data-message-author-role],[data-testid^="conversation-turn-"],section[data-turn-id]');
+  let best=null,source='document';
+  for(let node=seed||main;node;node=node.parentElement) {
+    if(node.scrollHeight-node.clientHeight>70 && /(auto|scroll)/.test(getComputedStyle(node).overflowY)) {
+      best=node;source='conversation_ancestor';break;
+    }
+  }
+  if(!best) {
+    let maxArea=0;
+    for(const node of [main,...main.querySelectorAll('*')]) {
+      if(node.scrollHeight-node.clientHeight<=70 || !/(auto|scroll)/.test(getComputedStyle(node).overflowY))continue;
+      const r=node.getBoundingClientRect();
+      const a=Math.min(innerWidth,Math.max(0,r.width))*Math.min(innerHeight,Math.max(0,r.height));
+      if(a>maxArea) {best=node;maxArea=a;source='main_scroll';}
+    }
+  }
+  if(!best)best=document.scrollingElement||document.body;
+  const prev=best.scrollTop;
+  best.scrollTop+=delta;
+  best.dispatchEvent(new Event('scroll',{bubbles:true}));
+  return {tag:best.tagName,y:best.scrollTop,
+    max:Math.max(0,best.scrollHeight-best.clientHeight),moved:best.scrollTop!==prev,source};
+})()"""
 
 class CommandBridge(QObject):
     request=Signal(object)
@@ -74,7 +132,9 @@ class Browser(QMainWindow):
         early_hook.setRunsOnSubFrames(False)
         early_hook.setSourceCode(EARLY_AUTH_HOOK)
         self.profile.scripts().insert(early_hook)
+        self._popup_views=[]
         self.page=QWebEnginePage(self.profile,self)
+        self.page.newWindowRequested.connect(self._new_window_requested)
         self.view=QWebEngineView(self);self.view.setPage(self.page)
         self.page.setLifecycleState(QWebEnginePage.LifecycleState.Active)
         self.page.loadStarted.connect(self._loading)
@@ -104,11 +164,11 @@ class Browser(QMainWindow):
         rail_layout.setSpacing(5)
         export=QPushButton('Export');export.setToolTip('Select conversation turns and formatting')
         export.clicked.connect(self._toggle_export)
-        capture=QPushButton('Visual PDF');capture.clicked.connect(self._export_ui)
+        capture=QPushButton('Visual PDF (legacy)');capture.clicked.connect(self._export_ui)
         self.export_button=capture
         self.export_button.setToolTip('Legacy screenshot-based visual PDF')
         self.cancel_button=QPushButton('Cancel PDF')
-        self.cancel_button.clicked.connect(lambda:self.visual.cancel())
+        self.cancel_button.clicked.connect(lambda:self.visual.cancel() if self.visual else None)
         self.cancel_button.setEnabled(False)
         approve=QPushButton('Site scripts');approve.setToolTip('Approve or revoke JavaScript for this HTTPS site')
         approve.clicked.connect(self._toggle_site_permission)
@@ -134,10 +194,37 @@ class Browser(QMainWindow):
         self.setCentralWidget(bar)
         self.bridge=CommandBridge(self)
         self.bridge.request.connect(self.dispatch,Qt.ConnectionType.QueuedConnection)
-        self.visual=VisualCapture(self,BASE)
+        self.visual=None   # Legacy screenshot/OCR engine is demand-loaded.
         self.visual_timer=QTimer(self)
         self.visual_timer.timeout.connect(self._visual_update)
-        self.visual_timer.start(900)
+    def _visual_engine(self):
+        if self.visual is None:
+            from visual_capture import VisualCapture
+            self.visual=VisualCapture(self,BASE)
+        return self.visual
+
+    def _visual_busy(self):
+        return self.visual is not None and self.visual.job is not None
+
+    def _new_window_requested(self, request):
+        """Allow OAuth/login popups without creating another browser profile.
+
+        Qt WebEngine does not automatically show window.open/target=_blank.
+        Child pages reuse NormShared cookies and are closed independently.
+        """
+        popup=QWebEngineView()
+        popup.setWindowTitle('Norm Shared Browser - sign-in / new window')
+        popup.resize(1050,760)
+        page=QWebEnginePage(self.profile,popup)
+        popup.setPage(page)
+        page.newWindowRequested.connect(self._new_window_requested)
+        self._popup_views.append(popup)
+        popup.destroyed.connect(lambda *_args, p=popup: self._popup_views.remove(p)
+                                if p in self._popup_views else None)
+        popup.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose,True)
+        request.openIn(page)
+        popup.show()   # Login popups must be visible for the human to authenticate.
+
     def _toggle_ask(self):
         self.ask_panel.setVisible(not self.ask_panel.isVisible())
         if self.ask_panel.isVisible():self.ask_panel.editor.setFocus()
@@ -175,7 +262,7 @@ class Browser(QMainWindow):
         self._update_control_indicators()
         self._update_permission_button()
     def _navigate(self):
-        if self.visual.job is not None:return
+        if self._visual_busy():return
         self.page.setUrl(QUrl.fromUserInput(self.address.text().strip()))
     def _update_control_indicators(self):
         self.take_button.setEnabled(not self.manual)
@@ -188,7 +275,7 @@ class Browser(QMainWindow):
                 "load failed" if self.load_ok is False else "no page loaded")
         self.label.setText(f"{controller} | {loaded}")
     def _take(self):
-        if self.visual.job is not None:
+        if self._visual_busy():
             self.label.setText("Visual export in progress; cancel it before changing control")
             return
         self.manual=True
@@ -197,19 +284,23 @@ class Browser(QMainWindow):
         self.manual=False
         self._update_control_indicators()
     def _hide_requested(self):
-        if self.visual.job is not None:
+        if self._visual_busy():
             self.label.setText("Visual export requires visible Chromium; cancel export to hide")
             return
         self.hide()
     def _export_ui(self):
         try:
-            result=self.visual.start()
+            result=self._visual_engine().start()
+            self.visual_timer.start(900)
             self.label.setText("Visual PDF started: "+result['id'])
         except Exception as exc:
             self.label.setText("Visual PDF not started: "+str(exc))
     def _visual_update(self):
+        if self.visual is None:
+            return
         result=self.visual.status()
-        busy=self.visual.job is not None
+        busy=self._visual_busy()
+        if not busy:self.visual_timer.stop()
         self.export_button.setEnabled(not busy)
         self.cancel_button.setEnabled(busy)
         self.take_button.setEnabled(not self.manual and not busy)
@@ -232,7 +323,7 @@ class Browser(QMainWindow):
     def closeEvent(self,event):
         # Closing the browser during visual PDF capture must not silently hide
         # the logged-in session or strand its Qt screenshot work.
-        if self.visual.job is not None:
+        if self._visual_busy():
             event.ignore()
             self.label.setText("Visual PDF is still running. Cancel PDF before hiding this window.")
             return
@@ -259,12 +350,12 @@ class Browser(QMainWindow):
     def dispatch(self,job):
         act=str(job.get("action") or "");args=job.get("args") or {}
         safe_when_manual={"status","show","hide","take_control","release","visual_pdf_status",
-                          "visual_pdf_cancel","quit","cooperation_status","convo_start",
+                          "visual_pdf_cancel","quit","cooperation_status","chatgpt_diagnostics","convo_start",
                           "convo_status","convo_preview","convo_item"}
         if self.manual and act not in safe_when_manual:
             self.done(job,error="Human controls this page; return control to Norm")
             return
-        if self.visual.job is not None and act not in ("status","visual_pdf_status","visual_pdf_cancel","quit"):
+        if self._visual_busy() and act not in ("status","visual_pdf_status","visual_pdf_cancel","quit"):
             self.done(job,error="Visual PDF capture in progress; other page actions paused")
             return
         try:
@@ -279,7 +370,7 @@ class Browser(QMainWindow):
                 self.show()  # Show without raising/activating a foreground window.
                 self.done(job,{"visible":self.isVisible(),"manual_control":self.manual})
             elif act=="hide":
-                if self.manual or self.visual.job is not None:
+                if self.manual or self._visual_busy():
                     raise ValueError("Window stays visible during manual control or Visual PDF; only the user may hide it.")
                 self.hide()
                 self.done(job,{"visible":self.isVisible(),"manual_control":self.manual})
@@ -336,6 +427,27 @@ class Browser(QMainWindow):
                 length=max(1,min(32000,int(args.get('length') or 24000)))
                 self.script(job,CONVO_ITEM+'('+str(index)+','+str(start)+','+str(length)+')',
                     world=int(QWebEngineScript.ScriptWorldId.MainWorld))
+            elif act=="chatgpt_diagnostics":
+                script=r"""(()=>{
+                  const host=location.hostname, title=document.title||'';
+                  const counts={roles:document.querySelectorAll('[data-message-author-role]').length,
+                    turns:document.querySelectorAll('[data-testid^="conversation-turn-"]').length,
+                    turnIds:document.querySelectorAll('section[data-turn-id]').length};
+                  const composer=document.querySelector('#prompt-textarea,[data-testid="prompt-textarea"],[contenteditable="true"][data-placeholder],form [contenteditable="true"],form textarea');
+                  const login=!!document.querySelector('a[href*="/auth/login"],a[href*="/login"],button[data-testid*="login"]');
+                  const challenge=/just a moment|verify you are human|checking your browser/i.test(title)||
+                    !!document.querySelector('#challenge-form,#cf-challenge-running');
+                  let state='other_site';
+                  if(['chatgpt.com','chat.openai.com'].includes(host)) {
+                    state=challenge?'challenge':/\/(?:auth|login|signin)(?:\/|$)/i.test(location.pathname)||login?'login':
+                      (counts.roles||counts.turns||counts.turnIds)?'conversation_visible':composer?'composer_visible':'page_without_chat';
+                  }
+                  return {state,host,path:location.pathname,document_ready:document.readyState,
+                    title,counts,composer:composer?{
+                      tag:composer.tagName,contenteditable:composer.isContentEditable}:null,
+                    login_control_visible:login,challenge_detected:challenge};
+                })()"""
+                self.script(job,script)
             elif act=="messages":
                 start=max(0,int(args.get("start") or 0))
                 count=max(1,min(40,int(args.get("count") or 20)))
@@ -372,16 +484,7 @@ class Browser(QMainWindow):
                     {"url":self.page.url().toString(),"html":value[:maxchars]}))
             elif act=="scroll":
                 dy=max(-25000,min(25000,int(args.get("pixels") or 0)))
-                # Real sites often scroll an inner content container, not
-                # window. Find the largest scrollable region using the DOM.
-                script=("(()=>{let nodes=[document.scrollingElement,...document.querySelectorAll('main *,[role=main] *')];"
-                    "let best=null,range=0;for(let el of nodes){if(!el)continue;"
-                    "let d=el.scrollHeight-el.clientHeight;"
-                    "if(d>range+20){range=d;best=el;}}"
-                    "if(!best)best=document.scrollingElement||document.body;"
-                    "best.scrollTop+=("+str(dy)+");best.dispatchEvent(new Event('scroll',{bubbles:true}));"
-                    "return {tag:best.tagName,y:best.scrollTop,max:range};})()")
-                self.script(job,script)
+                self.script(job, SCROLL_SCRIPT.replace('__DELTA__',str(dy)))
             elif act=="click":
                 selector=json.dumps(str(args.get("selector") or "")[:300])
                 self.script(job,"(()=>{let e=document.querySelector("+selector+");"
@@ -389,16 +492,14 @@ class Browser(QMainWindow):
             elif act=="type":
                 selector=json.dumps(str(args.get("selector") or "")[:300])
                 value=json.dumps(str(args.get("value") or "")[:10000])
-                self.script(job,"(()=>{let e=document.querySelector("+selector+");"
-                    "if(!e)return {found:false};e.focus();e.value="+value+";"
-                    "e.dispatchEvent(new Event('input',{bubbles:true}));"
-                    "e.dispatchEvent(new Event('change',{bubbles:true}));return {found:true};})()")
+                self.script(job,TYPE_SCRIPT.replace('__SELECTOR__',selector).replace('__VALUE__',value))
             elif act=="visual_pdf_start":
-                self.done(job,self.visual.start(args.get("name","")))
+                self.done(job,self._visual_engine().start(args.get("name","")))
+                self.visual_timer.start(900)
             elif act=="visual_pdf_status":
-                self.done(job,self.visual.status())
+                self.done(job,self.visual.status() if self.visual else {"state":"idle"})
             elif act=="visual_pdf_cancel":
-                self.done(job,self.visual.cancel())
+                self.done(job,self.visual.cancel() if self.visual else {"cancelled":False,"state":"idle"})
             elif act=="quit":
                 self.done(job,{"closing":True})
                 QTimer.singleShot(100,QApplication.instance().quit)

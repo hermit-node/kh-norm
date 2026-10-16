@@ -7,12 +7,41 @@ import json
 import time
 from pathlib import Path
 from urllib.request import Request,urlopen
+from urllib.error import HTTPError
+import subprocess
 
 ROOT=Path(__file__).resolve().parents[3]
 
+def _start_if_needed(action: str) -> bool:
+    """Lazy-start on explicit browser operations; never on status/monitoring.
+
+    The launcher alone owns session selection and reuses the existing Qt tab.
+    """
+    if action in ('status','cooperation_status','visual_pdf_status'):
+        return False
+    # The browser token is persisted, so its presence does not mean it is running.
+    py=ROOT/'.venv'/'Scripts'/'python.exe'
+    root=ROOT
+    launcher=root/'tools'/'start_shared_browser.py'
+    if not py.is_file() or not launcher.is_file():
+        raise RuntimeError('Norm shared browser launcher or .venv is missing')
+    try:
+        result=subprocess.run([str(py),'-B',str(launcher)],cwd=str(root),
+                              capture_output=True,text=True,timeout=18)
+    except (OSError,subprocess.TimeoutExpired) as exc:
+        raise RuntimeError('On-demand shared browser launch failed: '+str(exc)) from exc
+    if result.returncode:
+        raise RuntimeError('On-demand shared browser launch failed: '+(result.stderr or result.stdout)[-400:])
+    return True
+
 def _rpc(action,**args):
     token_path=ROOT/'state'/'shared_browser_token'
-    if not token_path.exists():raise RuntimeError('Launch Norm Shared Browser first')
+    if not token_path.exists():
+        if action in ('cooperation_status',):
+            return {'running':False,'state':'not_started','on_demand':True}
+        _start_if_needed(action)
+    if not token_path.exists():
+        raise RuntimeError('Shared browser is not running in the Windows login session')
     token=token_path.read_text(encoding='ascii').strip()
     if len(token)!=64:raise RuntimeError('Invalid shared browser token')
     req=Request('http://127.0.0.1:18767/rpc',
@@ -20,7 +49,22 @@ def _rpc(action,**args):
         headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'},method='POST')
     try:
         with urlopen(req,timeout=48) as response:response_data=json.load(response)
-    except Exception as exc:raise RuntimeError('Shared browser RPC: '+str(exc)) from exc
+    except HTTPError as exc:
+        try:payload=json.load(exc)
+        except Exception:payload={}
+        raise RuntimeError(str(payload.get('error') or 'Browser HTTP '+str(exc.code))) from exc
+    except OSError as exc:
+        if action == 'cooperation_status':
+            return {'running':False,'state':'not_started','on_demand':True}
+        _start_if_needed(action)
+        try:
+            with urlopen(req,timeout=48) as response:response_data=json.load(response)
+        except HTTPError as second:
+            try:payload=json.load(second)
+            except Exception:payload={}
+            raise RuntimeError(str(payload.get('error') or 'Browser HTTP '+str(second.code))) from second
+        except OSError as second:
+            raise RuntimeError('Shared browser could not start in the interactive Windows session') from second
     if not response_data.get('ok'):raise RuntimeError(str(response_data.get('error') or 'Browser error'))
     return response_data.get('result') or {}
 

@@ -7,3 +7,7 @@ Adds approved-origin JavaScript execution and reusable document-creation/ready s
 Uses ChatGPT's authenticated conversation API when available and a visibly marked partial DOM fallback. The selectable exporter includes user/assistant filtering, formatting, timestamps, PDF, Markdown, JSON, ZIP with local assets and missing-asset records. No third-party PDF or upload service is used. The browser API is undocumented and may change.
 
 `conversation_preview()` retrieves selection indices and coverage; `conversation_export(selected_indices=[...], fmt="zip")` writes local files. The browser's left-side Export UI invokes the same operations.
+
+
+### r11r9 shared Qt updates
+Browser RPC starts the original single-instance Qt helper on demand for explicit operations, not for read-only health/status. Existing API-first conversation extraction and local export are unchanged. Live Qt ChatGPT login and API behavior must be validated on KHzz.
