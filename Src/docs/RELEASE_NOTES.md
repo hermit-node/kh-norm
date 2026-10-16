@@ -1171,3 +1171,7 @@ Rules:
 
 Norm was already under active development before formal `0.51.x` release naming. That work established the PostgreSQL/Redis coordinator model, step-aware planning/verification, cancellation safety, temporary thinking persistence, targeted PostgreSQL pruning, shell evidence capture, busy-state reporting, `/status-context`, and the first GUI/operator shell. Detailed chronology remains in `DEVELOPMENT_NOTES.md`; these pre-version milestones are not presented as invented releases.
 
+
+
+## 0.55.10r10 terminal-only launcher restoration
+Restore Run-Norm-Terminals.bat for the three independent operator terminals. The norm-ssh.ps1 startup menu launches that BAT instead of the Qt Focus default. The r9 prompt queue, Celery, N1/N2, Redis, memory, and GUI code remain unchanged.

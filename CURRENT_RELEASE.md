@@ -1,6 +1,6 @@
-# Norm 0.55.10r9 - 20Memory-Batch-Verified
+# Norm 0.55.10r10 - Terminal-Launcher
 
-Original archive SHA-256: 4c4ae5f9da3681567b4c952dddcc33b99a17e668ff8be224eacc2f8126f3c0c8
+Original archive SHA-256: f6931c3867e6f2f4d646a9c957069e6b82b73de8ace9c6881a28d818f12f70fa
 
 Historical assessment: source-inventory-verified
 
@@ -8,6 +8,6 @@ Omitted private paths: backups/plugins-ini/plugins-20261014-151017-561326+0000-7
 
 Sanitized paths: core/norm_main.py, core/norm_runtime/aiohttp_host.py
 
-Historical caveats: Original producer SHA-256 sidecar not provided; SHA-256 independently computed.
+Historical caveats: Top packaged release heading still describes r9; release identification supported by ZIP filename and embedded inventory.
 
 Public source snapshot is not identical to the original ZIP or guaranteed installable.

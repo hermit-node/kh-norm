@@ -136,13 +136,13 @@ print(json.dumps({'norm_host': resolve_network_host(network, 'norm_host'), 'acti
         return
     }
     if (-not $NormHttpOK -or -not $ActivityOK) {
-        $StartCandidates = @('Run-Norm.bat', 'Run Norm.bat', 'Start-Norm.bat', 'Start Norm.bat')
+        $StartCandidates = @('Run-Norm-Terminals.bat')
         $StartBat = $StartCandidates | ForEach-Object { Join-Path $Root $_ } | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
         if (-not $StartBat) { throw "No Norm startup BAT found in $Root" }
         Write-Host 'A service is unreachable. This can also mean a Tailscale or network problem.' -ForegroundColor Yellow
-        $Answer = Read-NormMenuInput 'Run the Norm service startup health checks? [Y/N, Esc=back]'
+        $Answer = Read-NormMenuInput 'Start Norm and independent terminal windows? [Y/N, Esc=back]'
         if ($Answer -match '^(?i:y|yes)$') {
-            Start-Process -FilePath $env:ComSpec -ArgumentList ('/d /s /c ""{0}" --service-only"' -f $StartBat) -WorkingDirectory $Root -WindowStyle Hidden
+            Start-Process -FilePath $env:ComSpec -ArgumentList ('/d /s /c ""{0}""' -f $StartBat) -WorkingDirectory $Root
             Write-Host 'Startup requested. Run norm again after startup completes.' -ForegroundColor Green
         }
         return

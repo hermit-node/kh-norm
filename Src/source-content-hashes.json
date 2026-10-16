@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "release": "0.55.10r9-chunked-condensation",
+  "release": "0.55.10r10-terminal-launcher",
   "baseline": "Norm-0.55.10r8-StegOSplit-StegoServe-2Plugin-Portable-Source.zip",
-  "file_count": 418,
+  "file_count": 420,
   "hash_algorithm": "sha256",
   "files": {
     ".gitattributes": {
@@ -25,13 +25,17 @@
       "bytes": 32642,
       "sha256": "e8afe4491a5bb0675ac6786708f6ce5d03c5130ad6ae4b8e839134ede2d1975b"
     },
+    "Run-Norm-Terminals.bat": {
+      "bytes": 1005,
+      "sha256": "d6a5b826b89540b6c82eb5e694eb577c635b4dd31c46c3a73c791a7f0203f3d9"
+    },
     "Run-Norm.bat": {
       "bytes": 4655,
       "sha256": "b1caace3a4f4db1b3a5b455732dd1f49f89931a8e4da62804f3728968fc539b9"
     },
     "SOURCE_PACKAGE.md": {
-      "bytes": 25958,
-      "sha256": "e9eebaccca93b6f1a4fe6df7a7a77a0046e1a808b4826b9143aff492820a46e4"
+      "bytes": 26099,
+      "sha256": "cb20c0c0eba17d5d4b5312af1414fa130f8f4de1ef742febe11390bbdc9079e2"
     },
     "Safe-Shutdown-Norm.bat": {
       "bytes": 519,
@@ -338,8 +342,8 @@
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
     },
     "docs/RELEASE_NOTES.md": {
-      "bytes": 161903,
-      "sha256": "28220885ee165ddbffb0a899d25adbb257651ef1c6e1738f55109431aade7619"
+      "bytes": 162194,
+      "sha256": "cfb93f3cacd3f6cd4f5bd7f7e13e0e542e1eb5fbf56f9ed500c3402a4a4dd78b"
     },
     "docs/SHARED_BROWSER.md": {
       "bytes": 6642,
@@ -510,8 +514,8 @@
       "sha256": "e3210b0077888d2f28437da01107b1d055fcb5d5f3fb9d76a9a1804528b72667"
     },
     "norm-ssh.ps1": {
-      "bytes": 8271,
-      "sha256": "5bde5d5429744fe7c6d770af6230bf3561ce248dae011e3f465e8e0772b741a3"
+      "bytes": 8195,
+      "sha256": "8c1215750298c25c88d5db35ed26e5d23ecf1b727ec7ad01ced442dbf96e6bb2"
     },
     "objects/README.md": {
       "bytes": 6512,
@@ -546,8 +550,8 @@
       "sha256": "814cf6e096ac167f56bbb47c98287818949ec13c65843574b3a733698c91f982"
     },
     "package-manifest.json": {
-      "bytes": 39411,
-      "sha256": "996195b9e66e7a2b3b6af236e9822ebd6a6ae7443d282871cc16af499dd4b385"
+      "bytes": 39742,
+      "sha256": "53a11fa4da04aa71504cfd768d3aa21c8cee09e5dce3b2cceb7fe92ab058e211"
     },
     "plugins/README.md": {
       "bytes": 781,
@@ -1560,6 +1564,10 @@
     "tools/test_task_round_leases.py": {
       "bytes": 3022,
       "sha256": "8569d176184a19553b157cf12d55018e62e59d8f5c5742c7d468da03fbfdfd68"
+    },
+    "tools/test_terminal_launcher_r10.py": {
+      "bytes": 823,
+      "sha256": "55475be9d8e748bbe54880beadeb97af5a1575f08020042f863f2c511bf67760"
     },
     "tools/test_validation_pool_replay.py": {
       "bytes": 5285,

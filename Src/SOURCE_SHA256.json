@@ -1,5 +1,5 @@
 {
-  "package": "Norm-0.55.10r9-20Memory-Batch-Verified-Portable-Source",
+  "package": "Norm-0.55.10r10-Terminal-Launcher-Portable-Source",
   "source_baseline": "Norm-0.55.10r8-StegOSplit-StegoServe-2Plugin-Portable-Source.zip",
   "files": [
     {
@@ -28,14 +28,19 @@
       "bytes": 32642
     },
     {
+      "file": "Run-Norm-Terminals.bat",
+      "sha256": "d6a5b826b89540b6c82eb5e694eb577c635b4dd31c46c3a73c791a7f0203f3d9",
+      "bytes": 1005
+    },
+    {
       "file": "Run-Norm.bat",
       "sha256": "b1caace3a4f4db1b3a5b455732dd1f49f89931a8e4da62804f3728968fc539b9",
       "bytes": 4655
     },
     {
       "file": "SOURCE_PACKAGE.md",
-      "sha256": "e9eebaccca93b6f1a4fe6df7a7a77a0046e1a808b4826b9143aff492820a46e4",
-      "bytes": 25958
+      "sha256": "cb20c0c0eba17d5d4b5312af1414fa130f8f4de1ef742febe11390bbdc9079e2",
+      "bytes": 26099
     },
     {
       "file": "Safe-Shutdown-Norm.bat",
@@ -419,8 +424,8 @@
     },
     {
       "file": "docs/RELEASE_NOTES.md",
-      "sha256": "28220885ee165ddbffb0a899d25adbb257651ef1c6e1738f55109431aade7619",
-      "bytes": 161903
+      "sha256": "cfb93f3cacd3f6cd4f5bd7f7e13e0e542e1eb5fbf56f9ed500c3402a4a4dd78b",
+      "bytes": 162194
     },
     {
       "file": "docs/SHARED_BROWSER.md",
@@ -634,8 +639,8 @@
     },
     {
       "file": "norm-ssh.ps1",
-      "sha256": "5bde5d5429744fe7c6d770af6230bf3561ce248dae011e3f465e8e0772b741a3",
-      "bytes": 8271
+      "sha256": "8c1215750298c25c88d5db35ed26e5d23ecf1b727ec7ad01ced442dbf96e6bb2",
+      "bytes": 8195
     },
     {
       "file": "objects/README.md",
@@ -679,8 +684,8 @@
     },
     {
       "file": "package-manifest.json",
-      "sha256": "996195b9e66e7a2b3b6af236e9822ebd6a6ae7443d282871cc16af499dd4b385",
-      "bytes": 39411
+      "sha256": "53a11fa4da04aa71504cfd768d3aa21c8cee09e5dce3b2cceb7fe92ab058e211",
+      "bytes": 39742
     },
     {
       "file": "plugins/README.md",
@@ -1294,8 +1299,8 @@
     },
     {
       "file": "source-content-hashes.json",
-      "sha256": "2a4f674cfb5b23b8d43a1ceb5056d5b395f298805992f86e2de53945a438f0c2",
-      "bytes": 65952
+      "sha256": "9a870df0a4eda83529d8fd8bcda5777c7ce7bfdcbc7f7622bbb5316db6ea66bb",
+      "bytes": 66248
     },
     {
       "file": "tools/7zip/7z.dll",
@@ -1951,6 +1956,11 @@
       "file": "tools/test_task_round_leases.py",
       "sha256": "8569d176184a19553b157cf12d55018e62e59d8f5c5742c7d468da03fbfdfd68",
       "bytes": 3022
+    },
+    {
+      "file": "tools/test_terminal_launcher_r10.py",
+      "sha256": "55475be9d8e748bbe54880beadeb97af5a1575f08020042f863f2c511bf67760",
+      "bytes": 823
     },
     {
       "file": "tools/test_validation_pool_replay.py",

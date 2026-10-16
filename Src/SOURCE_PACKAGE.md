@@ -1,3 +1,9 @@
+# Norm 0.55.10r10 - terminal-only launcher restored
+
+Only the launch route and package metadata changed from r9. See r9 details below.
+
+---
+
 # Norm 0.55.10r9 — source-only full memory batch commits
 
 This revision extends the exact r8 StegoSplit/StegoServe portable-source baseline with **only** the maintenance-source changes and associated configuration/tests/docs. Full destructive maintenance now inventories/fixes source data into PostgreSQL, groups up to 20 memories, explicitly N1-reviews and reconstructs every retained memory, then atomically commits the condensed output and deletes originals before advancing. New records wait for later inventory. Pending input is stored until committed, then removed. Weekly incremental JSON checkpoints are also source-frozen, avoiding the previously observed fingerprint restart loop. No live migration, flash, database delete, installation or service restart was attempted.

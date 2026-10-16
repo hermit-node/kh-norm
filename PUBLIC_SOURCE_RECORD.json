@@ -1,14 +1,14 @@
 {
-  "version": "0.55.10r9",
-  "variant": "20Memory-Batch-Verified",
-  "tag": "v0.55.10r9",
-  "source_archive_sha256": "4c4ae5f9da3681567b4c952dddcc33b99a17e668ff8be224eacc2f8126f3c0c8",
-  "source_archive": "0.55.10r9--20Memory-Batch-Verified--4c4ae5f9da36.zip",
+  "version": "0.55.10r10",
+  "variant": "Terminal-Launcher",
+  "tag": "v0.55.10r10",
+  "source_archive_sha256": "f6931c3867e6f2f4d646a9c957069e6b82b73de8ace9c6881a28d818f12f70fa",
+  "source_archive": "0.55.10r10--Terminal-Launcher--f6931c3867e6.zip",
   "quality": "source-inventory-verified",
   "known_issues": [
-    "Original producer SHA-256 sidecar not provided; SHA-256 independently computed."
+    "Top packaged release heading still describes r9; release identification supported by ZIP filename and embedded inventory."
   ],
-  "published_source_files": 347,
+  "published_source_files": 349,
   "omitted_paths": [
     "backups/plugins-ini/plugins-20261014-151017-561326+0000-72956dfad8bb.ini",
     "config/plugins.ini",
