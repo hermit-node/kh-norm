@@ -108,3 +108,10 @@ browser. This sends an authenticated local Show command, NOT an
 independent Chromium browser/profile. If the browser is not running,
 the normal interactive-session starter launches the helper first.
 The older Launch Browser.cmd is now a compatibility alias.
+
+## Visual conversation PDF (0.55.9r13)
+
+The persistent shared Qt browser now offers Visual PDF and Cancel PDF. The first exports a stitched PNG and an image-based paginated PDF of the active ChatGPT conversation, with a separate page-break diagnostics file in the configured workspace/web/shared_browser/exports directory. Existing exports are not replaced.
+Tools: browser_shared_visual_title_context(last_user=3) reads recent loaded user turns; Norm can select a descriptive title and call browser_shared_visual_pdf(name=...). browser_shared_visual_status() reports progress and output paths; browser_shared_visual_cancel() interrupts. Browser must remain visible and Norm must hold control during capture. The Chromium profile is reused, not cloned.
+
+Activation: on Windows run Activate Visual PDF.cmd after installing/updating. It restarts only the Qt shared-browser helper, retaining its profile and reopening the URL (not preserving the prior scroll position). Qt viewport capture is distinct from text-first browser_shared_pdf; lazy/virtualized chat history may remain missing and completeness is always unverified.

@@ -1,20 +1,22 @@
 {
   "schema_version": 2,
   "name": "Norm Shared Browser",
-  "version": "0.1.1",
-  "date": "2026-10-11",
+  "version": "0.1.2",
+  "date": "2026-10-12",
   "entrypoint": "src/main.py",
-  "description": "Shared Chromium with independent visibility/control; guarded JSONL/PDF export.",
+  "description": "Shared Chromium, DOM archive, searchable PDF and stitched screenshot PDF with auto naming.",
   "capabilities": [
     "human/Norm shared Chromium session",
     "DOM selectors",
     "conversation archive",
-    "PDF"
+    "PDF",
+    "Stitched visual PDF export",
+    "Recent user-message title context"
   ],
   "settings": {
     "shared_browser": {
       "enabled": true
     }
   },
-  "sha256": "3760988a28f52353e7b16866df721a6964c8b33539ede4ae422c063fd4c17b5b"
+  "sha256": "390ed6233ee06a4ff4236990167855d2dc3d5dde987a9568ddc56587b819eea9"
 }

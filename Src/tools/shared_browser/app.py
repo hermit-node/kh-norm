@@ -28,6 +28,7 @@ from PySide6.QtCore import QObject, QUrl, Signal, Slot, Qt, QTimer
 from PySide6.QtWidgets import QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QPushButton,QLineEdit,QLabel
 from PySide6.QtWebEngineCore import QWebEnginePage,QWebEngineProfile,QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
+from visual_capture import VisualCapture
 
 TOKEN=ROOT/"state"/"shared_browser_token"
 sys.path.insert(0,str(ROOT/"core"))
@@ -68,25 +69,38 @@ class Browser(QMainWindow):
         forward=QPushButton("Forward");forward.clicked.connect(self.view.forward)
         reload=QPushButton("Reload");reload.clicked.connect(self.view.reload)
         go=QPushButton("Go");go.clicked.connect(self._navigate)
-        hide=QPushButton("Hide");hide.clicked.connect(self.hide)
+        hide=QPushButton("Hide");hide.clicked.connect(self._hide_requested)
         self.take_button=QPushButton("Take Control")
         self.take_button.clicked.connect(self._take)
         self.release_button=QPushButton("Return Control to Norm")
         self.release_button.clicked.connect(self._release)
+        self.nav_buttons=(back,forward,reload,go)
+        self.export_button=QPushButton("Visual PDF")
+        self.export_button.setToolTip("Capture conversation top-to-bottom; auto-name from recent user turns")
+        self.export_button.clicked.connect(self._export_ui)
+        self.cancel_button=QPushButton("Cancel PDF")
+        self.cancel_button.clicked.connect(lambda:self.visual.cancel())
+        self.cancel_button.setEnabled(False)
         for x in (back,forward,reload):tools.addWidget(x)
         tools.addWidget(self.address,1)
-        for x in (go,self.take_button,self.release_button,hide):tools.addWidget(x)
+        for x in (go,self.take_button,self.release_button,self.export_button,self.cancel_button,hide):tools.addWidget(x)
         self.label=QLabel("Norm has control | 2 GiB cache; 32 GiB archive; 12 GiB JS ceiling")
         self._update_control_indicators()
         layout.addLayout(tools);layout.addWidget(self.label);layout.addWidget(self.view,1)
         self.setCentralWidget(bar)
         self.bridge=CommandBridge(self)
         self.bridge.request.connect(self.dispatch,Qt.ConnectionType.QueuedConnection)
+        self.visual=VisualCapture(self,BASE)
+        self.visual_timer=QTimer(self)
+        self.visual_timer.timeout.connect(self._visual_update)
+        self.visual_timer.start(900)
     def _loading(self):self.loading=True;self.load_ok=None
     def _loaded(self,ok):
         self.loading=False;self.load_ok=bool(ok)
         self._update_control_indicators()
-    def _navigate(self):self.page.setUrl(QUrl.fromUserInput(self.address.text().strip()))
+    def _navigate(self):
+        if self.visual.job is not None:return
+        self.page.setUrl(QUrl.fromUserInput(self.address.text().strip()))
     def _update_control_indicators(self):
         self.take_button.setEnabled(not self.manual)
         self.release_button.setEnabled(self.manual)
@@ -98,11 +112,43 @@ class Browser(QMainWindow):
                 "load failed" if self.load_ok is False else "no page loaded")
         self.label.setText(f"{controller} | {loaded}")
     def _take(self):
+        if self.visual.job is not None:
+            self.label.setText("Visual export in progress; cancel it before changing control")
+            return
         self.manual=True
         self._update_control_indicators()
     def _release(self):
         self.manual=False
         self._update_control_indicators()
+    def _hide_requested(self):
+        if self.visual.job is not None:
+            self.label.setText("Visual export requires visible Chromium; cancel export to hide")
+            return
+        self.hide()
+    def _export_ui(self):
+        try:
+            result=self.visual.start()
+            self.label.setText("Visual PDF started: "+result['id'])
+        except Exception as exc:
+            self.label.setText("Visual PDF not started: "+str(exc))
+    def _visual_update(self):
+        result=self.visual.status()
+        busy=self.visual.job is not None
+        self.export_button.setEnabled(not busy)
+        self.cancel_button.setEnabled(busy)
+        self.take_button.setEnabled(not self.manual and not busy)
+        for button in self.nav_buttons:
+            button.setEnabled(not busy)
+        self.address.setReadOnly(busy)
+        if result['state']=='capturing':
+            self.label.setText(f"Visual PDF: {result.get('frames',0)} frames | "+
+                               f"{result.get('scroll_y',0)} / {result.get('max_scroll',0)} px")
+        elif result['state']=='assembling':
+            self.label.setText("Visual PDF: assembling and paginating...")
+        elif result['state']=='complete':
+            self.label.setText("Visual PDF saved: "+result['pdf'])
+        elif result['state']=='failed':
+            self.label.setText("Visual PDF failed: "+result['error'])
     def closeEvent(self,event):
         event.ignore();self.hide()
     @staticmethod
@@ -123,8 +169,11 @@ class Browser(QMainWindow):
     @Slot(object)
     def dispatch(self,job):
         act=str(job.get("action") or "");args=job.get("args") or {}
-        if self.manual and act not in ("status","show","hide","take_control","release"):
+        if self.manual and act not in ("status","show","hide","take_control","release","visual_pdf_status","visual_pdf_cancel"):
             self.done(job,error="Human controls this page; return control to Norm")
+            return
+        if self.visual.job is not None and act not in ("status","visual_pdf_status","visual_pdf_cancel"):
+            self.done(job,error="Visual PDF capture in progress; other page actions paused")
             return
         try:
             if act=="status":
@@ -211,6 +260,12 @@ class Browser(QMainWindow):
                     "if(!e)return {found:false};e.focus();e.value="+value+";"
                     "e.dispatchEvent(new Event('input',{bubbles:true}));"
                     "e.dispatchEvent(new Event('change',{bubbles:true}));return {found:true};})()")
+            elif act=="visual_pdf_start":
+                self.done(job,self.visual.start(args.get("name","")))
+            elif act=="visual_pdf_status":
+                self.done(job,self.visual.status())
+            elif act=="visual_pdf_cancel":
+                self.done(job,self.visual.cancel())
             elif act=="quit":
                 self.done(job,{"closing":True})
                 QTimer.singleShot(100,QApplication.instance().quit)

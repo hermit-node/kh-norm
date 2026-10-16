@@ -1,3 +1,7 @@
+# Norm 0.55.9r13 - Shared-browser visual-PDF source
+
+Based on Norm 0.55.9r12 source, preserving core and installer-facing settings. Adds Qt Chromium viewport stitching, speaker-aware PDF pagination, naming from recent user messages, and native shared-browser tool bindings. See docs/RELEASE_NOTES.md and docs/SHARED_BROWSER.md.
+
 # Norm 0.55.9r4 - integrated reversible folder trash and quiet workers
 
 This build preserves N1 verification-pool/tool authorization, N2 reasoning

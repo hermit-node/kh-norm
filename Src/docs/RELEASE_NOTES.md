@@ -1,3 +1,13 @@
+## Norm 0.55.9r13 - Shared-browser visual PDF integration (2026-10-12)
+
+- Based on the verified 0.55.9r12 portable-source ZIP; no installer, runtime configuration, custom plugins, state, or environment files were replaced in an existing installation.
+- The existing shared Qt Chromium tab can capture a top-to-bottom stitched PNG and produce a paginated visual PDF. User-message bubbles are preferred as page breaks; long responses are split at whitespace when necessary. Each PDF has a diagnostic break report.
+- Visual PDF / Cancel PDF toolbar controls, plus browser_shared_visual_pdf, browser_shared_visual_status, browser_shared_visual_cancel, and browser_shared_visual_title_context are exposed.
+- Norm can read the last loaded user messages and supply a descriptive PDF filename; manual toolbar export uses a deterministic keyword-based fallback. Exports use unique filenames and never silently overwrite existing files.
+- Project conversations under /g/<project-id>/c/<conversation-id> are accepted.
+- A live Qt helper restart is required to activate the new toolbar; normal text-first searchable PDF export remains separate and available. Captured PDFs are image-based and do not certify fully loaded conversation history.
+- Capture tests use synthetic scroll frames and pagination plus source/plugin integrity validation. Real logged-in Qt scrolling remains to be tested.
+
 ## Norm 0.55.9r12 — PDF dependency packaging repair (2026-10-12)
 
 - Built from the later standalone 0.55.9r11 portable-source ZIP, preserving its additional GUI/Celery shutdown corrections and regression test. No redesign or changes to the shared_browser exporter.

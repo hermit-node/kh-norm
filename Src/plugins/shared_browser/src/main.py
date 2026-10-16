@@ -117,9 +117,10 @@ def _slug(name: str) -> str:
 def _valid_chat_url(url: str) -> bool:
     from urllib.parse import urlparse
     u=urlparse(url)
+    import re
     return (u.scheme=="https" and (u.hostname or "").casefold()
             in {"chatgpt.com","chat.openai.com"} and
-            (u.path.startswith("/c/") or u.path.startswith("/share/")))
+            bool(re.search(r"/(?:c|share)/[A-Za-z0-9_-]+(?:/|$)",u.path)))
 
 
 def browser_shared_archive_loaded(name: str = "chatgpt", *, max_messages: int = 6000) -> dict:
@@ -266,3 +267,38 @@ def browser_shared_pdf(name: str = "chatgpt") -> dict:
             "pages":pages,"content_chars":content_chars,
             "status":"partial_unverified","entire_conversation_verified":False,
             "warning":"This confirms only the archived messages were rendered, not that the full ChatGPT conversation was captured."}
+
+
+def browser_shared_visual_pdf(name: str = "") -> dict:
+    """Start high-fidelity visual PDF capture in the *shared* Chromium tab.
+
+    Optional name overrides the suggested filename. When empty, the helper
+    examines recent user turns for a filename. Work continues asynchronously.
+    """
+    return _rpc("visual_pdf_start", name=str(name or "")[:90])
+
+
+def browser_shared_visual_status() -> dict:
+    """Get visual capture progress, page count, output paths, or failure reason."""
+    return _rpc("visual_pdf_status")
+
+
+def browser_shared_visual_cancel() -> dict:
+    """Cancel an active visual capture without overwriting past exports."""
+    return _rpc("visual_pdf_cancel")
+
+
+def browser_shared_visual_title_context(last_user: int = 3) -> dict:
+    """Get recent loaded USER lines for an LLM-generated export title."""
+    state=_rpc("messages",start=0,count=1)
+    url=str(state.get("url") or "")
+    if not _valid_chat_url(url):
+        raise RuntimeError("Open a ChatGPT conversation first")
+    total=int(state.get("total_loaded") or 0)
+    tail=_rpc("messages",start=max(0,total-40),count=40)
+    prompts=[str(x.get("text") or "").strip()[:320]
+             for x in tail.get("messages",[])
+             if x.get("role")=="user" and str(x.get("text") or "").strip()]
+    return {"url":url,"title":str(state.get("title") or ""),
+            "recent_user_messages":prompts[-max(1,min(6,int(last_user))):],
+            "loaded_messages":total,"entire_conversation_verified":False}

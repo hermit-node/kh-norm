@@ -10,3 +10,9 @@ Norm Shared Browser r11:
  Paths: configured Documents workspace/web/shared_browser/exports
  Double-click C:\Norm\Show Shared Browser.cmd to reveal the
  existing browser from Windows Explorer, without spawning another.
+
+browser_shared_visual_pdf(name="") - asynchronous stitched screenshot PDF; optional name
+browser_shared_visual_status - poll frames, output paths, capture uncertainty
+browser_shared_visual_cancel - stop in-progress capture without altering saved PDFs
+
+browser_shared_visual_title_context(last_user=3) - recent user turns for choosing PDF name
