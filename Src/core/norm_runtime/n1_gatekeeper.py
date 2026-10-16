@@ -39,6 +39,25 @@ _CACHEABLE_PLUGIN_FUNCTIONS = {
     "compose_context", "active_profile", "validate_backup_setup",
 }
 
+# Model-facing evidence may intentionally differ from literal source material where
+# sensitive values are withheld upstream. N1 never receives those literal values and
+# must not teach N2 how that withholding works. Its only job here is to stop attempts
+# to reconstruct such a value and redirect database work to the capability both agents
+# already have.
+_BIRD_REDIRECT = "The Bird says No. The Worm won't Go. I can query the database directly."
+_BIRD_LOOP_REDIRECT = "The Bird says No. The Worm won't Go. Use the database access I already offered."
+_SECRET_TERM_RE = re.compile(r"(?i)\b(?:password|passwd|pwd|credential|secret|token|api[_ -]?key|access[_ -]?key|private[_ -]?key|authorization)\b")
+_SECRET_VALUE_INTENT_RE = re.compile(
+    r"(?i)(?:\b(?:actual|literal|raw|hidden|real|exact|underlying)\b.{0,80}\b(?:password|passwd|pwd|credential|secret|token|api[_ -]?key|access[_ -]?key|private[_ -]?key)\b"
+    r"|\b(?:password|passwd|pwd|credential|secret|token|api[_ -]?key|access[_ -]?key|private[_ -]?key)\b.{0,80}\b(?:value|reveal|recover|extract|obtain|show|expose|reconstruct|guess|discover|bypass|unredact)\b"
+    r"|\b(?:what is|show me|give me|find the|search for the|locate the)\b.{0,80}\b(?:password|passwd|pwd|credential|secret|token|api[_ -]?key|access[_ -]?key|private[_ -]?key)\b"
+    r"|\b(?:password|passwd|pwd|credential|secret|token)\b.{0,80}\b(?:did not work|didn't work|does not work|doesn't work|failed|invalid)\b)"
+)
+_SENSITIVE_DECLINE_RE = re.compile(
+    r"(?i)\b(?:do not|don't|dont|no need to|without|avoid|stop trying to|will not|won't)\b.{0,100}\b(?:password|passwd|pwd|credential|secret|token|api[_ -]?key|access[_ -]?key|private[_ -]?key)\b"
+)
+_DB_CAPABILITY_FUNCTIONS = {"postgres_pool", "postgres_query", "postgres_execute"}
+
 
 @dataclass
 class GateOutcome:
@@ -114,6 +133,8 @@ class N1Gatekeeper:
         self._loop_reset_emitted: OrderedDict[str, None] = OrderedDict()
         self._turn_history: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
         self._turn_loop_judgments: OrderedDict[str, None] = OrderedDict()
+        self._sensitive_probe_counts: OrderedDict[str, int] = OrderedDict()
+        self._sensitive_probe_pending: OrderedDict[str, int] = OrderedDict()
         self._maintenance_judgments = {"total": 0, "accept": 0, "retry": 0, "destructive_accept": 0, "processing_failed": 0, "review_failure_pass": 0}
         self._ingress_reviews = {"total": 0, "success": 0, "failed": 0}
         self._routing_reviews = {"total": 0, "accept": 0, "retry": 0, "processing_failed": 0}
@@ -625,6 +646,80 @@ class N1Gatekeeper:
                 return False
         return True
 
+    @staticmethod
+    def _database_capability_tool(name: str) -> bool:
+        function_name = str(name or "").rsplit("__", 1)[-1]
+        return function_name in _DB_CAPABILITY_FUNCTIONS
+
+    @staticmethod
+    def _looks_like_sensitive_value_probe(*parts: object) -> bool:
+        text = " ".join(str(part or "") for part in parts)
+        if not (_SECRET_TERM_RE.search(text) and _SECRET_VALUE_INTENT_RE.search(text)):
+            return False
+        # Do not trap N2 after it accepts the redirect and explicitly says it can
+        # proceed without the literal credential.
+        if _SENSITIVE_DECLINE_RE.search(text) and not re.search(
+            r"(?i)\b(?:did not work|didn't work|does not work|doesn't work|failed|invalid)\b", text
+        ):
+            return False
+        return True
+
+    @staticmethod
+    def _looks_like_manual_database_connection_attempt(name: str, arguments: dict[str, Any]) -> bool:
+        if str(name or "") != "run_command":
+            return False
+        rendered = json.dumps(redact(arguments), ensure_ascii=False, sort_keys=True, default=str).casefold()
+        # Database access is already a first-class capability. Redirect actual shell-
+        # created connections, but do not block harmless commands such as printing a
+        # psycopg/psql version.
+        if re.search(r"\bpsycopg2?\.connect\s*\(", rendered):
+            return True
+        if "postgresql://" in rendered or "postgres://" in rendered:
+            return True
+        if re.search(r"\bpsql\b", rendered) and re.search(r"(?:\s-h\b|\s-d\b|\s-u\b|host=|dbname=|user=)", rendered):
+            return True
+        return False
+
+    def _remember_sensitive_probe(self, key: str, pending_calls: int = 0) -> int:
+        with self._lock:
+            count = int(self._sensitive_probe_counts.get(key, 0)) + 1
+            self._sensitive_probe_counts[key] = count
+            self._sensitive_probe_counts.move_to_end(key)
+            if pending_calls > 0:
+                self._sensitive_probe_pending[key] = max(int(self._sensitive_probe_pending.get(key, 0)), int(pending_calls))
+                self._sensitive_probe_pending.move_to_end(key)
+            while len(self._sensitive_probe_counts) > self.request_state_entries:
+                expired, _ = self._sensitive_probe_counts.popitem(last=False)
+                self._sensitive_probe_pending.pop(expired, None)
+            while len(self._sensitive_probe_pending) > self.request_state_entries:
+                self._sensitive_probe_pending.popitem(last=False)
+            return count
+
+    def _consume_sensitive_probe_block(
+        self, *, task_id: str, step_id: str, name: str, need: str, target: str, arguments: dict[str, Any]
+    ) -> str:
+        if self._database_capability_tool(name):
+            return ""
+        key = f"{task_id}\n{step_id}"
+        direct_probe = self._looks_like_sensitive_value_probe(need, target) or self._looks_like_manual_database_connection_attempt(name, arguments)
+        with self._lock:
+            pending = int(self._sensitive_probe_pending.get(key, 0))
+            had_pending = pending > 0
+            known_count = int(self._sensitive_probe_counts.get(key, 0))
+            if had_pending:
+                pending -= 1
+                if pending > 0:
+                    self._sensitive_probe_pending[key] = pending
+                else:
+                    self._sensitive_probe_pending.pop(key, None)
+        if not direct_probe and not had_pending:
+            # No pending call from the sensitive turn and this new request is not
+            # itself probing; N2 changed approach, so leave it alone.
+            return ""
+        if direct_probe and known_count <= 0:
+            known_count = self._remember_sensitive_probe(key)
+        return _BIRD_LOOP_REDIRECT if known_count > 1 else _BIRD_REDIRECT
+
     def _remember_request(self, signature: str) -> int:
         with self._lock:
             count = int(self._request_counts.get(signature, 0)) + 1
@@ -870,6 +965,35 @@ class N1Gatekeeper:
         key = f"{task_id}\n{step_id}"
         history = self._record_turn(key, turn)
         compact_calls = turn.get("calls") or []
+
+        # Sensitive literal values are intentionally unavailable to both models. N1
+        # does not explain why or how; it only notices value-recovery/probing intent
+        # and redirects database work to the existing PostgreSQL capability.
+        raw_needs: list[str] = []
+        for call in list(calls or [])[:12]:
+            function = call.get("function") if isinstance(call, dict) else None
+            arguments = function.get("arguments", {}) if isinstance(function, dict) else (call.get("arguments", {}) if isinstance(call, dict) else {})
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except Exception:
+                    arguments = {}
+            if isinstance(arguments, dict):
+                raw_needs.append(str(arguments.get("n1_need") or ""))
+        if self._looks_like_sensitive_value_probe(thinking, content, " ".join(raw_needs)):
+            raw_tool_names: list[str] = []
+            for call in list(calls or [])[:12]:
+                function = call.get("function") if isinstance(call, dict) else None
+                raw_tool_names.append(str(function.get("name") or "") if isinstance(function, dict) else str(call.get("name") or "") if isinstance(call, dict) else "")
+            unsafe_call_count = sum(1 for tool_name in raw_tool_names if tool_name and not self._database_capability_tool(tool_name))
+            # If N2 already pivoted to the supported PostgreSQL capability, let it
+            # proceed without commentary. Otherwise remember only the calls that
+            # should be stopped on this turn.
+            if raw_tool_names and unsafe_call_count == 0:
+                return ""
+            probe_count = self._remember_sensitive_probe(key, pending_calls=unsafe_call_count)
+            return _BIRD_LOOP_REDIRECT if probe_count > 1 else _BIRD_REDIRECT
+
         if compact_calls and all(self.information_tool(str(item.get("tool") or "")) for item in compact_calls):
             # Information repetition is resolved at the Redis verification boundary.
             # N2 gets evidence, not a "use prior evidence" loop-reset instruction.
@@ -1105,6 +1229,28 @@ class N1Gatekeeper:
             return GateOutcome(
                 True, clean, target=target, need=need, signature=signature, scope=scope,
                 reset_instruction=reset, streamed_read=streamed_read,
+            )
+
+        sensitive_redirect = self._consume_sensitive_probe_block(
+            task_id=task_id, step_id=step_id, name=name, need=need, target=target, arguments=clean
+        )
+        if sensitive_redirect:
+            return GateOutcome(
+                False,
+                clean,
+                result={
+                    "ok": False,
+                    "tool": name,
+                    "n1_redirected": True,
+                    "error": sensitive_redirect,
+                },
+                target=target,
+                need=need,
+                note="N1 redirected an attempt to recover a sensitive literal value toward existing database capability.",
+                reset_instruction=sensitive_redirect,
+                signature=signature,
+                scope=scope,
+                streamed_read=streamed_read,
             )
         if not is_information:
             if count >= self.loop_repeat_threshold:

@@ -1,6 +1,6 @@
-# Norm 0.54.2b portable source package
+# Norm 0.54.2c portable source package
 
-This directory is the portable source payload for **Norm 0.54.2b**.
+This directory is the portable source payload for **Norm 0.54.2c**.
 
 The portable source package excludes generated or machine-private material such as .venv, compiled core\norm.exe, build output, Python caches, secrets, and private runtime state.
 
@@ -61,6 +61,13 @@ Installer 1.6.9 binds the portable-source ZIP by exact filename and SHA-256, mig
 ## 0.53.20 optional web plugin
 
 This package includes schema-2 `plugins\web_browser` v1.0.0 and exact direct pins for Playwright 1.63.0, Beautiful Soup 4.15.0, Soup Sieve 2.10, and Trafilatura 2.3.0. The plugin delegates its third-party web runtime to the installed `.venv`, so the portable plugin remains independently removable and does not require those libraries to be frozen into `norm.exe`.
+
+## 0.54.2c recovery scope and opaque database redirect
+
+- Oversize recovery no longer invents `scope_items=[1]` for ordinary unnumbered work. Atomic-item limits apply only when a real numbered scope exists.
+- Recovery-analysis examples now use the actual parent scope and advertise the four-subcheck limit only for a genuine single-item scope.
+- N1 now interrupts attempts to recover literal sensitive credential values with the opaque redirect `The Bird says No. The Worm won't Go. I can query the database directly.` Repeated probing gets a firmer database-access redirect.
+- Existing PostgreSQL pool/query/execute capabilities remain fully allowed; ordinary code analysis of credential usage is not blocked.
 
 ## 0.54.2b Redis verification-pool replay
 

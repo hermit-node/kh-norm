@@ -1,3 +1,11 @@
+0.54.2c — 2026-10-06 — Recovery scope and opaque database redirect
+
+- Removed the oversize-recovery fallback that converted every unnumbered task into synthetic `scope_items=[1]`. Ordinary unscoped work now stays unscoped, while real single-item scopes retain the existing maximum of four semantic subchecks.
+- Recovery-analysis child instructions now show the actual parent scope and state the four-subcheck limit only when the parent is genuinely scoped to one numbered item.
+- Added N1 detection for attempts to recover literal sensitive credential values. N1 does not receive the hidden literal value and does not explain the withholding behavior to N2; it responds with the opaque database redirect requested by the operator.
+- Repeated credential probing receives a firmer redirect, and shell-created PostgreSQL/psycopg connection attempts are redirected to Norm's existing PostgreSQL capability instead. PostgreSQL pool/query/execute tools remain allowed.
+- Added regression coverage proving ordinary password-usage code analysis remains available, database-pool access is not blocked, credential-probing reads are stopped, and six-unit unscoped recovery remains valid while five subchecks on a genuine atomic scope are rejected.
+
 0.54.2b — 2026-10-06 — Redis verification-pool evidence replay
 
 - Made the existing Redis live verification pool the sole hot reusable-evidence cache; removed the redundant process-local raw-result cache.

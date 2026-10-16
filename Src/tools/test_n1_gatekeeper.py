@@ -456,6 +456,99 @@ def test_ingress_failure_forwards_exact_text_fail_open():
     assert gate.boundary_stats()["ingress"]["failed"] == 1
 
 
+
+def test_sensitive_value_probe_gets_opaque_database_redirect_and_blocks_probe_call():
+    gate = N1Gatekeeper(FakeClient(), FakeLive())
+    calls = [{
+        "function": {
+            "name": "read_file",
+            "arguments": {
+                "path": r"D:\code\db_connect.py",
+                "n1_target": r"D:\code\db_connect.py",
+                "n1_need": "read more of db_connect.py to understand password usage",
+            },
+        }
+    }]
+    redirect = gate.observe_n2_turn(
+        task_id="t", step_id="s",
+        thinking="I need to find the actual hardcoded password value in this file.",
+        content="", calls=calls,
+    )
+    assert redirect == "The Bird says No. The Worm won't Go. I can query the database directly."
+
+    blocked = gate.before_tool(
+        task_id="t", step_id="s", name="read_file",
+        arguments={
+            "path": r"D:\code\db_connect.py",
+            "n1_target": r"D:\code\db_connect.py",
+            "n1_need": "read more of db_connect.py to understand password usage",
+        },
+    )
+    assert blocked.execute is False
+    assert blocked.result["n1_redirected"] is True
+    assert blocked.result["error"] == redirect
+    assert blocked.reset_instruction == redirect
+
+
+def test_database_pool_remains_allowed_after_sensitive_probe():
+    gate = N1Gatekeeper(FakeClient(), FakeLive())
+    gate.observe_n2_turn(
+        task_id="t", step_id="s",
+        thinking="I need the actual password value.",
+        calls=[{"function": {"name": "read_file", "arguments": {"path": "db_connect.py"}}}],
+    )
+    outcome = gate.before_tool(
+        task_id="t", step_id="s", name="plugin_postgres_pool__main__postgres_query",
+        arguments={"query": "select 1", "n1_target": "postgres", "n1_need": "verify database access"},
+    )
+    assert outcome.execute is True
+    assert outcome.reset_instruction == ""
+
+
+def test_repeated_sensitive_probe_gets_firmer_redirect():
+    gate = N1Gatekeeper(FakeClient(), FakeLive())
+    first = gate.observe_n2_turn(
+        task_id="t", step_id="s", thinking="Find the actual password value.", calls=[]
+    )
+    second = gate.observe_n2_turn(
+        task_id="t", step_id="s", thinking="That password didn't work; I need the real credential.", calls=[]
+    )
+    assert first == "The Bird says No. The Worm won't Go. I can query the database directly."
+    assert second == "The Bird says No. The Worm won't Go. Use the database access I already offered."
+
+
+def test_accepting_database_redirect_does_not_retrigger_bird():
+    gate = N1Gatekeeper(FakeClient(), FakeLive())
+    reset = gate.observe_n2_turn(
+        task_id="t", step_id="s",
+        thinking="I do not need the actual password; I can query the database directly instead.",
+        calls=[{"function": {"name": "plugin_postgres_pool__main__postgres_query", "arguments": {"query": "select 1"}}}],
+    )
+    assert reset == ""
+
+
+def test_password_usage_analysis_is_not_itself_blocked():
+    gate = N1Gatekeeper(FakeClient(), FakeLive())
+    outcome = gate.before_tool(
+        task_id="t", step_id="s", name="read_file",
+        arguments={
+            "path": "db_connect.py", "n1_target": "db_connect.py",
+            "n1_need": "understand how the password is passed into the DatabaseManager and where the connection is used",
+        },
+    )
+    assert outcome.execute is True
+
+
+def test_manual_database_credential_attempt_is_redirected_but_pool_is_not():
+    gate = N1Gatekeeper(FakeClient(), FakeLive())
+    manual = gate.before_tool(
+        task_id="t", step_id="s", name="run_command",
+        arguments={"command": "python -c \"import psycopg; psycopg.connect('host=x password=[REDACTED]')\""},
+    )
+    assert manual.execute is False
+    assert manual.result["n1_redirected"] is True
+    assert manual.result["error"].startswith("The Bird says No.")
+
 def test_third_repeated_noncacheable_call_is_blocked():
     gate = N1Gatekeeper(FakeClient(), FakeLive(), loop_repeat_threshold=3)
     args = {"command": "echo hi"}
@@ -484,7 +577,14 @@ if __name__ == "__main__":
         test_ingress_review_is_real_and_configurable_without_rewriting_user_text,
         test_final_answer_review_accept_retry_and_processing_failure_are_distinct,
         test_ingress_failure_forwards_exact_text_fail_open,
+        test_sensitive_value_probe_gets_opaque_database_redirect_and_blocks_probe_call,
+        test_database_pool_remains_allowed_after_sensitive_probe,
+        test_repeated_sensitive_probe_gets_firmer_redirect,
+        test_accepting_database_redirect_does_not_retrigger_bird,
+        test_password_usage_analysis_is_not_itself_blocked,
+        test_manual_database_credential_attempt_is_redirected_but_pool_is_not,
         test_third_repeated_noncacheable_call_is_blocked,
     ):
         fn()
         print(f"PASS {fn.__name__}")
+

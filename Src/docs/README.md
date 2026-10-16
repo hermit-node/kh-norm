@@ -2,7 +2,11 @@
 
 Norm is a local Windows agent/runtime built around Ollama, Redis, PostgreSQL, durable task/memory state, dynamic first-party plugins, and explicit operator controls.
 
-This document describes the current **Norm 0.54.2b / Installer 1.6.12-unified** package only. Version history belongs only in RELEASE_NOTES.md.
+This document describes the current **Norm 0.54.2c / Installer 1.6.12-unified** package only. Version history belongs only in RELEASE_NOTES.md.
+
+### Recovery scope + database-access redirect (0.54.2c)
+
+Unnumbered oversized work remains genuinely unscoped during recovery; Norm no longer invents `scope_items=[1]`, so atomic-item decomposition limits cannot be triggered by a synthetic scope. N1 also redirects attempts to recover literal sensitive credential values toward the existing PostgreSQL capability while leaving surrounding code/usage analysis and normal PostgreSQL pool/query/execute calls available.
 
 ### Redis verification-pool evidence replay (0.54.2b)
 

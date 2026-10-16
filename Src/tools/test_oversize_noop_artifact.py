@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import time
 from pathlib import Path
@@ -135,6 +136,35 @@ def main() -> None:
     expected = analysis_job.metadata["command_envelope"]["expected_output"]
     assert expected == {"type": "answer", "format": "json"}, expected
 
+    # Ordinary unnumbered work must remain unscoped. Historical code invented [1],
+    # which falsely activated the atomic-item <=4-subcheck recovery rule.
+    assert worker._recovery_scope_items(parent_job()) == []
+
+    six_units = {
+        "useful_points": [], "completed_work": [], "merge_requirements": [],
+        "remaining_units": [
+            {"name": f"u{i}", "instruction": f"do {i}", "verify": f"verify {i}", "scope_items": []}
+            for i in range(1, 7)
+        ],
+    }
+    parsed = worker._parse_recovery_analysis(json.dumps(six_units), parent_scope=[])
+    assert len(parsed["remaining_units"]) == 6
+
+    five_atomic = {
+        "useful_points": [], "completed_work": [], "merge_requirements": [],
+        "remaining_units": [
+            {"name": f"u{i}", "instruction": f"item 1 check {i}", "verify": f"verify {i}", "scope_items": [1]}
+            for i in range(1, 6)
+        ],
+    }
+    try:
+        worker._parse_recovery_analysis(json.dumps(five_atomic), parent_scope=[1])
+    except RuntimeError as exc:
+        assert "at most 4 semantic subchecks" in str(exc)
+    else:
+        raise AssertionError("genuine single-item scope should retain the <=4 semantic-subcheck limit")
+
+    print("PASS: unnumbered oversize recovery stays unscoped while genuine atomic scope keeps its bound")
     print("PASS: oversize no-op units do not inherit root artifact requirements")
     print("PASS: any reported write still requires deterministic post-write verification")
 
