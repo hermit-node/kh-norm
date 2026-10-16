@@ -1,3 +1,7 @@
+## 0.55.10r11 — Norm browser cooperation candidate
+
+Adds a small left action rail, bottom contextual **Ask Norm** prompt, persistent domain-scoped JavaScript and a selectable **convo_export** extension to the existing Qt shared browser. Selection supports user/assistant/media/code categories and local PDF, Markdown, JSON and attachment ZIP output. Existing cache/profile, Playwright, MSS, terminal launcher and control semantics remain. See [implementation/limitations](docs/NORM_BROWSER_COOPERATION.md). This release is source-only, offline-tested, **not yet live-validated on KHzz**.
+
 # Norm 0.55.10r9 — batch-verified condensation
 
 The full destructive history-maintenance pass uses frozen PostgreSQL worklists, **20 source memories per validation/commit/deletion checkpoint**. N1 must approve each keep/destroy; surviving memories must recreate their important prior context without raw source history. If any retained record fails reconstruction, nothing from that batch is deleted. Source fingerprints/timestamps are checked before pruning, with the verified output, deletion and PostgreSQL checkbox in one transaction. Failed/rebooted runs resume the exact unfinished batch. The regular/weekly condensation checkpoint also freezes its source, preventing changed background-history fingerprints from repeating approved batches. This remains a source-only package; it has NOT been installed or run against KHzz live PostgreSQL.

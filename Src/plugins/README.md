@@ -14,3 +14,5 @@ See [the maintained operator docs](../docs/README.md#plugin-operation-and-verifi
 - [verbatim_lines](verbatim_lines/README.md)
 - [vision_parse](vision_parse/README.md)
 - [voice_profile](voice_profile/README.md)
+
+- [norm_browser](norm_browser/README.md) — approved-domain browser cooperation and bundled selectable ChatGPT exporter

@@ -1,0 +1,6 @@
+Norm Browser Cooperation
+- Inspect/approve HTTPS sites from the Shared Browser left actions rail.
+- Ask Norm: natural-language browser tasks are submitted to the existing Norm prompt ingress.
+- Export: select conversation turns, choose PDF / Markdown / ZIP / JSON and formatting.
+- Page script tools: browser_script_execute, browser_script_register, browser_script_remove.
+- Session defaults to the existing shared Qt profile; Playwright remains a separate optional backend.

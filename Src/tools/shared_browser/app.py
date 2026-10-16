@@ -25,10 +25,15 @@ os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS",
 if "--enable-cdp" in sys.argv:
     os.environ.setdefault("QTWEBENGINE_REMOTE_DEBUGGING", "127.0.0.1:18768")
 from PySide6.QtCore import QObject, QUrl, Signal, Slot, Qt, QTimer
-from PySide6.QtWidgets import QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QPushButton,QLineEdit,QLabel
-from PySide6.QtWebEngineCore import QWebEnginePage,QWebEngineProfile,QWebEngineSettings
+from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,
+    QPushButton,QLineEdit,QLabel,QMessageBox)
+from PySide6.QtWebEngineCore import QWebEnginePage,QWebEngineProfile,QWebEngineSettings,QWebEngineScript
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from visual_capture import VisualCapture
+from browser_cooperation import ScriptRegistry,origin_from_url
+from conversation_js import (START as CONVO_START,STATUS as CONVO_STATUS,
+    PREVIEW as CONVO_PREVIEW,ITEM as CONVO_ITEM,EARLY_AUTH_HOOK)
+from browser_ui import ExportPanel,AskNormPanel
 
 TOKEN=ROOT/"state"/"shared_browser_token"
 sys.path.insert(0,str(ROOT/"core"))
@@ -45,6 +50,9 @@ class Browser(QMainWindow):
         super().__init__()
         self.setWindowTitle("Norm Shared Browser | Human + N1 + N2")
         self.resize(1400,900)
+        # Programmatic show never steals Windows foreground; a user click still
+        # activates the window normally.
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating,True)
         self.manual=False;self.loading=False;self.load_ok=None
         (BASE/"profile").mkdir(parents=True,exist_ok=True)
         (BASE/"cache").mkdir(parents=True,exist_ok=True)
@@ -55,38 +63,74 @@ class Browser(QMainWindow):
         self.profile.setPersistentCookiesPolicy(
             QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
         self.profile.setHttpCacheMaximumSize(DISK_CACHE)
+        # Preserve original persistent profile/cache/cookie settings exactly.
+        self.scripts=ScriptRegistry(self.profile,BASE)
+        # First-party conversation adapter hook, exact ChatGPT origin only.
+        # Does not expose captured authentication headers via the RPC.
+        early_hook=QWebEngineScript()
+        early_hook.setName('Norm:ChatGPT:auth-observer')
+        early_hook.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+        early_hook.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+        early_hook.setRunsOnSubFrames(False)
+        early_hook.setSourceCode(EARLY_AUTH_HOOK)
+        self.profile.scripts().insert(early_hook)
         self.page=QWebEnginePage(self.profile,self)
         self.view=QWebEngineView(self);self.view.setPage(self.page)
         self.page.setLifecycleState(QWebEnginePage.LifecycleState.Active)
         self.page.loadStarted.connect(self._loading)
         self.page.loadFinished.connect(self._loaded)
         self.page.urlChanged.connect(lambda u:self.address.setText(u.toString()))
+        self.page.urlChanged.connect(lambda _u:self._update_permission_button())
         self.address=QLineEdit(self)
         self.address.setPlaceholderText("https://chatgpt.com/...")
         self.address.returnPressed.connect(self._navigate)
-        bar=QWidget();layout=QVBoxLayout(bar);tools=QHBoxLayout()
-        back=QPushButton("Back");back.clicked.connect(self.view.back)
-        forward=QPushButton("Forward");forward.clicked.connect(self.view.forward)
-        reload=QPushButton("Reload");reload.clicked.connect(self.view.reload)
-        go=QPushButton("Go");go.clicked.connect(self._navigate)
-        hide=QPushButton("Hide");hide.clicked.connect(self._hide_requested)
-        self.take_button=QPushButton("Take Control")
-        self.take_button.clicked.connect(self._take)
-        self.release_button=QPushButton("Return Control to Norm")
-        self.release_button.clicked.connect(self._release)
+        bar=QWidget();layout=QVBoxLayout(bar)
+        layout.setContentsMargins(5,5,5,4);layout.setSpacing(3)
+        tools=QHBoxLayout()
+        back=QPushButton('←');back.setToolTip('Back');back.clicked.connect(self.view.back)
+        forward=QPushButton('→');forward.setToolTip('Forward');forward.clicked.connect(self.view.forward)
+        reload=QPushButton('↻');reload.setToolTip('Reload');reload.clicked.connect(self.view.reload)
+        go=QPushButton('Go');go.clicked.connect(self._navigate)
         self.nav_buttons=(back,forward,reload,go)
-        self.export_button=QPushButton("Visual PDF")
-        self.export_button.setToolTip("Capture conversation top-to-bottom; auto-name from recent user turns")
-        self.export_button.clicked.connect(self._export_ui)
-        self.cancel_button=QPushButton("Cancel PDF")
+        for button in (back,forward,reload):
+            button.setMaximumWidth(42);tools.addWidget(button)
+        tools.addWidget(self.address,1);tools.addWidget(go)
+        layout.addLayout(tools)
+
+        content=QWidget();content_layout=QHBoxLayout(content)
+        content_layout.setContentsMargins(0,0,0,0);content_layout.setSpacing(3)
+        rail=QWidget();rail.setMaximumWidth(130)
+        rail_layout=QVBoxLayout(rail);rail_layout.setContentsMargins(2,4,2,4)
+        rail_layout.setSpacing(5)
+        export=QPushButton('Export');export.setToolTip('Select conversation turns and formatting')
+        export.clicked.connect(self._toggle_export)
+        capture=QPushButton('Visual PDF');capture.clicked.connect(self._export_ui)
+        self.export_button=capture
+        self.export_button.setToolTip('Legacy screenshot-based visual PDF')
+        self.cancel_button=QPushButton('Cancel PDF')
         self.cancel_button.clicked.connect(lambda:self.visual.cancel())
         self.cancel_button.setEnabled(False)
-        for x in (back,forward,reload):tools.addWidget(x)
-        tools.addWidget(self.address,1)
-        for x in (go,self.take_button,self.release_button,self.export_button,self.cancel_button,hide):tools.addWidget(x)
-        self.label=QLabel("Norm has control | 2 GiB cache; 32 GiB archive; 12 GiB JS ceiling")
+        approve=QPushButton('Site scripts');approve.setToolTip('Approve or revoke JavaScript for this HTTPS site')
+        approve.clicked.connect(self._toggle_site_permission)
+        self.permission_button=approve
+        self.take_button=QPushButton('Take Control');self.take_button.clicked.connect(self._take)
+        self.release_button=QPushButton('Return Control');self.release_button.clicked.connect(self._release)
+        ask=QPushButton('Ask Norm');ask.clicked.connect(self._toggle_ask)
+        hide=QPushButton('Hide');hide.clicked.connect(self._hide_requested)
+        for button in (export,approve,capture,self.cancel_button,self.take_button,
+                       self.release_button,ask,hide):rail_layout.addWidget(button)
+        rail_layout.addStretch(1)
+        content_layout.addWidget(rail)
+        self.export_panel=ExportPanel(self._toggle_export,content)
+        self.export_panel.hide();content_layout.addWidget(self.export_panel)
+        content_layout.addWidget(self.view,1)
+        layout.addWidget(content,1)
+        self.ask_panel=AskNormPanel(self,bar)
+        self.ask_panel.hide()
+        layout.addWidget(self.ask_panel)
+        self.label=QLabel('Shared session | cache 2 GiB · archive 32 GiB · JS heap target 12 GiB')
         self._update_control_indicators()
-        layout.addLayout(tools);layout.addWidget(self.label);layout.addWidget(self.view,1)
+        layout.addWidget(self.label)
         self.setCentralWidget(bar)
         self.bridge=CommandBridge(self)
         self.bridge.request.connect(self.dispatch,Qt.ConnectionType.QueuedConnection)
@@ -94,10 +138,42 @@ class Browser(QMainWindow):
         self.visual_timer=QTimer(self)
         self.visual_timer.timeout.connect(self._visual_update)
         self.visual_timer.start(900)
+    def _toggle_ask(self):
+        self.ask_panel.setVisible(not self.ask_panel.isVisible())
+        if self.ask_panel.isVisible():self.ask_panel.editor.setFocus()
+
+    def _toggle_export(self):
+        active=not self.export_panel.isVisible()
+        self.export_panel.setVisible(active)
+        if active and not self.export_panel.tree.topLevelItemCount():
+            self.export_panel.refresh()
+
+    def _toggle_site_permission(self):
+        try:origin=origin_from_url(self.page.url().toString())
+        except ValueError as exc:
+            QMessageBox.warning(self,'Site permissions',str(exc));return
+        if origin in self.scripts.approved:
+            answer=QMessageBox.question(self,'Revoke website scripts',
+                f'Revoke injected scripts for {origin}? Existing hooks may continue until reload.')
+            if answer==QMessageBox.StandardButton.Yes:self.scripts.revoke_human(origin)
+        else:
+            answer=QMessageBox.question(self,'Approve website scripts',
+                f'Allow Norm to execute its own page JavaScript on {origin}?\n'
+                'This can read and modify the site as your logged-in user.\n'
+                'Approval does NOT grant websites access to Norm Python or filesystem tools.')
+            if answer==QMessageBox.StandardButton.Yes:self.scripts.approve_human(origin)
+        self._update_permission_button()
+
+    def _update_permission_button(self):
+        if self.scripts.allowed(self.page.url().toString()):
+            self.permission_button.setText('Site allowed')
+        else:self.permission_button.setText('Site scripts')
+
     def _loading(self):self.loading=True;self.load_ok=None
     def _loaded(self,ok):
         self.loading=False;self.load_ok=bool(ok)
         self._update_control_indicators()
+        self._update_permission_button()
     def _navigate(self):
         if self.visual.job is not None:return
         self.page.setUrl(QUrl.fromUserInput(self.address.text().strip()))
@@ -167,7 +243,7 @@ class Browser(QMainWindow):
     def done(job,result=None,error=""):
         job["result"]=result if result is not None else {}
         job["error"]=str(error);job["event"].set()
-    def script(self,job,js):
+    def script(self,job,js,world=None):
         def callback(raw):
             try:
                 if not isinstance(raw,str) or not raw:
@@ -176,12 +252,16 @@ class Browser(QMainWindow):
                     raise ValueError("Result exceeds 2MB; use smaller batches")
                 self.done(job,json.loads(raw))
             except Exception as exc:self.done(job,error=f"DOM extraction: {exc}")
-        self.page.runJavaScript("JSON.stringify("+js+")",callback)
+        if world is None:self.page.runJavaScript('JSON.stringify('+js+')',callback)
+        else:self.page.runJavaScript('JSON.stringify('+js+')',world,callback)
 
     @Slot(object)
     def dispatch(self,job):
         act=str(job.get("action") or "");args=job.get("args") or {}
-        if self.manual and act not in ("status","show","hide","take_control","release","visual_pdf_status","visual_pdf_cancel","quit"):
+        safe_when_manual={"status","show","hide","take_control","release","visual_pdf_status",
+                          "visual_pdf_cancel","quit","cooperation_status","convo_start",
+                          "convo_status","convo_preview","convo_item"}
+        if self.manual and act not in safe_when_manual:
             self.done(job,error="Human controls this page; return control to Norm")
             return
         if self.visual.job is not None and act not in ("status","visual_pdf_status","visual_pdf_cancel","quit"):
@@ -196,7 +276,7 @@ class Browser(QMainWindow):
                     "cache_limit_bytes":DISK_CACHE,"archive_budget_bytes":ARCHIVE_BUDGET,
                     "effective_cache_limit_bytes":self.profile.httpCacheMaximumSize()})
             elif act=="show":
-                self.show();self.raise_();self.activateWindow()
+                self.show()  # Show without raising/activating a foreground window.
                 self.done(job,{"visible":self.isVisible(),"manual_control":self.manual})
             elif act=="hide":
                 if self.manual or self.visual.job is not None:
@@ -205,7 +285,7 @@ class Browser(QMainWindow):
                 self.done(job,{"visible":self.isVisible(),"manual_control":self.manual})
             elif act=="take_control":
                 self._take()
-                self.show();self.raise_();self.activateWindow()
+                self.show()  # Show without raising/activating a foreground window.
                 self.done(job,{"visible":self.isVisible(),"manual_control":True})
             elif act=="release":
                 self._release()
@@ -217,6 +297,45 @@ class Browser(QMainWindow):
                     raise ValueError("Unsupported URL or length")
                 self.page.setUrl(target)
                 self.done(job,{"navigation_started":True,"url":target.toString()})
+            elif act=='cooperation_status':
+                result=self.scripts.list_scripts()
+                result.update({'url':self.page.url().toString(),
+                               'domain_approved':self.scripts.allowed(self.page.url().toString())})
+                self.done(job,result)
+            elif act=='script_execute':
+                url=self.page.url().toString()
+                if not self.scripts.allowed(url):raise PermissionError('Approve this domain using the browser left rail')
+                src=str(args.get('source') or '')
+                if not src.strip() or len(src)>200000:raise ValueError('Script source must be 1–200,000 characters')
+                world=str(args.get('world') or 'isolated')
+                if world not in ('isolated','main'):raise ValueError('Invalid JavaScript world')
+                wid=int(QWebEngineScript.ScriptWorldId.MainWorld if world=='main' else
+                        QWebEngineScript.ScriptWorldId.ApplicationWorld)
+                self.script(job,'(()=>{let value=(function(){'+src+'\n})();return {executed:true,value:value===undefined?null:value};})()',world=wid)
+            elif act=='script_register':
+                origin=origin_from_url(self.page.url().toString())
+                self.done(job,self.scripts.register(str(args.get('name') or ''),origin,
+                    str(args.get('source') or ''),str(args.get('world') or 'isolated'),
+                    str(args.get('timing') or 'ready')))
+            elif act=='script_remove':
+                self.done(job,self.scripts.remove(str(args.get('name') or '')))
+            elif act=='convo_start':
+                if self.page.url().host().lower() not in ('chatgpt.com','chat.openai.com'):
+                    raise ValueError('Open a ChatGPT conversation')
+                self.script(job,CONVO_START,world=int(QWebEngineScript.ScriptWorldId.MainWorld))
+            elif act=='convo_status':
+                self.script(job,CONVO_STATUS,world=int(QWebEngineScript.ScriptWorldId.MainWorld))
+            elif act=='convo_preview':
+                start=max(0,int(args.get('start') or 0))
+                count=max(1,min(100,int(args.get('count') or 50)))
+                self.script(job,CONVO_PREVIEW+'('+str(start)+','+str(count)+')',
+                    world=int(QWebEngineScript.ScriptWorldId.MainWorld))
+            elif act=='convo_item':
+                index=max(0,int(args.get('index') or 0))
+                start=max(0,int(args.get('start') or 0))
+                length=max(1,min(32000,int(args.get('length') or 24000)))
+                self.script(job,CONVO_ITEM+'('+str(index)+','+str(start)+','+str(length)+')',
+                    world=int(QWebEngineScript.ScriptWorldId.MainWorld))
             elif act=="messages":
                 start=max(0,int(args.get("start") or 0))
                 count=max(1,min(40,int(args.get("count") or 20)))

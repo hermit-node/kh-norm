@@ -66,24 +66,6 @@ function Show-NormViewer {
     Write-Host 'Returned to menu. No stop command was sent to Norm.'
 }
 
-function Ensure-NormTerminals {
-    $Launcher = Join-Path $Root 'tools\start_operator_consoles.py'
-    if (-not (Test-Path -LiteralPath $Launcher -PathType Leaf)) {
-        Write-Warning "Operator terminal launcher missing: $Launcher"
-        return
-    }
-    try {
-        # Existing Python launcher inventories exact current-root operator roles
-        # under its startup lock. It opens missing windows only.
-        & $Python -B $Launcher
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warning "Terminal verification/launch failed (exit $LASTEXITCODE). Norm remains running."
-        }
-    } catch {
-        Write-Warning "Could not reconcile operator terminals: $($_.Exception.Message)"
-    }
-}
-
 function Test-Http {
     param([string]$Url)
     try {
@@ -165,15 +147,11 @@ print(json.dumps({'norm_host': resolve_network_host(network, 'norm_host'), 'acti
         }
         return
     }
-    # When services are healthy, re-open only missing independent consoles.
-    # This must also run when no service startup was needed.
-    Ensure-NormTerminals
     while ($true) {
-        $Choice = Read-NormMenuInput 'P=prompt R=replies L=live T=terminals S=status Q=quit Esc=back'
+        $Choice = Read-NormMenuInput 'P=prompt R=replies L=live S=status Q=quit Esc=back'
         if ($null -eq $Choice) { return }
         $Choice = $Choice.Trim().ToLowerInvariant()
         switch ($Choice) {
-            't' { Ensure-NormTerminals }
             'p' {
                 Write-Host 'Esc or /exit returns to this menu. Use /stop-all to shut down Norm.'
                 Invoke-NormClient 'norm_gui_prompt.py'
@@ -191,7 +169,7 @@ print(json.dumps({'norm_host': resolve_network_host(network, 'norm_host'), 'acti
                 Write-Host 'Leaving Norm remote menu. No stop command was sent to Norm.'
                 return
             }
-            default { Write-Host 'Choose P, R, L, T, S, or Q.' }
+            default { Write-Host 'Choose P, R, L, S, or Q.' }
         }
     }
 } catch {

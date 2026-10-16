@@ -1,14 +1,14 @@
 {
-  "version": "0.55.10r10a",
-  "variant": "Idempotent-Terminal-Recovery",
-  "tag": "v0.55.10r10a",
-  "source_archive_sha256": "28c0e409b1bf27e9f84f9e08ce734f0e1450235e504d56be03d4cd9fa8010750",
-  "source_archive": "0.55.10r10a--Idempotent-Terminal-Recovery--28c0e409b1bf.zip",
+  "version": "0.55.10r11",
+  "variant": "Browser-Cooperation",
+  "tag": "v0.55.10r11",
+  "source_archive_sha256": "fb3401552368495775f8a5d12f41409a3fc8de46d7dfa9653297e2bcae9151eb",
+  "source_archive": "0.55.10r11--Browser-Cooperation--fb3401552368.zip",
   "quality": "source-inventory-verified",
   "known_issues": [
-    "Top packaged release heading still describes r9; release identification supported by ZIP filename and embedded inventory."
+    "The original ZIP had no companion SHA-256; independent ZIP/file integrity and SHA-256 checks passed."
   ],
-  "published_source_files": 350,
+  "published_source_files": 360,
   "omitted_paths": [
     "backups/plugins-ini/plugins-20261014-151017-561326+0000-72956dfad8bb.ini",
     "config/plugins.ini",

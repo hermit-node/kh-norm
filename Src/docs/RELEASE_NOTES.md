@@ -1,3 +1,10 @@
+## 0.55.10r11 — Browser cooperation source candidate (2026-10-14)
+
+- `norm_browser` plugin with approved-site JS, persistent scripts and dedicated `convo_export` extension.
+- Shared Qt browser left action rail, selective export settings and bottom Ask Norm using existing DB3 ingress.
+- Retains original r10 cache/heap/archive settings, existing Playwright/MSS plugins and visual PDF fallback.
+- Offline unit tests pass. Live Qt/ChatGPT behavior not yet verified.
+
 ## Norm 0.55.10r9 — verified 20-memory PostgreSQL checkpoints (2026-10-14)
 
 Based exclusively on the user-uploaded `Norm-0.55.10r8-StegOSplit-StegoServe-2Plugin-Portable-Source.zip`. No changes to r8 StegoSplit/StegoServe, Qt workspace, other plugins, or already installed C:\Norm components.
@@ -1175,8 +1182,3 @@ Norm was already under active development before formal `0.51.x` release naming.
 
 ## 0.55.10r10 terminal-only launcher restoration
 Restore Run-Norm-Terminals.bat for the three independent operator terminals. The norm-ssh.ps1 startup menu launches that BAT instead of the Qt Focus default. The r9 prompt queue, Celery, N1/N2, Redis, memory, and GUI code remain unchanged.
-
-
-## 0.55.10r10a: heal missing terminals with healthy Norm service
-
-The norm-ssh.ps1 checks operator terminal process inventory after confirming the Norm backend is healthy, starts only missing Runtime/Replies/Prompt windows, and exposes a T menu action to recheck later. No backend restart or Qt Focus startup is required. Terminal identity/locking/reuse remain implemented by the unchanged tools/start_operator_consoles.py. No changes to N1/N2, Redis/Celery, memory, Stego, or visual capture.

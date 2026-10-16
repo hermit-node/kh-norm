@@ -1,6 +1,6 @@
-# Norm 0.55.10r10a - Idempotent-Terminal-Recovery
+# Norm 0.55.10r11 - Browser-Cooperation
 
-Original archive SHA-256: 28c0e409b1bf27e9f84f9e08ce734f0e1450235e504d56be03d4cd9fa8010750
+Original archive SHA-256: fb3401552368495775f8a5d12f41409a3fc8de46d7dfa9653297e2bcae9151eb
 
 Historical assessment: source-inventory-verified
 
@@ -8,6 +8,6 @@ Omitted private paths: backups/plugins-ini/plugins-20261014-151017-561326+0000-7
 
 Sanitized paths: core/norm_main.py, core/norm_runtime/aiohttp_host.py
 
-Historical caveats: Top packaged release heading still describes r9; release identification supported by ZIP filename and embedded inventory.
+Historical caveats: The original ZIP had no companion SHA-256; independent ZIP/file integrity and SHA-256 checks passed.
 
 Public source snapshot is not identical to the original ZIP or guaranteed installable.

@@ -1,8 +1,6 @@
-# Norm 0.55.10r10a
+## r11 addendum — Norm Browser Cooperation
 
-Independent terminal recovery even when backend is healthy. Original r10 notes follow.
-
----
+From unchanged r10 source baseline; new `norm_browser` plugin and Qt-browser UI additions. All code changes are documented in `docs/NORM_BROWSER_COOPERATION.md`; original r10 launcher and cache allocations are retained. Source-only candidate; live Qt browser verification is outstanding.
 
 # Norm 0.55.10r10 - terminal-only launcher restored
 
