@@ -85,3 +85,7 @@ compiled active prompt (and SHA). `/voice-tune` manages this override, while
 `/voice-test` (operator-only, not a model-facing tool) compares an unconditioned local model response to one with the
 selected profile. Direct conversation and queued N2 worker steps consume the same
 hash-verified active prompt. Neither route trains model weights.
+
+## 0.4.3 Cockney compiler (r25)
+
+Cockney-specific PDF metadata exclusion, dialect-aware anchor selection, balanced source volumes and unsanitized model synthesis. Compiled prompts also forbid copying memorable source lines and limit unnecessary length for casual questions. Other profiles use the original selection algorithm. State-backed corpus PDF reads still need an explicit operator-configured voice_profile.read_add folder. See docs/R25_COCKNEY_VOICE_COMPILER.md.

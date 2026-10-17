@@ -1,3 +1,7 @@
+## 0.55.10r25 - Cockney compiler fixes (2026-10-16)
+
+Direct patch to verified r24 source. Voice-profile 0.4.3 replaces weak editorial/PDF style anchors with dialect-aware, source-balanced Cockney anchors, strengthens model synthesis against sanitized corporate language, prevents borrowing distinctive source lines and favors short casual replies. Other profiles and all existing r24 Nabler changes unchanged. Source-only, no restart or activation. See docs/R25_COCKNEY_VOICE_COMPILER.md.
+
 ## 0.55.10r24 - Nabler structured reporting (2026-10-16)
 
 Based on verified r23. N2 now prefers Nabler at every structured-output opportunity; Redis retains its structured rows plus rendered view, and Runtime consoles show the formatted report rather than raw Nabler tool JSON. No Arrow, Celery, installer or changes to other runtime settings. See docs/R24_NABLER_STRUCTURED_REPORTS.md.

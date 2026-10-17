@@ -1,6 +1,6 @@
 {
-  "package": "Norm-0.55.10r24-Nabler-Structured-Output-Portable-Source",
-  "source_baseline": "Norm-0.55.10r23-Strict-Recovery-No-Celery-Browser-Files-Portable-Source.zip",
+  "package": "Norm-0.55.10r25-Cockney-Compiler-Portable-Source",
+  "source_baseline": "Norm-0.55.10r24-Nabler-Structured-Output-Portable-Source.zip",
   "files": [
     {
       "file": ".gitattributes",
@@ -24,8 +24,8 @@
     },
     {
       "file": "README.md",
-      "bytes": 36728,
-      "sha256": "67b897f24020bbe558ff54911b24b8f06dd364a290d7b75c597228a3f5c0e0ca"
+      "bytes": 36973,
+      "sha256": "badffccc8771dfd258b2cd397ef10e9f803524facba15dc95d5030f2957d82d3"
     },
     {
       "file": "Run-Norm-Terminals.bat",
@@ -39,8 +39,8 @@
     },
     {
       "file": "SOURCE_PACKAGE.md",
-      "bytes": 39880,
-      "sha256": "93c5ed359305a7997a0bfec544face529c50b6d21ba7ee85f4c71a1aa5821567"
+      "bytes": 40370,
+      "sha256": "d8a24b312ee6b2c6b15c10a75a290612189711ae29da81fd4a698e5686bcb728"
     },
     {
       "file": "Safe-Shutdown-Norm.bat",
@@ -478,6 +478,11 @@
       "sha256": "3a92b7b71d9d5090e2c3c49ed7801ad933afd87eb113afe0443b5dbb44edd063"
     },
     {
+      "file": "docs/R25_COCKNEY_VOICE_COMPILER.md",
+      "bytes": 2242,
+      "sha256": "9c7035a8e4d1be4845d4a5d57a8df3e11d4ab0d4fd4e34188fc1fcb02efe106a"
+    },
+    {
       "file": "docs/README.md",
       "bytes": 37906,
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
@@ -744,8 +749,8 @@
     },
     {
       "file": "package-manifest.json",
-      "bytes": 42155,
-      "sha256": "dc3d4f091b3a61cd0cc9a249ce957b2c55ab46c7e7dfcac5528af8fd94c0bfb4"
+      "bytes": 42698,
+      "sha256": "f7f2685fa00fe3d0166dadeab08244da5166e79c4e3e0cc0467002cc52cfe325"
     },
     {
       "file": "plugins/README.md",
@@ -1304,8 +1309,8 @@
     },
     {
       "file": "plugins/voice_profile/README.md",
-      "bytes": 4564,
-      "sha256": "48f3c4f7b85bb93fd55ed1d31c35d7c4fe5e06b1f2effbd93b0f8aabccfb715a"
+      "bytes": 5036,
+      "sha256": "0820b6ef6378fb50dea31c1296257aa0828600b3286e64464c49c911f35b8e79"
     },
     {
       "file": "plugins/voice_profile/help.txt",
@@ -1314,13 +1319,13 @@
     },
     {
       "file": "plugins/voice_profile/plugin.json",
-      "bytes": 764,
-      "sha256": "b9d017dac57117d3ee00abc1ce10de1e97b25eb6bb16d749e224292d642c573f"
+      "bytes": 761,
+      "sha256": "9e219b8cb36fe4245c5d667ffca0d4525de7b82979419464cb9440796fe26092"
     },
     {
       "file": "plugins/voice_profile/src/_engine.py",
-      "bytes": 54941,
-      "sha256": "bbbc7628b4073950410eee463e624fcf77c06ef2f25edd704aace3d621b321e5"
+      "bytes": 61139,
+      "sha256": "3be78f1e78f96922e4e56be5bc97f561fe3add24341dfcc9b74f2a56c6c8986d"
     },
     {
       "file": "plugins/voice_profile/src/main.py",
@@ -1716,6 +1721,11 @@
       "file": "tools/test_chunked_worker_flow.py",
       "bytes": 8150,
       "sha256": "ddeba53239d19b5c0199bfed331641e00ccfa2acf223edfab6d350ec4d9b76d0"
+    },
+    {
+      "file": "tools/test_cockney_compiler_r25.py",
+      "bytes": 5494,
+      "sha256": "ee3549a5e9af858a5cf686ebde84f6073e24ae2896bff914f0143970854582d0"
     },
     {
       "file": "tools/test_conservative_primary_request.py",

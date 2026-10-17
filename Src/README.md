@@ -1,3 +1,5 @@
+**r25 Cockney voice compiler:** v0.4.3 improves dialect-specific source anchor selection, prevents corporate flattening and copied anchor dialogue, and keeps casual answers concise. r24 Nabler unchanged. See docs/R25_COCKNEY_VOICE_COMPILER.md.
+
 **r24 Nabler structured reporting:** Prefer Nabler for intermediate and final structured output; preserve rows and rendered text in Redis and render successful reports in both Runtime consoles. Source-only; see docs/R24_NABLER_STRUCTURED_REPORTS.md.
 
 **r23 non-image ChatGPT exports:** Capture structured document/file IDs in addition to images; preserve downloaded PDF/ZIP/DOCX/XLSX files in ZIP and alongside PDF; honor 24 MiB image limit and 256 MiB file limit, with explicit missing-file errors for unresolvable `sandbox:` links. See `docs/R23_CHATGPT_FILE_ATTACHMENTS.md`. Source-only; not deployed.

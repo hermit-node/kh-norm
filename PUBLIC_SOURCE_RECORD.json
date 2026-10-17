@@ -1,15 +1,15 @@
 {
-  "version": "0.55.10r24",
-  "variant": "Nabler-Structured-Output",
-  "tag": "v0.55.10r24",
-  "source_archive_sha256": "46f44d24823935a06226390f27b017960e8a0d3326e314b120c5ae359274bfc4",
-  "source_archive": "Norm-0.55.10r24-Nabler-Structured-Output-Portable-Source.zip",
+  "version": "0.55.10r25",
+  "variant": "Cockney-Compiler",
+  "tag": "v0.55.10r25",
+  "source_archive_sha256": "2c04ec84abd457186a7bf40ebb3501f7d57b4cca4fd02dc3e43c56ff925d7263",
+  "source_archive": "Norm-0.55.10r25-Cockney-Compiler-Portable-Source.zip",
   "quality": "source-inventory-verified",
   "known_issues": [
-    "Nabler table rendering, N2 preference, Redis structured rows, console presentation.",
-    "No complete N1/N2 runtime integration test recorded by this source publisher."
+    "Voice-profile 0.4.3 strengthens Cockney compiler anchors and synthesis; retains all r24 Nabler changes.",
+    "Profile rebuilding and live voice-style outcomes are separate from release archival."
   ],
-  "published_source_files": 404,
+  "published_source_files": 406,
   "omitted_paths": [
     "backups/plugins-ini/plugins-20261014-151017-561326+0000-72956dfad8bb.ini",
     "config/plugins.ini",

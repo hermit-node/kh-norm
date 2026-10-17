@@ -1,10 +1,10 @@
 {
   "schema_version": 2,
   "name": "voice_profile",
-  "version": "0.4.2",
-  "date": "2026-10-08",
+  "version": "0.4.3",
+  "date": "2026-10-16",
   "entrypoint": "src/main.py",
-  "description": "Profile voices with operator style overrides, A/B tests and queued N2 conditioning",
+  "description": "Voice profiling with Cockney dialect anchor selection and unsanitized synthesis",
   "capabilities": [
     "PDF corpus voice profiling",
     "rich style-anchor selection",
@@ -16,7 +16,7 @@
     "operator style override and A/B testing",
     "queued N2 worker style conditioning"
   ],
-  "sha256": "24a116a307e90758c9bfd3e5662a218559b1d9c54e5161790bc1fa556bde991a",
+  "sha256": "ccfcc982655dc1c4e92b3b9d22a8b9605f57855cc1d193e45f3ad216f4aab7d7",
   "settings": {
     "voice_profile": {
       "enabled": true

@@ -1,6 +1,6 @@
-# Norm 0.55.10r24 - Nabler-Structured-Output
+# Norm 0.55.10r25 - Cockney-Compiler
 
-Original archive SHA-256: 46f44d24823935a06226390f27b017960e8a0d3326e314b120c5ae359274bfc4
+Original archive SHA-256: 2c04ec84abd457186a7bf40ebb3501f7d57b4cca4fd02dc3e43c56ff925d7263
 
 Historical assessment: source-inventory-verified
 
@@ -8,6 +8,6 @@ Omitted private paths: backups/plugins-ini/plugins-20261014-151017-561326+0000-7
 
 Sanitized paths: core/norm_main.py, core/norm_runtime/aiohttp_host.py
 
-Historical caveats: Nabler table rendering, N2 preference, Redis structured rows, console presentation. No complete N1/N2 runtime integration test recorded by this source publisher.
+Historical caveats: Voice-profile 0.4.3 strengthens Cockney compiler anchors and synthesis; retains all r24 Nabler changes. Profile rebuilding and live voice-style outcomes are separate from release archival.
 
 Public source snapshot is not identical to the original ZIP or guaranteed installable.
