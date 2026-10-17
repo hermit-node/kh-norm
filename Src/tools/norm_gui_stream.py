@@ -9,6 +9,7 @@ import time
 from urllib import request
 
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.rule import Rule
 from rich.text import Text
 
@@ -79,10 +80,25 @@ def _render(console: Console, event: dict) -> None:
         console.print(Text(text, style="green"), end="", soft_wrap=True)
         if text:
             console._norm_model_line_open = not text.endswith("\n")
+    elif kind == "nabler_report":
+        console._norm_model_line_open = False
+        console.print()
+        if str(event.get("output") or "markdown") == "markdown":
+            console.print(Markdown(text))
+        else:
+            console.print(Text(text), soft_wrap=True)
     elif kind == "tool_call":
         console._norm_model_line_open = False
         console.print()
-        console.print(Text(f"Tool call: {text}", style="bold yellow"), soft_wrap=True)
+        try:
+            proposed = json.loads(text)
+            proposed_name = proposed.get("function", {}).get("name") if isinstance(proposed, dict) else ""
+        except (ValueError, TypeError, AttributeError):
+            proposed_name = ""
+        if proposed_name == "plugin_nabler__main__render_report":
+            console.print(Text("Tool call: Nabler report", style="dim yellow"))
+        else:
+            console.print(Text(f"Tool call: {text}", style="bold yellow"), soft_wrap=True)
     elif kind == "model_end":
         console._norm_model_line_open = False
         console.print()

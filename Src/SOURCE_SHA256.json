@@ -1,6 +1,6 @@
 {
-  "package": "Norm-0.55.10r23-Strict-Recovery-No-Celery-Browser-Files-Portable-Source",
-  "source_baseline": "Norm-0.55.10r22-Strict-Recovery-No-Celery-Browser-Assets-Step-Boundary-Portable-Source.zip",
+  "package": "Norm-0.55.10r24-Nabler-Structured-Output-Portable-Source",
+  "source_baseline": "Norm-0.55.10r23-Strict-Recovery-No-Celery-Browser-Files-Portable-Source.zip",
   "files": [
     {
       "file": ".gitattributes",
@@ -24,8 +24,8 @@
     },
     {
       "file": "README.md",
-      "bytes": 36477,
-      "sha256": "0ee1cdbc8c5750ed15a56226c86ec60778c0147744bbd2678751a48df0247d6a"
+      "bytes": 36728,
+      "sha256": "67b897f24020bbe558ff54911b24b8f06dd364a290d7b75c597228a3f5c0e0ca"
     },
     {
       "file": "Run-Norm-Terminals.bat",
@@ -39,8 +39,8 @@
     },
     {
       "file": "SOURCE_PACKAGE.md",
-      "bytes": 39492,
-      "sha256": "ab03ec9c9c823d7834ce664df2bc4d673403812ef85ebbf6ce7526901a47b4cc"
+      "bytes": 39880,
+      "sha256": "93c5ed359305a7997a0bfec544face529c50b6d21ba7ee85f4c71a1aa5821567"
     },
     {
       "file": "Safe-Shutdown-Norm.bat",
@@ -64,8 +64,8 @@
     },
     {
       "file": "config/runtime.json",
-      "bytes": 16887,
-      "sha256": "77b97bd9df9077c0e4f3b7d7c3aa3270ff981e08d896a19fdbb672f76b709917"
+      "bytes": 17016,
+      "sha256": "3fe194f91f86ecc7187be59d27a378c82b7a34b0816aa25028aeec1e25c1c1f9"
     },
     {
       "file": "config/settings.example.ini",
@@ -214,8 +214,8 @@
     },
     {
       "file": "core/norm_runtime/live_log.py",
-      "bytes": 37069,
-      "sha256": "b4799148d6efc2a1ba9a547b76af3942f0f72388c2dd035abaae78b051214313"
+      "bytes": 37315,
+      "sha256": "2919c08155db18fd3c6496f2a5d5c3f3f2bd0ad702c79dff27807ae4dcbb9425"
     },
     {
       "file": "core/norm_runtime/maintenance_model_client.py",
@@ -299,8 +299,8 @@
     },
     {
       "file": "core/norm_runtime/prompt_worker.py",
-      "bytes": 390089,
-      "sha256": "0d6f36c5557b1d1082c7ec3eb6744cead76d4e181ad92fcb7e94af87a2ac0e07"
+      "bytes": 390697,
+      "sha256": "6489a02f8f821743939645f3de15064964df92ad8898b8daeb016ec345db5e4e"
     },
     {
       "file": "core/norm_runtime/protocol.py",
@@ -319,8 +319,8 @@
     },
     {
       "file": "core/norm_runtime/rich_console.py",
-      "bytes": 35915,
-      "sha256": "549775c944aff86ddeda30a12604f47376edfbd443a34d4a73283d7afd5027b8"
+      "bytes": 36670,
+      "sha256": "790cb33e12ba314e324e056d5991465dc90b053a120b877881ab74028f808f33"
     },
     {
       "file": "core/norm_runtime/secret_redaction.py",
@@ -471,6 +471,11 @@
       "file": "docs/R23_CHATGPT_FILE_ATTACHMENTS.md",
       "bytes": 3223,
       "sha256": "8275bee8f35d55c3ddc6c1b2784ae216261afc32bcba4a6532b8a3773a35d601"
+    },
+    {
+      "file": "docs/R24_NABLER_STRUCTURED_REPORTS.md",
+      "bytes": 1374,
+      "sha256": "3a92b7b71d9d5090e2c3c49ed7801ad933afd87eb113afe0443b5dbb44edd063"
     },
     {
       "file": "docs/README.md",
@@ -739,8 +744,8 @@
     },
     {
       "file": "package-manifest.json",
-      "bytes": 41768,
-      "sha256": "c1a27d3b5f34e754e9e059ec6669e153c7a84222255e9b88b1f3ae29ed1467f5"
+      "bytes": 42155,
+      "sha256": "dc3d4f091b3a61cd0cc9a249ce957b2c55ab46c7e7dfcac5528af8fd94c0bfb4"
     },
     {
       "file": "plugins/README.md",
@@ -1509,8 +1514,8 @@
     },
     {
       "file": "tools/norm_gui_stream.py",
-      "bytes": 4981,
-      "sha256": "b0e0a1c2ce7f60560730228c12e2acb3a524d410072ad497bb7875b3794f32a0"
+      "bytes": 5706,
+      "sha256": "59f1b67318e9024dc58119fc91e01564624718f9ac932bcd55302f3548e03ced"
     },
     {
       "file": "tools/norm_network_map.py",
@@ -1851,6 +1856,11 @@
       "file": "tools/test_nabler.py",
       "bytes": 5014,
       "sha256": "a6d69cc6c224af486539f8dd3e07838e4002a9e5f50acbc4590cc9ab51ecb8d2"
+    },
+    {
+      "file": "tools/test_nabler_display_r24.py",
+      "bytes": 2806,
+      "sha256": "4852148aa0358a87ef395ebf6a20a0492a046cb03ec1c0bd941a665acc0279c5"
     },
     {
       "file": "tools/test_native_boot_visual_r2.py",

@@ -5641,6 +5641,14 @@ class PromptWorker:
                                             "result": observed_result, "n1_gatekeeper": gate_meta})
                     evidence.append(evidence_item)
                     self._persist_evidence_now(job, [evidence_item])
+                    # Publish the observed Nabler display, not its JSON call arguments.
+                    if (name == "plugin_nabler__main__render_report"
+                            and result.get("ok") and isinstance(result.get("rendered"), str)):
+                        publish = getattr(self.client, "_emit", None)
+                        if callable(publish):
+                            publish("nabler_report", text=result["rendered"],
+                                    output=str(result.get("output") or "markdown"),
+                                    task_id=job.task_id, step_id=job.step_id)
                 if self._suppression_requested(job.task_id) or (self.durable and self.durable.task_status(job.task_id) == "suppressed"):
                     raise ModelGenerationCancelled("task suppressed by operator after current tool boundary")
 

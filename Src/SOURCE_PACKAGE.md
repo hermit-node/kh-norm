@@ -1,3 +1,7 @@
+## 0.55.10r24 - Nabler structured reporting (2026-10-16)
+
+Based on verified r23. N2 now prefers Nabler at every structured-output opportunity; Redis retains its structured rows plus rendered view, and Runtime consoles show the formatted report rather than raw Nabler tool JSON. No Arrow, Celery, installer or changes to other runtime settings. See docs/R24_NABLER_STRUCTURED_REPORTS.md.
+
 ## 0.55.10r23 — Non-image ChatGPT attachments (2026-10-16)
 
 Built directly on uploaded r22. Expanded structured file-ID detection and explicit reporting of missing `sandbox:` file links, preserved document bytes in ZIP and PDF companion asset folders, increased binary attachment allowance to 256 MiB while retaining the 24 MiB image guard and 512 MiB total export budget. Existing N1/N2 and no-Celery behavior unchanged. Offline regression passed; no signed-in live browser validation. See `docs/R23_CHATGPT_FILE_ATTACHMENTS.md`.

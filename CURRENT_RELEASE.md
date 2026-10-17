@@ -1,6 +1,6 @@
-# Norm 0.55.10r23 - Strict-Recovery-No-Celery-Browser-Files
+# Norm 0.55.10r24 - Nabler-Structured-Output
 
-Original archive SHA-256: e04ff608ba34e20315f380f0a227152fd4b42755bae88101cc6248255960864d
+Original archive SHA-256: 46f44d24823935a06226390f27b017960e8a0d3326e314b120c5ae359274bfc4
 
 Historical assessment: source-inventory-verified
 
@@ -8,6 +8,6 @@ Omitted private paths: backups/plugins-ini/plugins-20261014-151017-561326+0000-7
 
 Sanitized paths: core/norm_main.py, core/norm_runtime/aiohttp_host.py
 
-Historical caveats: Direct successor of r22; package notes claim a 256 MiB non-image per-file limit, 24 MiB image guard and 512 MiB total export budget.; Live signed-in Qt export behavior unverified.
+Historical caveats: Nabler table rendering, N2 preference, Redis structured rows, console presentation. No complete N1/N2 runtime integration test recorded by this source publisher.
 
 Public source snapshot is not identical to the original ZIP or guaranteed installable.

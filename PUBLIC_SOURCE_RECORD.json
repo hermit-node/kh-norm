@@ -1,15 +1,15 @@
 {
-  "version": "0.55.10r23",
-  "variant": "Strict-Recovery-No-Celery-Browser-Files",
-  "tag": "v0.55.10r23",
-  "source_archive_sha256": "e04ff608ba34e20315f380f0a227152fd4b42755bae88101cc6248255960864d",
-  "source_archive": "0.55.10r23--Strict-Recovery-No-Celery-Browser-Files--e04ff608ba34.zip",
+  "version": "0.55.10r24",
+  "variant": "Nabler-Structured-Output",
+  "tag": "v0.55.10r24",
+  "source_archive_sha256": "46f44d24823935a06226390f27b017960e8a0d3326e314b120c5ae359274bfc4",
+  "source_archive": "Norm-0.55.10r24-Nabler-Structured-Output-Portable-Source.zip",
   "quality": "source-inventory-verified",
   "known_issues": [
-    "Direct successor of r22; package notes claim a 256 MiB non-image per-file limit, 24 MiB image guard and 512 MiB total export budget.",
-    "Live signed-in Qt export behavior unverified."
+    "Nabler table rendering, N2 preference, Redis structured rows, console presentation.",
+    "No complete N1/N2 runtime integration test recorded by this source publisher."
   ],
-  "published_source_files": 402,
+  "published_source_files": 404,
   "omitted_paths": [
     "backups/plugins-ini/plugins-20261014-151017-561326+0000-72956dfad8bb.ini",
     "config/plugins.ini",

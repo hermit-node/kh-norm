@@ -191,6 +191,9 @@ class RedisTaskLog:
             arguments = item.get("arguments") if isinstance(item.get("arguments"), dict) else {}
             result = item.get("result") if isinstance(item.get("result"), dict) else {}
             result_keys = base_result_keys + (() if isinstance(result.get("chunk_stream"), dict) else ("content",))
+            # Nabler is data-only: retain the table and rendered view for N1/Redis.
+            if item.get("tool") == "plugin_nabler__main__render_report":
+                result_keys += ("title", "rows", "counts", "rendered", "mode", "output")
             compact.append({
                 "tool": item.get("tool"),
                 "arguments": {k: self._bounded_evidence_value(arguments[k]) for k in arg_keys if k in arguments},

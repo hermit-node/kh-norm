@@ -20,6 +20,7 @@ from .about import format_about
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.rule import Rule
 from rich.text import Text
 
@@ -179,9 +180,23 @@ class NormConsole:
             self.console.print()
             self.console.print(Rule("End-of-task durable summary"))
             self.console.print(Text(text, style="dim green"), soft_wrap=True)
+        elif kind == "nabler_report":
+            self.console.print()
+            if str(event.get("output") or "markdown") == "markdown":
+                self.console.print(Markdown(text))
+            else:
+                self.console.print(Text(text), soft_wrap=True)
         elif kind == "tool_call":
             self.console.print()
-            self.console.print(Text(f"Tool call: {text}", style="bold yellow"))
+            try:
+                proposed = json.loads(text)
+                proposed_name = proposed.get("function", {}).get("name") if isinstance(proposed, dict) else ""
+            except (ValueError, TypeError, AttributeError):
+                proposed_name = ""
+            if proposed_name == "plugin_nabler__main__render_report":
+                self.console.print(Text("Tool call: Nabler report", style="dim yellow"))
+            else:
+                self.console.print(Text(f"Tool call: {text}", style="bold yellow"))
         elif kind == "model_end":
             self.console.print()
             self.console.print(Rule("Ollama complete"))
