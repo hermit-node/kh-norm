@@ -6,6 +6,20 @@ Detailed implementation notes and release-specific testing are recorded in [SOUR
 
 ## 0.55.10
 
+### 0.55.10r25 — Cockney voice compiler
+
+- Strengthen voice-profile v0.4.3 Cockney anchor selection using dialect-aware, source-balanced examples.
+- Prevent sanitized corporate phrasing and copying distinctive corpus lines into generated responses.
+- Favor short, conversational replies while preserving r24 Nabler reporting.
+- **Validation:** Source-only update; profile rebuilding and live style outcomes are separately verified. [Details](docs/R25_COCKNEY_VOICE_COMPILER.md).
+
+### 0.55.10r24 — Nabler structured reporting
+
+- Prefer Nabler for structured N2 intermediate and final output instead of plain-text tables.
+- Retain underlying rows and the rendered report together in Redis for later N1 and console use.
+- Display successful Nabler reports directly in runtime consoles, rather than raw tool JSON.
+- **Validation:** Source-level tests; a full live N1/N2 reporting cycle has not been verified by this archival update. [Details](docs/R24_NABLER_STRUCTURED_REPORTS.md).
+
 ### 0.55.10r23 — Non-image ChatGPT attachments
 
 - Recognize non-image file IDs from message parts, metadata, and nested structured payloads, alongside existing image references.
