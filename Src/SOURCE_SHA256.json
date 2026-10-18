@@ -1,17 +1,8 @@
 {
-  "package": "Norm-0.55.10r25-Cockney-Compiler-Portable-Source",
-  "source_baseline": "Norm-0.55.10r24-Nabler-Structured-Output-Portable-Source.zip",
+  "package": "Norm-0.55.10r26-Generic-Vision-Media-Public-Source",
+  "source_baseline": "v0.55.10r25",
+  "note": "Public sanitized source files; private archive SHA is tracked separately in PUBLIC_SOURCE_RECORD.json.",
   "files": [
-    {
-      "file": ".gitattributes",
-      "bytes": 18,
-      "sha256": "7a829291b63992a78871eb4ea32c20b40aed7196481a3e6becfadf3a2d680b33"
-    },
-    {
-      "file": ".gitignore",
-      "bytes": 318,
-      "sha256": "c7a6f010965fab61d8d3fc7e50fcb119814a9f06f2be45329d8e07367323a416"
-    },
     {
       "file": "Activate Visual PDF.cmd",
       "bytes": 232,
@@ -24,8 +15,8 @@
     },
     {
       "file": "README.md",
-      "bytes": 20157,
-      "sha256": "2954da3d38ef61502e47fa2a33e8ebb7530bebb7528539649d5410ece5fcc9f8"
+      "bytes": 20877,
+      "sha256": "30a93689439ec967713443dd0435a98c60736fad92bc110b2176175ecadebefe"
     },
     {
       "file": "Run-Norm-Terminals.bat",
@@ -39,8 +30,8 @@
     },
     {
       "file": "SOURCE_PACKAGE.md",
-      "bytes": 40370,
-      "sha256": "d8a24b312ee6b2c6b15c10a75a290612189711ae29da81fd4a698e5686bcb728"
+      "bytes": 41030,
+      "sha256": "075c0cd8c5473c524eeaf9a3e6be5ad05e9d6030cf546d7be120af921eb0fdfa"
     },
     {
       "file": "Safe-Shutdown-Norm.bat",
@@ -53,16 +44,6 @@
       "sha256": "797ff100f7d703e437ec7a9786f4b6822d0f08bf55315c8767a0e784880305bd"
     },
     {
-      "file": "backups/plugins-ini/plugins-20261014-151017-561326+0000-72956dfad8bb.ini",
-      "bytes": 1665,
-      "sha256": "72956dfad8bbdde0dd631bb19ab6ed3b7c1caafed990de0df0df552955a5037b"
-    },
-    {
-      "file": "config/plugins.ini",
-      "bytes": 1762,
-      "sha256": "ca13ca4d9f1be47b02ecb9f206f407c81d040b37dd59ac523698cb5708264c7a"
-    },
-    {
       "file": "config/runtime.json",
       "bytes": 17016,
       "sha256": "3fe194f91f86ecc7187be59d27a378c82b7a34b0816aa25028aeec1e25c1c1f9"
@@ -71,11 +52,6 @@
       "file": "config/settings.example.ini",
       "bytes": 2952,
       "sha256": "34c0c073df6e1b5a9985875f0f8297474611035a22567fc3dc621e9bda4b5cdc"
-    },
-    {
-      "file": "config/settings.ini",
-      "bytes": 3378,
-      "sha256": "7c83b00d24a8d3a73450d08d9e39cef8b61bbb137b9c70483fc58271d022c8d3"
     },
     {
       "file": "core/norm_main.py",
@@ -483,24 +459,24 @@
       "sha256": "9c7035a8e4d1be4845d4a5d57a8df3e11d4ab0d4fd4e34188fc1fcb02efe106a"
     },
     {
+      "file": "docs/R26_GENERIC_VISION_MEDIA.md",
+      "bytes": 1073,
+      "sha256": "687c217e2d57a7dd1095743fb4a59825f55c38b7d07ad75219d032f4b71cd82b"
+    },
+    {
       "file": "docs/README.md",
       "bytes": 37906,
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
     },
     {
       "file": "docs/RELEASE_NOTES.md",
-      "bytes": 170304,
-      "sha256": "60212813d866fe76cf5d3f2d589692f7ed528c9cb15e086442110e6aac08933e"
+      "bytes": 170964,
+      "sha256": "38a65a005d655d0affc580f3bfc331d80dc06f3df1141c0349c71285f1e7bb33"
     },
     {
       "file": "docs/SHARED_BROWSER.md",
       "bytes": 6642,
       "sha256": "7e3892c3d0183df90f60b54a5ac26a996a36a406e8bf5d2faf276a61267a5fdd"
-    },
-    {
-      "file": "docs/STEGO_TWO_PLUGIN_INTEGRATION.md",
-      "bytes": 2085,
-      "sha256": "8c26cc9fc0c661909a82ef908aa173e7520054d51ae82102fc175574c5ba4d99"
     },
     {
       "file": "docs/VOICE_OPERATOR_COMMANDS_PATCH.md",
@@ -521,181 +497,6 @@
       "file": "docs/help_menu.txt",
       "bytes": 1735,
       "sha256": "923816f08be954d1b29c8c1b568b8c3cd714db0fa44929f6f555d2e7b721b377"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/original_plugins.ini",
-      "bytes": 1769,
-      "sha256": "80ea7d3d7b550488d5034c84a42f79af01595e7ceeeb9956fe8801b505855008"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_auth/README.md",
-      "bytes": 2183,
-      "sha256": "13689be800851b9a37e35b7784b9ed8346238b2357a4e5fdd2443eaf68b5933b"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_auth/help.txt",
-      "bytes": 511,
-      "sha256": "96e2ebcdbbd6537cff774945707e2d0f7c4567da09261c5f46c1fed4eca3930a"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_auth/plugin.json",
-      "bytes": 762,
-      "sha256": "4fbb33a449e365bb55b1dd44628d1291f4b3d77677caef1c7415f20cadf62617"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_auth/src/auth_admin_cli.py",
-      "bytes": 318,
-      "sha256": "2a0e825f21b542e09f373113549338a47bc79cebaa917cf943620f10d85b2a92"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_auth/src/auth_admin_core.cp314-win_amd64.pyd",
-      "bytes": 46592,
-      "sha256": "2d603eabf7990e59c02d8a5acd0ef871337d6588cedc8fa8492406c1d85f3575"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_auth/src/auth_selector.py",
-      "bytes": 130,
-      "sha256": "41fa3fc2581a2fb897230bf37f311891eb775467488562bae3b5a3781fcb54aa"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_auth/src/auth_selector_core.cp314-win_amd64.pyd",
-      "bytes": 51712,
-      "sha256": "d38e60a3ead488485d5666478a4ddd684e3556c18ca50d9d276e479eae40768e"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_auth/src/main.py",
-      "bytes": 1720,
-      "sha256": "3e1b6385f6e01641a661039941b2799f66326af2b18307bace918b62d807219a"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_auth/src/master_client_auth.cp314-win_amd64.pyd",
-      "bytes": 229376,
-      "sha256": "0941ff3ca04e9947bc0481e10e6f748fa3a0da9ab2ef74dd9ee3f9bec1f6f4fc"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_key/README.md",
-      "bytes": 539,
-      "sha256": "4636d9366a7d31077464a4d391b20e497d93579674080c8303eea74923e84eda"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_key/help.txt",
-      "bytes": 291,
-      "sha256": "c41a8858b951d41bd74167fa4a08f5c09894add021cae0c8932d72089889874d"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_key/plugin.json",
-      "bytes": 531,
-      "sha256": "5b420c740bbddbd9f35d1ee1e93ae51e4737d6c75b472b738718d4691742ce52"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_key/src/_stegosplit/__init__.py",
-      "bytes": 113,
-      "sha256": "5cd8069751e9e1207c9cdb4c4feb344df860bd4fcead15a13ff384d9d6633496"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_key/src/_stegosplit/core.cp314-win_amd64.pyd",
-      "bytes": 185344,
-      "sha256": "585a22d97db0a5b4b3e5737c799f7358b356394cc085c5da4b85da903fbb95be"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_key/src/_stegosplit/mapping.cp314-win_amd64.pyd",
-      "bytes": 251392,
-      "sha256": "e18b25170e46c36b5fc634b7f7b2f1e89e9fe1e3d82867eceb8f82bb35b6c8d5"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_key/src/key_api.cp314-win_amd64.pyd",
-      "bytes": 77824,
-      "sha256": "5c8b68d70e759edb2be66e417cf213f6c297e7ed33057720ea3cfc0a1324854e"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_key/src/main.py",
-      "bytes": 1429,
-      "sha256": "fff92a6c1c4fc6aed9abd0c12598dee64c92b059ac4c89709323f240ce7fc721"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_message/README.md",
-      "bytes": 1820,
-      "sha256": "f1a89c165488528875cbc528a504d440bb4be9ec4b3cc274d2b61a1a806b8f61"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_message/help.txt",
-      "bytes": 416,
-      "sha256": "ca02d5ab112db5a102f739636f13580cec6b4fef394bbb0f7072bd054497559d"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_message/plugin.json",
-      "bytes": 1134,
-      "sha256": "94f571dc36aa9e229e6934c9d9f819f38d69409a606a1ef15013e2debd06dd23"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_message/src/_stegosplit_v3/__init__.py",
-      "bytes": 761,
-      "sha256": "3564e30fb02f2272b458e9356d1dbf203b8635bcdff5f024b4ffca9ca6a7c030"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_message/src/_stegosplit_v3/cipher.cp314-win_amd64.pyd",
-      "bytes": 739328,
-      "sha256": "5d03170c301639c7d3e879064785badf52db37398998a31da717bcd50c4c5d60"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_message/src/_stegosplit_v3/compression.cp314-win_amd64.pyd",
-      "bytes": 741376,
-      "sha256": "e11b0ddf490b176514c57ba7a23fea3e4cabf0f603bebbde4fd1af04ebce0f6c"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_message/src/_stegosplit_v3/core.cp314-win_amd64.pyd",
-      "bytes": 1009664,
-      "sha256": "68cdf5e97b58fad5a939a47d476ca355fd35bf7db876f0a932a920c167858885"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_message/src/_stegosplit_v3/header.cp314-win_amd64.pyd",
-      "bytes": 819200,
-      "sha256": "14134104ed6bf503d070c88cbcaf6501026aab3d905531f727d0aa4a9ac18c76"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_message/src/_stegosplit_v3/kdf.cp314-win_amd64.pyd",
-      "bytes": 757760,
-      "sha256": "dac182d8499d1cbaadc24d56be89d5da9923da15ad4be6444d858ed2107872f7"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_message/src/_stegosplit_v3/mapping.cp314-win_amd64.pyd",
-      "bytes": 852992,
-      "sha256": "2518b9339fd7b65cb729b97a80f84ba9f4ef67fe01c615009948a3155e64b557"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_message/src/_stegosplit_v3/vector_codec.cp314-win_amd64.pyd",
-      "bytes": 762368,
-      "sha256": "d9c5a08b23ace68ef9ef412e2e75f41df9a9dd8fd919223bc51e7c0090ad42a9"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_message/src/_stegosplit_v3/vector_lut.cp314-win_amd64.pyd",
-      "bytes": 753664,
-      "sha256": "3be9b73030a8cc8631b4705105aed3fd730e874accb7b39c7c24ab3416c83634"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_message/src/main.py",
-      "bytes": 5444,
-      "sha256": "0a85300fd9a360dc5bf75ecc8e1008dbf496c0e50625a18b0712f764bb3470f2"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_message/src/message_api.cp314-win_amd64.pyd",
-      "bytes": 193536,
-      "sha256": "1cee31c80d97de5a6cc20c39d7e18c45ce5217817e82e11ac6287a0debb4b384"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_message/src/paired_credential.cp314-win_amd64.pyd",
-      "bytes": 50176,
-      "sha256": "2e6afbe00bbc5b3896b20419cd98400b27d7583345cd0184651154fd8e9812c2"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_message/src/paired_identity.cp314-win_amd64.pyd",
-      "bytes": 92672,
-      "sha256": "cb5b0f1e79644548c32de01a56a19a5ab220b05ad19b0496425ec221c317dff5"
-    },
-    {
-      "file": "legacy_stegosplit_plugins_r8/stegosplit_message/src/public_identity.cp314-win_amd64.pyd",
-      "bytes": 86528,
-      "sha256": "738c0ab61ded9077b11d84eb85e240ddd536944dc26987a2bf821e802d61d7d9"
     },
     {
       "file": "make-listener.bat",
@@ -1038,36 +839,6 @@
       "sha256": "15dbedf540e0d5daf1bc19cc9e64388d83543c5db590f274e9dad459af4f28e7"
     },
     {
-      "file": "plugins/rotor5_cipher/README.md",
-      "bytes": 2592,
-      "sha256": "d4715fbc14b32c8b0f5dbcf2f394e220302f6c84a7d3e68f879fd94827812aa9"
-    },
-    {
-      "file": "plugins/rotor5_cipher/help.txt",
-      "bytes": 358,
-      "sha256": "64e4ba52c49dac4abea7f79509c6a7dde28d8d367880b857c7696afdb0df7752"
-    },
-    {
-      "file": "plugins/rotor5_cipher/plugin.json",
-      "bytes": 638,
-      "sha256": "18b5f7b15bd651a57f5da60422b4e514223f3db0a779079cb1a32940cab02a64"
-    },
-    {
-      "file": "plugins/rotor5_cipher/src/_rotor5/__init__.py",
-      "bytes": 42,
-      "sha256": "91210714487d661942ce76f1f5d78378ac776941ee05bca7498ea3ddbd93db35"
-    },
-    {
-      "file": "plugins/rotor5_cipher/src/_rotor5/core.py",
-      "bytes": 9939,
-      "sha256": "43741206d7f938db22feb36932e988fa31ab19671902000f0ccb147c16f6d827"
-    },
-    {
-      "file": "plugins/rotor5_cipher/src/main.py",
-      "bytes": 4542,
-      "sha256": "d6a48c646920089ca2dacc78c87722287ff62ac487569b64ed2e810586fc1ec7"
-    },
-    {
       "file": "plugins/shared_browser/README.md",
       "bytes": 3903,
       "sha256": "e341c12d4476f5e647a8d449be92f7b50c27dcfe89229680d2b62396ce52d41f"
@@ -1289,23 +1060,48 @@
     },
     {
       "file": "plugins/vision_parse/README.md",
-      "bytes": 6884,
-      "sha256": "93dd7f0fb294bb695790ed32e17a91bd607640c0f609e191a28fa05de77af368"
+      "bytes": 8129,
+      "sha256": "1aa49c220dbf2dfe9c7d16baffc83043d9da9cca29362f8649a255cf1a4f016f"
     },
     {
       "file": "plugins/vision_parse/help.txt",
-      "bytes": 2153,
-      "sha256": "889eb87029d9392073ddee58e409482d6208deb4a33177fdc3a5b1249a29d1ef"
+      "bytes": 2640,
+      "sha256": "9a74285c0bfed2c60a032bab7a946253b752c3e9d084c96b1deeb660fddb5a71"
     },
     {
       "file": "plugins/vision_parse/plugin.json",
-      "bytes": 1062,
-      "sha256": "fda684a2e6613973fee8fcae6aaf6849e21057dfcb86d62101485e1b9d7c9346"
+      "bytes": 1407,
+      "sha256": "c921ea7294938b34fa1054a4df0933c64139e01a280767ffb8cab9fa76f23d54"
     },
     {
       "file": "plugins/vision_parse/src/main.py",
-      "bytes": 58277,
-      "sha256": "1afccfd672bdd39625d226bfb0f7981a73f38cbe5ddb258944ae89573f13fe72"
+      "bytes": 64999,
+      "sha256": "7488b57bb1f04462be92bda6d8f734b6ec02e009a652518cae3a28d114de6738"
+    },
+    {
+      "file": "plugins/vision_parse/src/media_faces.py",
+      "bytes": 14017,
+      "sha256": "d8798c67b5393216858b4852c26f54aaac46f000c7fbc00a7e6a749b30feda53"
+    },
+    {
+      "file": "plugins/vision_parse/src/media_identity.py",
+      "bytes": 8735,
+      "sha256": "5945ce159b5dca8c150756369d2efb66460b33088fd74b4af5a650d69c0279f3"
+    },
+    {
+      "file": "plugins/vision_parse/src/media_scenes.py",
+      "bytes": 12105,
+      "sha256": "d816920b06e0c2b821a66dc870e6dfd1642fbedc71388d7aff6e2dc8093ddefc"
+    },
+    {
+      "file": "plugins/vision_parse/src/media_two_pass.py",
+      "bytes": 7745,
+      "sha256": "f4db16e02a0e0cc075eafa2900d2352d2471294006e721793a5bfde8f6ee4e37"
+    },
+    {
+      "file": "plugins/vision_parse/src/media_vision.py",
+      "bytes": 9298,
+      "sha256": "06cc8f99493391d7b112666c934a86fc9b534e4f0bc9a0263e5ae4460a5f0d94"
     },
     {
       "file": "plugins/voice_profile/README.md",
@@ -1386,6 +1182,11 @@
       "file": "plugins/web_browser/src/web_runtime/worker.py",
       "bytes": 1615,
       "sha256": "5c6db61fa30f1b1bd21c8d0d4e4d67f79d7705b03afb999f926f25c7c1dd911b"
+    },
+    {
+      "file": "source-content-hashes.json",
+      "bytes": 70870,
+      "sha256": "9fd5c3322d69c8dcca7c901a70076e555eab71d9236f24f8408c44aabe6809d3"
     },
     {
       "file": "tools/7zip/7z.dll",
@@ -2066,11 +1867,6 @@
       "file": "tools/test_shutdown_r1.py",
       "bytes": 4082,
       "sha256": "83c34a01822f1e29d6f9cf0481932fe21cd09f64edbc2f8c261271ac49681c84"
-    },
-    {
-      "file": "tools/test_stego_two_plugins.py",
-      "bytes": 3210,
-      "sha256": "3cadebb63395e50ac1922f8faeddc819a64aa5f0a1e19d132c9c4546c8d0e8da"
     },
     {
       "file": "tools/test_step_boundary_context_r22.py",

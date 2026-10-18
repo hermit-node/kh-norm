@@ -1,15 +1,15 @@
 {
-  "version": "0.55.10r25",
-  "variant": "Cockney-Compiler",
-  "tag": "v0.55.10r25",
-  "source_archive_sha256": "2c04ec84abd457186a7bf40ebb3501f7d57b4cca4fd02dc3e43c56ff925d7263",
-  "source_archive": "Norm-0.55.10r25-Cockney-Compiler-Portable-Source.zip",
+  "version": "0.55.10r26",
+  "variant": "Generic-Vision-Media",
+  "tag": "v0.55.10r26",
+  "source_archive_sha256": "daab0ab48ba981d3fbabdb7261092acd40550a96f0bea48f094897043488a6fa",
+  "source_archive": "Norm-0.55.10r26-Generic-Vision-Media-Portable-Source.zip",
   "quality": "source-inventory-verified",
   "known_issues": [
-    "Voice-profile 0.4.3 strengthens Cockney compiler anchors and synthesis; retains all r24 Nabler changes.",
-    "Profile rebuilding and live voice-style outcomes are separate from release archival."
+    "Public source excludes private binaries, local configuration and state; the original internal installer-ready ZIP is retained on KHzz.",
+    "Live CUDA inference on the RTX 3090 and GUI integration remain unverified."
   ],
-  "published_source_files": 406,
+  "published_source_files": 410,
   "omitted_paths": [
     "backups/plugins-ini/plugins-20261014-151017-561326+0000-72956dfad8bb.ini",
     "config/plugins.ini",

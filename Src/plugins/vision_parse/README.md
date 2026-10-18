@@ -1,5 +1,19 @@
 # vision_parse
 
+## Generic media vision (v0.4.0 / Norm r26)
+
+Alongside the unchanged PDF/OCR reader, the plugin exposes these native tools (not new slash commands):
+
+- vision_media_backend_status and vision_media_face_models_setup — model readiness and explicit approved setup.
+- vision_media_detect_faces and vision_media_scan_video_faces — stable face UUIDs, rectangles, landmarks and SFace embeddings.
+- vision_media_scene_edges — full-timeline two-pass scene detection with a 30-second minimum and optional old-boundary rechecking.
+- vision_media_classify_scene and vision_media_classify_video — descriptive categories through Norm’s shared vision client.
+- vision_media_reconcile_people and vision_media_reconcile_people_file — propose merges without modifying library databases.
+
+Media paths obey vision_parse read/write-root authorization. Profiles with different manual aliases never merge automatically, including via chains. Equal alias sets still require strong visual evidence. Names, aliases and acceptance decisions remain owned by Media Catalog. CUDA-preferred ONNX Runtime and model weights are optional. No independent Ollama instance or guaranteed shared PyTorch memory allocator.
+
+Details: ../../docs/R26_GENERIC_VISION_MEDIA.md
+
 First-party PDF/image reader for Norm. Native PDFs use grayscale text-coverage triage. Scanned PDFs and PNG/JPEG/WebP/BMP/TIFF images attempt conventional OCR first; only uncovered/uncertain visual regions are sent to the configured Ollama vision model.
 
 The rendered page is authoritative. The text layer is only a noisy hint and may contain mojibake, bad column ordering, missing characters, or OCR-like corruption. The plugin explicitly forbids inventing typo/regex variants to compensate for extraction errors.

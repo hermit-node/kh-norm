@@ -21,8 +21,8 @@
       "sha256": "e774f5ea91a76af90b32d07d967a17a1e2741a3e99c67ee944536cb548e6a432"
     },
     "README.md": {
-      "bytes": 20157,
-      "sha256": "2954da3d38ef61502e47fa2a33e8ebb7530bebb7528539649d5410ece5fcc9f8"
+      "bytes": 20877,
+      "sha256": "30a93689439ec967713443dd0435a98c60736fad92bc110b2176175ecadebefe"
     },
     "Run-Norm-Terminals.bat": {
       "bytes": 1005,
@@ -33,8 +33,8 @@
       "sha256": "7cde0dee4c535c6c43b0c87980cc7bf57d0584849aac5bce97e95030bb9308c3"
     },
     "SOURCE_PACKAGE.md": {
-      "bytes": 40370,
-      "sha256": "d8a24b312ee6b2c6b15c10a75a290612189711ae29da81fd4a698e5686bcb728"
+      "bytes": 41030,
+      "sha256": "075c0cd8c5473c524eeaf9a3e6be5ad05e9d6030cf546d7be120af921eb0fdfa"
     },
     "Safe-Shutdown-Norm.bat": {
       "bytes": 519,
@@ -393,8 +393,8 @@
       "sha256": "8a5fdb2b7ffccaf4a4b60551581d0d01fdc8ae150fdb36b0a4334ef6f3cd15ee"
     },
     "docs/RELEASE_NOTES.md": {
-      "bytes": 170304,
-      "sha256": "60212813d866fe76cf5d3f2d589692f7ed528c9cb15e086442110e6aac08933e"
+      "bytes": 170964,
+      "sha256": "38a65a005d655d0affc580f3bfc331d80dc06f3df1141c0349c71285f1e7bb33"
     },
     "docs/SHARED_BROWSER.md": {
       "bytes": 6642,
@@ -1033,20 +1033,20 @@
       "sha256": "4e5577710640d52ff3f610a969c77e3d8c64bb67ad993d9e2eb7908e73c96be3"
     },
     "plugins/vision_parse/README.md": {
-      "bytes": 6884,
-      "sha256": "93dd7f0fb294bb695790ed32e17a91bd607640c0f609e191a28fa05de77af368"
+      "bytes": 8129,
+      "sha256": "1aa49c220dbf2dfe9c7d16baffc83043d9da9cca29362f8649a255cf1a4f016f"
     },
     "plugins/vision_parse/help.txt": {
-      "bytes": 2153,
-      "sha256": "889eb87029d9392073ddee58e409482d6208deb4a33177fdc3a5b1249a29d1ef"
+      "bytes": 2640,
+      "sha256": "9a74285c0bfed2c60a032bab7a946253b752c3e9d084c96b1deeb660fddb5a71"
     },
     "plugins/vision_parse/plugin.json": {
-      "bytes": 1062,
-      "sha256": "fda684a2e6613973fee8fcae6aaf6849e21057dfcb86d62101485e1b9d7c9346"
+      "bytes": 1407,
+      "sha256": "c921ea7294938b34fa1054a4df0933c64139e01a280767ffb8cab9fa76f23d54"
     },
     "plugins/vision_parse/src/main.py": {
-      "bytes": 58277,
-      "sha256": "1afccfd672bdd39625d226bfb0f7981a73f38cbe5ddb258944ae89573f13fe72"
+      "bytes": 64999,
+      "sha256": "7488b57bb1f04462be92bda6d8f734b6ec02e009a652518cae3a28d114de6738"
     },
     "plugins/voice_profile/README.md": {
       "bytes": 5036,

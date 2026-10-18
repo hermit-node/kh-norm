@@ -1,3 +1,7 @@
+## 0.55.10r26 — Generic Vision Media (2026-10-18)
+
+Built directly on r25. The built-in vision_parse plugin adds YuNet/SFace face observations and embeddings, stable UUIDs, global two-pass scene detection with a hard 30-second minimum, structured per-scene and whole-video categories, and read-only cross-video identity reconciliation. Different manual aliases never auto-merge; matching aliases require strong face evidence. Editable names and database writes remain responsibilities of Media Catalog. Optional ONNX Runtime GPU setup has CPU fallback. Existing N1/N2, queue, Ollama and installer behavior is unchanged. See docs/R26_GENERIC_VISION_MEDIA.md.
+
 ## 0.55.10r21 - ChatGPT image/file collection (2026-10-16)
 
 Direct patch to the normalized r20 no-Celery source. Added extension-style first-party file-ID resolution, a Qt native browser download fallback for HTTP 403 failures, actual local binary export, image signatures, distinct media coverage reporting, default missing-file refusal, and focused regression tests. No live signed-in Qt verification; see `docs/R21_CHATGPT_MEDIA_EXPORT.md`.

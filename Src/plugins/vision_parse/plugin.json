@@ -1,10 +1,10 @@
 {
   "schema_version": 2,
   "name": "vision_parse",
-  "version": "0.3.0",
-  "date": "2026-10-08",
+  "version": "0.4.0",
+  "date": "2026-10-18",
   "entrypoint": "src/main.py",
-  "description": "Shared PDF and image reader with native-text coverage, OCR-first raster masking, targeted repair and selective Ollama vision.",
+  "description": "Shared PDF and image reader with native-text coverage, OCR-first raster masking, targeted repair and selective Ollama vision. Generic media scene, face, and identity analysis, catalog-independent.",
   "capabilities": [
     "rendered PDF vision",
     "text-layer reconciliation",
@@ -18,9 +18,14 @@
     "grayscale page/ink coverage threshold and image-aware vision skip",
     "OCR-first scanned PDF and PNG/JPEG/WebP/BMP/TIFF reading",
     "transparent high-confidence OCR text mask for localized remaining-image vision",
-    "explicit semantic suspect_excerpt crop recheck"
+    "explicit semantic suspect_excerpt crop recheck",
+    "two-pass 30-second scene edge review",
+    "YuNet face occurrence UUIDs and SFace embeddings",
+    "CUDA ONNX Runtime inference with CPU fallback",
+    "batch person-profile reconciliation with alias protection",
+    "scene categories via shared Ollama vision client"
   ],
-  "sha256": "f67a17564401f972ee78e6a8730df4a010aa0a7796e78b69deb53d284feac331",
+  "sha256": "7424a5959644452cc6e3a472de4bfb3f94b7ad5ccd0cf27236e20bf043abff5a",
   "settings": {
     "vision_parse": {
       "enabled": true

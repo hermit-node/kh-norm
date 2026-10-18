@@ -6,6 +6,15 @@ Detailed implementation notes and release-specific testing are recorded in [SOUR
 
 ## 0.55.10
 
+### 0.55.10r26 — Generic Vision Media
+
+- Extend the built-in vision_parse plugin rather than start a second media inference service.
+- YuNet face observations, SFace embeddings, stable face-observation UUIDs, and bounded video frame sampling.
+- Two passes over the complete video to reconsider old scene cuts and guarantee a 30-second minimum scene duration.
+- Per-scene and whole-video category proposals through Norm’s existing vision client.
+- Read-only cross-video identity merge proposals. Different user-defined aliases prohibit auto-merging; identical aliases still require strong visual evidence.
+- Offline code and package validation; live CUDA/Windows tests pending. See docs/R26_GENERIC_VISION_MEDIA.md.
+
 ### 0.55.10r25 — Cockney voice compiler
 
 - Strengthen voice-profile v0.4.3 Cockney anchor selection using dialect-aware, source-balanced examples.

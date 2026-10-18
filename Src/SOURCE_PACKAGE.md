@@ -1,3 +1,7 @@
+## 0.55.10r26 — Generic Vision Media (2026-10-18)
+
+Built directly on r25. The built-in vision_parse plugin adds YuNet/SFace face observations and embeddings, stable UUIDs, global two-pass scene detection with a hard 30-second minimum, structured per-scene and whole-video categories, and read-only cross-video identity reconciliation. Different manual aliases never auto-merge; matching aliases require strong face evidence. Editable names and database writes remain responsibilities of Media Catalog. Optional ONNX Runtime GPU setup has CPU fallback. Existing N1/N2, queue, Ollama and installer behavior is unchanged. See docs/R26_GENERIC_VISION_MEDIA.md.
+
 ## 0.55.10r25 - Cockney compiler fixes (2026-10-16)
 
 Direct patch to verified r24 source. Voice-profile 0.4.3 replaces weak editorial/PDF style anchors with dialect-aware, source-balanced Cockney anchors, strengthens model synthesis against sanitized corporate language, prevents borrowing distinctive source lines and favors short casual replies. Other profiles and all existing r24 Nabler changes unchanged. Source-only, no restart or activation. See docs/R25_COCKNEY_VOICE_COMPILER.md.

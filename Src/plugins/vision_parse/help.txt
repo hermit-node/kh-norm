@@ -40,3 +40,11 @@ To authorize an additional source folder, configure:
 Do not bypass a rejected read path using another tool.
 
 /help vision-parse  (aliases: /help vision; /help pdf-reader)
+
+Generic media-analysis native tools (not Prompt slash commands):
+  vision_media_backend_status, vision_media_face_models_setup
+  vision_media_detect_faces, vision_media_scan_video_faces, vision_media_scene_edges
+  vision_media_classify_scene, vision_media_classify_video
+  vision_media_reconcile_people, vision_media_reconcile_people_file
+Authorized source roots required; two scene passes with at least 30s final duration.
+Conflicting manual person aliases cannot automatically merge.

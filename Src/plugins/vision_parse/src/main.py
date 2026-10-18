@@ -1227,3 +1227,127 @@ def vision_parse(
             else mode
         ),
     }
+# ---- BEGIN NORM GENERIC MEDIA VISION v0.4.0 ----
+# These are first-party vision_parse entrypoints. No media catalog imports.
+
+def _authorized_media_source(path: str) -> str:
+    """Apply Norm's canonical vision_parse read policy to media paths."""
+    from norm_runtime.file_access_policy import load_file_access_policy, authorize_path
+    root = _runtime_root()
+    policy = load_file_access_policy(root, capability='vision_parse')
+    return str(authorize_path(path, policy.read_roots, access='read', hardlock=True))
+
+
+def vision_media_models_status() -> dict:
+    """Check installed YuNet/SFace models, CPU APIs and advertised CUDA provider."""
+    from .media_faces import models_status
+    return models_status()
+
+
+def vision_media_models_setup(approved: bool = False) -> dict:
+    """Explicitly approved download of verified YuNet and SFace models."""
+    from .media_faces import setup_models, model_root
+    from norm_runtime.file_access_policy import load_file_access_policy, authorize_path
+    policy = load_file_access_policy(_runtime_root(), capability='vision_parse')
+    authorize_path(model_root(), policy.write_roots, access='write', hardlock=True)
+    return setup_models(approved=approved)
+
+
+def vision_media_faces(path: str, timestamp_sec: float = 0.0,
+                      backend: Literal['auto', 'cpu', 'cuda'] = 'auto',
+                      source_uuid: str = '', include_embeddings: bool = True) -> dict:
+    """Return per-face UUIDs, boxes, landmarks, and optional 128-d SFace vectors."""
+    from .media_vision import detect_faces
+    return detect_faces(_authorized_media_source(path), timestamp_sec=timestamp_sec,
+                        backend=backend, source_uuid=source_uuid,
+                        include_embeddings=include_embeddings)
+
+
+def vision_media_scan_video_faces(path: str,
+                                scene_boundaries: list[float] | None = None,
+                                samples_per_scene: int = 2,
+                                backend: Literal['auto','cpu','cuda'] = 'auto',
+                                source_uuid: str = '', max_samples: int = 200) -> dict:
+    """Detect distinct face appearances at bounded video samples; no identity writes."""
+    from .media_vision import scan_video_faces
+    return scan_video_faces(_authorized_media_source(path),
+                            scene_boundaries=scene_boundaries,
+                            samples_per_scene=samples_per_scene,
+                            backend=backend, source_uuid=source_uuid,
+                            max_samples=max_samples)
+
+
+def vision_media_scene_edges(path: str, min_scene_seconds: float = 30.0,
+                            sample_fps: int = 4,
+                            previous_boundaries: list[float] | None = None) -> dict:
+    """Two-pass scene detection with global rechecks and minimum 30s scenes."""
+    from .media_vision import scene_edges
+    return scene_edges(_authorized_media_source(path),
+                min_scene_seconds=min_scene_seconds, sample_fps=sample_fps,
+                previous_boundaries=previous_boundaries)
+
+
+def vision_media_classify_scene(path: str, start_sec: float, end_sec: float,
+                              taxonomy_hint: str = '') -> dict:
+    """Classify sampled scene frames using Norm's existing vision/Ollama client."""
+    from .media_vision import classify_scene
+    return classify_scene(_authorized_media_source(path), start_sec, end_sec,
+                          _vision_client(), taxonomy_hint=taxonomy_hint)
+
+
+
+def vision_media_classify_video(path: str, taxonomy_hint: str = '') -> dict:
+    """Whole-video descriptive categories via Norm's existing Ollama vision client."""
+    from .media_vision import classify_video
+    return classify_video(_authorized_media_source(path), _vision_client(),
+                          taxonomy_hint=taxonomy_hint)
+
+
+def vision_media_reconcile_people(profiles: list[dict], appearances: list[dict],
+                                 auto_threshold: float = 0.60,
+                                 review_threshold: float = 0.39) -> dict:
+    """Read-only global person-profile merge proposals; manual labels protected."""
+    from .media_identity import reconcile_profiles
+    return reconcile_profiles(profiles, appearances,
+                auto_threshold=auto_threshold, review_threshold=review_threshold)
+
+
+def vision_media_reconcile_people_file(manifest_path: str,
+                            auto_threshold: float = 0.60,
+                            review_threshold: float = 0.39,
+                            output_path: str = '') -> dict:
+    """Batch reconcile a caller-supplied manifest JSON; no SQLite writes."""
+    from .media_identity import reconcile_profiles
+    source = Path(_authorized_media_source(manifest_path))
+    if source.stat().st_size > 600_000_000:
+        raise ValueError('Manifest larger than 600MB; submit bounded partitions')
+    manifest = json.loads(source.read_text(encoding='utf-8'))
+    if not isinstance(manifest, dict) or not isinstance(manifest.get('profiles'), list) or not isinstance(manifest.get('appearances'), list):
+        raise ValueError('Manifest must have profiles and appearances arrays')
+    result = reconcile_profiles(manifest['profiles'], manifest['appearances'],
+                auto_threshold=auto_threshold, review_threshold=review_threshold,
+                max_proposals=100000 if output_path else 2000)
+    result['source_manifest'] = str(source)
+    if output_path:
+        from norm_runtime.file_access_policy import load_file_access_policy, authorize_path
+        import os
+        import tempfile
+        policy = load_file_access_policy(_runtime_root(), capability='vision_parse')
+        destination = authorize_path(output_path, policy.write_roots, access='write', hardlock=True)
+        if destination.exists():
+            raise FileExistsError('Refusing to overwrite existing Norm analysis report')
+        payload = json.dumps(result, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+        fd, temporary = tempfile.mkstemp(prefix='.vision-report-', dir=str(destination.parent))
+        try:
+            with os.fdopen(fd, 'wb') as out:
+                out.write(payload)
+            os.replace(temporary, destination)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+        return {'schema':'norm.media.identity.result_file.v1','output_path':str(destination),
+                'proposed_auto_merges':len(result['proposed_auto_merges']),
+                'review_only':len(result['review_only']),
+                'truncated_proposals':result['truncated_proposals'],'applied':False}
+    return result
+# ---- END NORM GENERIC MEDIA VISION v0.4.0 ----
