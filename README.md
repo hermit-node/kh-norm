@@ -20,7 +20,7 @@ Norm separates reasoning from execution:
 
 - **N2 (worker)** plans the task, interprets results, and proposes tool actions.
 - **N1 (gatekeeper)** checks each proposal against the task and available evidence. It approves and executes authorized actions or returns a reason for N2 to revise them.
-- **You (operator)** submit requests, inspect replies and runtime activity, and control tasks through the Norm interface.
+- User submits requests, inspect replies and runtime activity, and control tasks through the Norm interface.
 
 N2 does not execute tools directly. Ordinary-language tasks pass through that workflow; supported slash commands are direct operator controls.
 
