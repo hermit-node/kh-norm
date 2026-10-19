@@ -1,0 +1,5 @@
+# Native browser screen capture and conversation PDF export.
+PySide6
+reportlab
+mss
+playwright
