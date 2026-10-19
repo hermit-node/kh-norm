@@ -1,56 +1,96 @@
 # Norm
 
-**Norm is a local-first AI agent runtime for Windows.** It connects locally hosted language models to tools, persistent context, and operator-controlled task execution.
+**Norm is a self-hosted AI agent for Windows.** It uses local Ollama models to plan work, call tools, inspect results, and keep tasks moving without requiring you to restart from scratch after every interruption.
 
-Norm is designed to carry out work—not just answer prompts. It plans multi-step tasks, checks proposed actions, operates through approved tools, and resumes work after interruptions.
+Give Norm an ordinary-language request—such as reviewing a directory, analyzing a document, working on a code project, or processing a video. It breaks the work into steps, runs approved operations, and reports what happened.
 
-## How Norm works
+## What Norm can do
 
-```text
-Operator request
-       ↓
-N2 — plans, reasons, and proposes tool actions
-       ↓
-N1 — validates each proposal, executes approved actions
-     or returns a concrete denial for N2 to revise
-       ↓
-Results and checkpoints → N2 continues → N1 reviews completion
-```
+- **Files and code:** inspect folders, analyze files, propose and carry out changes, and run verification steps.
+- **Documents and media:** OCR and analyze PDFs or images; detect video scene boundaries and faces and return structured metadata.
+- **Databases and reports:** work with configured PostgreSQL data, use Redis for reusable evidence and task coordination, and produce structured reports.
+- **Long-running tasks:** retain checkpoints, show progress, suppress work, and resume eligible tasks later.
+- **Plugins:** add hot-swappable tools without modifying the N1/N2 core.
 
-**N2 does not execute tools directly.** N1 controls approval, tool execution, and acceptance of completed steps. Operator slash commands use their own direct-command path; optional plugins preserve the same N1/N2 contract.
+Norm is not a hosted chatbot. It runs in your own Windows environment with access limited by the tools, services, and file permissions you configure.
 
-## Capabilities
+## How it works
 
-- **Local AI:** Ollama-hosted language models with optional CUDA-capable vision utilities.
-- **Durable tasks:** Resumable and suppressible work, Redis-backed live evidence, and PostgreSQL-backed history and checkpoints.
-- **Controlled tools:** Native filesystem, database, browser, and system operations with explicit approval and access boundaries.
-- **Extensible plugins:** Hot-swappable schema-2 Python plugins, tool discovery, and integrity-checked source identities.
-- **Vision and media:** PDF/image analysis, OCR, face observations and embeddings, video scene boundaries, and structured identity-match proposals.
-- **Operator interfaces:** Local prompt, reply, and runtime views with structured reporting.
+Norm separates reasoning from execution:
 
-Media analysis produces reusable structured results. External apps such as Media Catalog manage editable names, aliases, database records, and accepted person-profile merges.
+- **N2 (worker)** plans the task, interprets results, and proposes tool actions.
+- **N1 (gatekeeper)** checks each proposal against the task and available evidence. It approves and executes authorized actions or returns a reason for N2 to revise them.
+- **You (operator)** submit requests, inspect replies and runtime activity, and control tasks through the Norm interface.
 
-## Repository layout
+N2 does not execute tools directly. Ordinary-language tasks pass through that workflow; supported slash commands are direct operator controls.
 
-| Location | Purpose |
+## Install Norm
+
+Norm's **source ZIP is not the installer**. You need the separately distributed Norm installer, plus the source package you want to install.
+
+1. Download the [latest Norm source release](https://github.com/hermit-node/kh-norm/releases/latest).
+2. Run your Norm installer and select the downloaded source ZIP as its source package. The ZIP opens directly to folders such as `core/`, `plugins/`, `tools/`, and `config/`—there is no extra `Src/` wrapper.
+3. Configure the installation's Ollama, Redis, PostgreSQL, and Tailscale connectivity as required by your environment. The installer manages the Python environment and builds the Norm executable.
+4. Confirm that the installed folder contains `core/norm.exe`, `.venv/`, and `config/settings.ini` before launching.
+
+The default installation root in the included configuration example is `C:\Norm`, but your installer may use a different directory. Settings live in `config/settings.ini`; credentials should be kept in the configured secrets file, not in the GitHub repository.
+
+## Launch Norm
+
+From your installed Norm folder:
+
+| Launcher | What it opens |
 | --- | --- |
-| [Src/core](Src/core) | Runtime, model clients, task persistence, and tool execution |
-| [Src/plugins](Src/plugins) | Built-in and optional plugin implementations |
-| [Src/tools](Src/tools) | Consoles, utilities, and regression tests |
-| [Src/config](Src/config) | Runtime defaults and configuration examples |
-| [Src/docs](Src/docs) | Technical and operator documentation |
+| `Run-Norm.bat` | Starts or reuses the backend and opens the Qt workspace |
+| `Run-Norm-Terminals.bat` | Starts or reuses the backend and opens separate **Norm Prompt**, **Norm Replies**, and **Norm Runtime** windows |
 
-## Download and setup
+You can also open the installer-created shortcuts if they are available.
 
-Get the [latest published source](https://github.com/hermit-node/kh-norm/releases/latest). The release ZIP contains **the contents of `Src` at the ZIP root**, not an additional enclosing folder.
+**Norm Prompt** is where you type tasks. **Norm Replies** displays results; **Norm Runtime** shows activity. The launcher expects the installed Python environment, compiled executable, settings, and configured Tailscale connectivity to be available.
 
-Norm is intended for Windows with a compatible Python environment, locally configured Ollama, Redis, and PostgreSQL, and appropriate runtime dependencies. Some GPU and plugin capabilities require optional models and libraries. See [runtime requirements](Src/core/requirements.txt) and the [operator documentation](Src/docs/README.md).
+## Give Norm its first task
 
-**Public-source boundary:** This repository excludes machine-specific secrets and settings, runtime state, and unpublished private modules. The public ZIP is a source snapshot, not a preconfigured executable installer. Never commit credentials, environment files, or user data.
+Type a normal request into **Norm Prompt**, for example:
 
-## Documentation
+> Inspect my Downloads folder, group the files by type and project, and show me a proposed organization before moving anything.
 
-- [Plugin index](Src/plugins/README.md)
-- [Vision plugin](Src/plugins/vision_parse/README.md)
-- [Operator and technical documentation](Src/docs/README.md)
-- [Source revision records](Src/README.md)
+Or:
+
+> Analyze this video for scene changes and face appearances. Return the scene timestamps and face-observation IDs as structured results. Do not rename people or merge conflicting manual identities.
+
+Norm handles the request through N2 planning and N1-approved tool actions. You can review results in Replies and track the work in Runtime. Be explicit about constraints such as **preview only**, **do not overwrite**, or **ask before deleting**.
+
+## Useful commands
+
+Type these in **Norm Prompt**:
+
+| Command | Purpose |
+| --- | --- |
+| `/help` | Show the available operator commands |
+| `/help plugins` | List plugin-specific help manuals |
+| `/status` | Show Norm's runtime and queue status |
+| `/queue` | See pending tasks |
+| `/queue-full` | Include parked tasks and fuller details |
+| `/about` | Show version, runtime and plugin information |
+| `/switch-model` | List available model choices |
+| `/switch-model NAME` | Switch to a named model |
+| `/suppress-task` | Suppress the current/next active task |
+| `/resume-task` | See or resume suppressed tasks |
+| `/failed` | Show recent failed tasks |
+| `/new` | Start a new conversation |
+| `/stop-all` | Finish the current step and shut down Norm/Ollama |
+| `/exit` | Close the prompt window without stopping Norm |
+
+Use `/help` inside your installed version as the authoritative command list; plugin availability and installed versions can differ.
+
+## Plugins
+
+Norm's built-in and added tools live under the `plugins/` directory. Ask `/help plugins` in Norm Prompt to see the installed plugin manuals and available operations.
+
+Examples include [Vision](Src/plugins/vision_parse/README.md) for documents and media, [Nabler](Src/plugins/nabler/README.md) for structured output, and tools for filesystem, database, browser, voice-profile, and task workflows. Plugins expose tools to the existing N1 approval/execution path rather than bypassing it.
+
+## When something will not start
+
+Check that Ollama, Redis, PostgreSQL, and the configured Tailscale connection are available, and verify that `config/settings.ini` points to the right hosts and ports. The startup script reports missing files and unhealthy services, and can show recent logs from `logs/`.
+
+For the source tree, runtime details, and plugin manuals, see the [operator documentation](Src/docs/README.md) and [plugin index](Src/plugins/README.md).
