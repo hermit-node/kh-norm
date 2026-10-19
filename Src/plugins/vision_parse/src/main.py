@@ -1254,7 +1254,7 @@ def vision_media_models_setup(approved: bool = False) -> dict:
 
 
 def vision_media_faces(path: str, timestamp_sec: float = 0.0,
-                      backend: Literal['auto', 'cpu', 'cuda'] = 'auto',
+                      backend: Literal['auto', 'cpu', 'cuda'] = 'cpu',
                       source_uuid: str = '', include_embeddings: bool = True) -> dict:
     """Return per-face UUIDs, boxes, landmarks, and optional 128-d SFace vectors."""
     from .media_vision import detect_faces
@@ -1266,7 +1266,7 @@ def vision_media_faces(path: str, timestamp_sec: float = 0.0,
 def vision_media_scan_video_faces(path: str,
                                 scene_boundaries: list[float] | None = None,
                                 samples_per_scene: int = 2,
-                                backend: Literal['auto','cpu','cuda'] = 'auto',
+                                backend: Literal['auto','cpu','cuda'] = 'cpu',
                                 source_uuid: str = '', max_samples: int = 200) -> dict:
     """Detect distinct face appearances at bounded video samples; no identity writes."""
     from .media_vision import scan_video_faces

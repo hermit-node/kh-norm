@@ -26,7 +26,8 @@ playwright==1.63.0
 trafilatura==2.3.0
 tabulate==0.9.0
 
-# Norm r26 media plugin: CUDA ONNX inference (CPU fallback through OpenCV).
-onnxruntime-gpu==1.31.0
+# Vision Parse defaults to CPU OpenCV YuNet/SFace.
+# ONNX Runtime GPU is optional for explicitly selected CUDA face inference;
+# never install either ONNX wheel just for the CPU path.
 # Native FFmpeg binary delivered with an installable Python wheel.
 imageio-ffmpeg==0.6.0

@@ -175,7 +175,7 @@ def _face_rows(image, path: Path, *, backend: str, folder: Path):
     ph, pw = preview.shape[:2]
     detector_model = folder / MODEL_FILES['yunet'][0]
     face_model = folder / MODEL_FILES['sface'][0]
-    if backend in ('auto', 'cuda'):
+    if backend == 'cuda':
         try:
             session = _ort_session(detector_model, True)
             model_input = cv2.resize(preview, (320, 320))
@@ -236,7 +236,7 @@ def _embedding(image, face: list, folder: Path, backend: str) -> list[float]:
     return np.round(data / norm, 7).tolist()
 
 
-def detect(image_path: str, *, timestamp_sec: float = 0.0, backend: str = 'auto',
+def detect(image_path: str, *, timestamp_sec: float = 0.0, backend: str = 'cpu',
            directory: str = '', include_embeddings: bool = True,
            source_uuid: str = '') -> dict[str, Any]:
     """Read still image or requested video frame; deterministic observation UUIDs.
@@ -268,7 +268,9 @@ def detect(image_path: str, *, timestamp_sec: float = 0.0, backend: str = 'auto'
         image = cv2.imread(str(file))
         if image is None:
             raise ValueError('Cannot decode image')
-    faces, engine, _ = _face_rows(image, file, backend=backend, folder=folder)
+    # Keep legacy 'auto' accepted, but it resolves to CPU and never probes CUDA.
+    selected_backend = 'cpu' if backend == 'auto' else backend
+    faces, engine, _ = _face_rows(image, file, backend=selected_backend, folder=folder)
     height, width = image.shape[:2]
     stable_source = source_uuid or str(file.resolve()).casefold()
     base = f'{stable_source}|{round(timestamp_sec*1000)}'

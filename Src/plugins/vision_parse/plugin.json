@@ -21,11 +21,11 @@
     "explicit semantic suspect_excerpt crop recheck",
     "two-pass 30-second scene edge review",
     "YuNet face occurrence UUIDs and SFace embeddings",
-    "CUDA ONNX Runtime inference with CPU fallback",
+    "OpenCV CPU YuNet/SFace default, optional explicit ONNX CUDA",
     "batch person-profile reconciliation with alias protection",
     "scene categories via shared Ollama vision client"
   ],
-  "sha256": "770857bb620c81eefed633258a8c0eae5d5fff0cf0b8bc2a9f8e7be56a279e62",
+  "sha256": "ac4f765a2f3a36c01577821cd915e245d0ed81fdb72a484369aeabe5ae813719",
   "settings": {
     "vision_parse": {
       "enabled": true

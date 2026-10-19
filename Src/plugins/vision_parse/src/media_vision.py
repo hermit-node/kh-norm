@@ -69,7 +69,7 @@ def scene_edges(video_path: str, *, min_scene_seconds: float = 30,
 
 
 def detect_faces(image_or_video_path: str, *, timestamp_sec: float = 0.,
-                 backend: str = 'auto', include_embeddings: bool = True,
+                 backend: str = 'cpu', include_embeddings: bool = True,
                  source_uuid: str = '', model_directory: str = '') -> dict:
     return _detect_faces(image_or_video_path, timestamp_sec=timestamp_sec,
                         backend=backend, include_embeddings=include_embeddings,
@@ -77,7 +77,7 @@ def detect_faces(image_or_video_path: str, *, timestamp_sec: float = 0.,
 
 
 def scan_video_faces(video_path: str, *, scene_boundaries: list[float] | None = None,
-                     samples_per_scene: int = 2, backend: str = 'auto',
+                     samples_per_scene: int = 2, backend: str = 'cpu',
                      model_directory: str = '', source_uuid: str = '',
                      max_samples: int = 200) -> dict:
     """Sample cross-scene faces and emit immutable per-occurrence UUID observations."""
