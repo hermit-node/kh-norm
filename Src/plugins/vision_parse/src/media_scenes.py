@@ -24,6 +24,18 @@ SIGNALS = ('pause', 'fade_black', 'colorset')
 MIN_SCENE_SECONDS = 30.0
 
 
+def ffmpeg_executable() -> str:
+    """Prefer an operator FFmpeg; otherwise use the installer-provided wheel."""
+    executable = shutil.which('ffmpeg')
+    if executable:
+        return executable
+    try:
+        from imageio_ffmpeg import get_ffmpeg_exe
+        return get_ffmpeg_exe()
+    except (ImportError, OSError, RuntimeError):
+        return ''
+
+
 @dataclass(frozen=True)
 class Feature:
     time: float
@@ -55,11 +67,12 @@ def _features_from_rgb(raw: bytes, t: float, previous: Image.Image | None) -> tu
 
 def decode_features(source: Path, duration: float, fps: int = 4, *,
                     stopped: Callable | None = None, progress: Callable | None = None) -> list[Feature]:
-    if not shutil.which('ffmpeg'):
+    ffmpeg = ffmpeg_executable()
+    if not ffmpeg:
         raise RuntimeError('ffmpeg is required for scene detection')
     if fps < 3 or fps > 12:
         raise ValueError('fps must be in 3..12')
-    command=['ffmpeg','-nostdin','-hide_banner','-loglevel','error','-i',str(source),
+    command=[ffmpeg,'-nostdin','-hide_banner','-loglevel','error','-i',str(source),
              '-an','-vf',f'fps={fps},scale={FRAME_WIDTH}:{FRAME_HEIGHT}',
              '-pix_fmt','rgb24','-f','rawvideo','pipe:1']
     proc=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
@@ -87,8 +100,9 @@ def decode_features(source: Path, duration: float, fps: int = 4, *,
 def audio_pauses(source: Path, *, threshold_db: int = -38,
                  min_pause: float = .5, timeout: float = 600) -> list[tuple[float,float]]:
     """Audio silence is optional. No audio stream or ffmpeg failure means no audio cue."""
-    if not shutil.which('ffmpeg'): return []
-    command=['ffmpeg','-nostdin','-hide_banner','-i',str(source),'-vn',
+    ffmpeg = ffmpeg_executable()
+    if not ffmpeg: return []
+    command=[ffmpeg,'-nostdin','-hide_banner','-i',str(source),'-vn',
              '-af',f'silencedetect=noise={threshold_db}dB:d={min_pause}',
              '-f','null','-']
     try:

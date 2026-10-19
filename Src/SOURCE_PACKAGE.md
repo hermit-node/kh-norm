@@ -1,3 +1,7 @@
+## 0.55.10r26 installer-ready package correction (2026-10-18)
+
+Installer 1.6.17 validates config/settings.ini and builds norm.exe from source. This package now includes sanitized default settings, r26 manifest/version metadata, and pinned media plugin dependencies (onnxruntime-gpu and imageio-ffmpeg). FFmpeg resolves from PATH or the installed Python wheel. CUDA inference is optional at runtime, and YuNet/SFace weights still require explicit approved setup. No private credentials or compiled binaries are included.
+
 ## 0.55.10r26 — Generic Vision Media (2026-10-18)
 
 Built directly on r25. The built-in vision_parse plugin adds YuNet/SFace face observations and embeddings, stable UUIDs, global two-pass scene detection with a hard 30-second minimum, structured per-scene and whole-video categories, and read-only cross-video identity reconciliation. Different manual aliases never auto-merge; matching aliases require strong face evidence. Editable names and database writes remain responsibilities of Media Catalog. Optional ONNX Runtime GPU setup has CPU fallback. Existing N1/N2, queue, Ollama and installer behavior is unchanged. See docs/R26_GENERIC_VISION_MEDIA.md.

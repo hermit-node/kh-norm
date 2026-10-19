@@ -25,3 +25,8 @@ soupsieve==2.10
 playwright==1.63.0
 trafilatura==2.3.0
 tabulate==0.9.0
+
+# Norm r26 media plugin: CUDA ONNX inference (CPU fallback through OpenCV).
+onnxruntime-gpu==1.31.0
+# Native FFmpeg binary delivered with an installable Python wheel.
+imageio-ffmpeg==0.6.0

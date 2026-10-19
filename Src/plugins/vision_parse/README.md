@@ -10,7 +10,7 @@ Alongside the unchanged PDF/OCR reader, the plugin exposes these native tools (n
 - vision_media_classify_scene and vision_media_classify_video — descriptive categories through Norm’s shared vision client.
 - vision_media_reconcile_people and vision_media_reconcile_people_file — propose merges without modifying library databases.
 
-Media paths obey vision_parse read/write-root authorization. Profiles with different manual aliases never merge automatically, including via chains. Equal alias sets still require strong visual evidence. Names, aliases and acceptance decisions remain owned by Media Catalog. CUDA-preferred ONNX Runtime and model weights are optional. No independent Ollama instance or guaranteed shared PyTorch memory allocator.
+Media paths obey vision_parse read/write-root authorization. Profiles with different manual aliases never merge automatically, including via chains. Equal alias sets still require strong visual evidence. Names, aliases and acceptance decisions remain owned by Media Catalog. ONNX Runtime GPU and packaged FFmpeg are installed from requirements (CUDA remains optional at execution). YuNet/SFace model weights are downloaded only after explicit approval. No independent Ollama instance or guaranteed shared PyTorch memory allocator.
 
 Details: ../../docs/R26_GENERIC_VISION_MEDIA.md
 

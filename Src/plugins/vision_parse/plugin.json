@@ -25,7 +25,7 @@
     "batch person-profile reconciliation with alias protection",
     "scene categories via shared Ollama vision client"
   ],
-  "sha256": "7424a5959644452cc6e3a472de4bfb3f94b7ad5ccd0cf27236e20bf043abff5a",
+  "sha256": "770857bb620c81eefed633258a8c0eae5d5fff0cf0b8bc2a9f8e7be56a279e62",
   "settings": {
     "vision_parse": {
       "enabled": true

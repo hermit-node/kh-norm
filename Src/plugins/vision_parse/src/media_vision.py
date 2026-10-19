@@ -19,7 +19,18 @@ from .media_identity import reconcile_profiles
 
 def _duration(path: Path) -> float:
     if shutil.which('ffprobe') is None:
-        raise RuntimeError('ffprobe (FFmpeg) is required for video duration')
+        # imageio-ffmpeg ships ffmpeg but not always ffprobe. OpenCV gives a
+        # portable duration estimate for constant-frame-rate media.
+        import cv2
+        capture = cv2.VideoCapture(str(path))
+        try:
+            frames = capture.get(cv2.CAP_PROP_FRAME_COUNT)
+            fps = capture.get(cv2.CAP_PROP_FPS)
+            if not capture.isOpened() or not math.isfinite(frames) or not math.isfinite(fps) or fps <= 0 or frames <= 0:
+                raise RuntimeError('Cannot determine video duration: ffprobe unavailable and OpenCV metadata invalid')
+            return frames / fps
+        finally:
+            capture.release()
     result = subprocess.run(['ffprobe', '-v', 'error', '-show_entries',
         'format=duration', '-of', 'default=nokey=1:noprint_wrappers=1', str(path)],
         capture_output=True, text=True, timeout=45, check=False)
@@ -112,10 +123,11 @@ def _json_object(text: str) -> dict:
 
 
 def _extract_video_frame(video: Path, t: float, directory: Path, i: int) -> str:
-    if shutil.which('ffmpeg') is None:
+    ffmpeg = media_scenes.ffmpeg_executable()
+    if not ffmpeg:
         raise RuntimeError('ffmpeg executable required')
     destination = directory / f'frame_{i:02d}.jpg'
-    cmd = ['ffmpeg', '-nostdin','-hide_banner','-loglevel','error', '-ss', str(t),
+    cmd = [ffmpeg, '-nostdin','-hide_banner','-loglevel','error', '-ss', str(t),
            '-i',str(video), '-frames:v','1','-vf','scale=768:-2', '-y',str(destination)]
     output = subprocess.run(cmd, capture_output=True, timeout=40)
     if output.returncode or not destination.exists():
