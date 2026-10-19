@@ -15,7 +15,7 @@ def validate_private_bind_host(host: str) -> str:
         ip = ipaddress.ip_address(host)
     except ValueError as exc:
         raise ValueError("service bind host must be a literal loopback or Tailscale IP") from exc
-    if not (ip.is_loopback or ip in ipaddress.ip_network("127.0.0.1/10")):
+    if not (ip.is_loopback or ip in ipaddress.ip_network("100.64.0.0/10")):
         raise ValueError("service bind host must remain loopback or Tailscale-only")
     return host
 

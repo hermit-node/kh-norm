@@ -35,8 +35,8 @@
     },
     {
       "file": "core/norm_main.py",
-      "bytes": 70736,
-      "sha256": "7e047613ac211892b042e942ae2495313122e39cbb7786642ed9568a756f7b7c"
+      "bytes": 70737,
+      "sha256": "a672c7663b1d86dcb2c837b88ae62d54fd206586980d50142d9dc90581962ec0"
     },
     {
       "file": "core/norm_runtime/__init__.py",
@@ -55,8 +55,8 @@
     },
     {
       "file": "core/norm_runtime/aiohttp_host.py",
-      "bytes": 5776,
-      "sha256": "69bf93c84ae758034187da6257bc7d63f7de551b5a87d4dbab2b418918fb91ed"
+      "bytes": 5777,
+      "sha256": "4f7d86266bf5d3619eedf1fb49719fdd7c2d5e19ba1d136d3efdbed27d335730"
     },
     {
       "file": "core/norm_runtime/archive_adapter.py",
