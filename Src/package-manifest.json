@@ -229,9 +229,9 @@
     "plugins": {
       "plugins/vision_parse": {
         "name": "vision_parse",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "entrypoint": "src/main.py",
-        "sha256": "f67a17564401f972ee78e6a8730df4a010aa0a7796e78b69deb53d284feac331"
+        "sha256": "770857bb620c81eefed633258a8c0eae5d5fff0cf0b8bc2a9f8e7be56a279e62"
       },
       "plugins/web_browser": {
         "name": "Norm Web Browser",
