@@ -1,0 +1,6 @@
+# Shared browser GUI and PDF export runtime.
+PySide6
+reportlab
+mss
+Pillow
+playwright
