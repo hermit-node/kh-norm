@@ -1,0 +1,10 @@
+# Vision Parse runtime dependencies. Resolve together with core/requirements.txt.
+# OpenCV's PyPI wheel supplies the CPU fallback and YuNet/SFace APIs.
+# GPU inference uses ONNX Runtime's CUDAExecutionProvider, not CUDA OpenCV.
+PyMuPDF
+numpy
+Pillow
+pytesseract
+opencv-python
+onnxruntime-gpu
+imageio-ffmpeg
