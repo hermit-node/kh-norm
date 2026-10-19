@@ -1165,7 +1165,7 @@ Rules:
 - Replaced the old `[ports]` settings model with `[network]`, including `current_machine`, `current_domain`, per-service host selectors, ports, and `require_tailscale`.
 - Central runtime resolution now derives Redis, prompt/deletion/console queues, PostgreSQL, Norm HTTP, activity/control, and Ollama endpoints from the settings resolver instead of duplicating live network values in `runtime.json`.
 - Moved environment-specific PostgreSQL database/user/password values to the configured external `.env` file; runtime JSON no longer carries the connection string.
-- PostgreSQL runtime uses `norm-host.example.invalid:25434`; Redis authority uses `norm-host.example.invalid:6379`; Norm HTTP/activity bind to NORM-HOST’s Tailscale address; Ollama intentionally remains loopback-only.
+- PostgreSQL runtime uses the configured PostgreSQL host and port; Redis authority uses its configured network endpoint; Norm HTTP/activity use the configured service bindings; Ollama remains loopback-only in this deployment.
 - Added Tailscale Serve TCP forwarding for Redis so Memurai remains bound to `127.0.0.1:6379` while Norm reaches it only through the tailnet authority path.
 - Added a pre-tool-call authority gate: each native Norm tool call must successfully reach/PING the configured Tailscale Redis authority endpoint before execution proceeds.
 - Promoted live executable SHA-256: `0EE7EA56B866F0DC6CC3B54C04A4549A97F76DC4C9CCD968CD13D6D7137CC671`; `norm.exe --version` reports `0.51.4`.
