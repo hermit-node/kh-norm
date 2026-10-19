@@ -1,0 +1,5 @@
+# Desktop GUI bridge runtime; separate from Norm's frozen core.
+pywinauto
+mss
+pywin32
+comtypes
